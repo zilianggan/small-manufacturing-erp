@@ -1,0 +1,6 @@
+{
+  "name": "Small Manufacturing ERP",
+  "description": "An ERP application specifically designed for small manufacturing businesses, featuring inventory, vendor, client, order, purchase, manufacturing workflow, and AI-powered automated reporting tools.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
