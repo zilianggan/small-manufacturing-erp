@@ -1,0 +1,7 @@
+Version 1.0.1
+--------------------
+- Add loading
+- For select field all change to autocomplete field which is searchable
+- Add created dt and modified dt
+- Make those repeated html into component for easy maintained like controller field, card, card content, dialog.
+- Fix if click next or previous, all data disappear.

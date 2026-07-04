@@ -3,18 +3,32 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useMemo } from 'react';
-import { getVendors, getClients, saveVendors, saveClients } from '../services/db';
+import React, { useState, useEffect, useMemo } from 'react';
+import { saveVendors, saveClients } from '../services/db';
+import { useTableData } from '../hooks/useTableData';
 import { Vendor, Client, Attachment } from '../types';
-import { Plus, Search, Star, Mail, Phone, MapPin, Award, User, Briefcase, Paperclip, Edit, Trash2 } from 'lucide-react';
+import { Plus, Star, Mail, Phone, MapPin, Briefcase, User, Paperclip, Edit, Trash2 } from 'lucide-react';
 import AttachmentSection from './AttachmentSection';
+import LoadingSpinner from './LoadingSpinner';
+import ComboBox from './ComboBox';
+import InfiniteScrollSentinel from './InfiniteScrollSentinel';
+import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, FormField, fieldInputClassName, SearchInput } from './ui';
 
 export default function ContactsView() {
-  const [vendors, setVendors] = useState<Vendor[]>(() => getVendors());
-  const [clients, setClients] = useState<Client[]>(() => getClients());
-
   const [activeTab, setActiveTab] = useState<'VENDORS' | 'CLIENTS'>('VENDORS');
   const [searchQuery, setSearchQuery] = useState('');
+
+  const { data: vendorsData, loading: vendorsLoading, loadMore: loadMoreVendors, hasMore: hasMoreVendors, loadingMore: vendorsLoadingMore } =
+    useTableData<Vendor>('vendors', { search: activeTab === 'VENDORS' ? searchQuery : '' });
+  const { data: clientsData, loading: clientsLoading, loadMore: loadMoreClients, hasMore: hasMoreClients, loadingMore: clientsLoadingMore } =
+    useTableData<Client>('clients', { search: activeTab === 'CLIENTS' ? searchQuery : '' });
+
+  const [vendors, setVendors] = useState<Vendor[]>([]);
+  const [clients, setClients] = useState<Client[]>([]);
+  useEffect(() => { setVendors(vendorsData); }, [vendorsData]);
+  useEffect(() => { setClients(clientsData); }, [clientsData]);
+  const loading = vendorsLoading || clientsLoading;
+
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
 
@@ -67,7 +81,7 @@ export default function ContactsView() {
       setVendorMaterials(v.materialsSupplied.join(', '));
       setVendorAddress(v.address || '');
       setVendorRating(v.rating || 5);
-      setFormAttachment(v.attachment);
+      setFormAttachment(v.attachments?.[0]);
     } else {
       const c = item as Client;
       setClientName(c.name);
@@ -76,7 +90,7 @@ export default function ContactsView() {
       setClientPhone(c.phone || '');
       setClientCompany(c.companyName || '');
       setClientAddress(c.address || '');
-      setFormAttachment(c.attachment);
+      setFormAttachment(c.attachments?.[0]);
     }
     setShowForm(true);
   };
@@ -95,15 +109,15 @@ export default function ContactsView() {
         materialsSupplied: vendorMaterials.split(',').map(m => m.trim()).filter(Boolean),
         address: vendorAddress,
         rating: Number(vendorRating),
-        attachment: formAttachment
+        attachments: formAttachment ? [formAttachment] : []
       };
-      
-      const updated = editId 
+
+      const updated = editId
         ? vendors.map(v => v.id === editId ? newVendor : v)
         : [...vendors, newVendor];
-        
+
       setVendors(updated);
-      saveVendors(updated);
+      saveVendors(updated, newVendor);
     } else {
       if (!clientName || !clientCompany) return;
       const newClient: Client = {
@@ -115,15 +129,15 @@ export default function ContactsView() {
         companyName: clientCompany,
         address: clientAddress,
         totalOrdersValue: editId ? (clients.find(c => c.id === editId)?.totalOrdersValue || 0) : 0,
-        attachment: formAttachment
+        attachments: formAttachment ? [formAttachment] : []
       };
-      
-      const updated = editId 
+
+      const updated = editId
         ? clients.map(c => c.id === editId ? newClient : c)
         : [...clients, newClient];
-        
+
       setClients(updated);
-      saveClients(updated);
+      saveClients(updated, newClient);
     }
 
     resetForm();
@@ -135,38 +149,29 @@ export default function ContactsView() {
       if (activeTab === 'VENDORS') {
         const updated = vendors.filter(v => v.id !== id);
         setVendors(updated);
-        saveVendors(updated);
+        saveVendors(updated, undefined, id);
       } else {
         const updated = clients.filter(c => c.id !== id);
         setClients(updated);
-        saveClients(updated);
+        saveClients(updated, undefined, id);
       }
     }
   };
 
-  // Filters
-  const filteredVendors = useMemo(() => {
-    return vendors.filter(v =>
-      v.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      v.contactName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      v.email.toLowerCase().includes(searchQuery.toLowerCase())
-    );
-  }, [vendors, searchQuery]);
+  // Server already applied search for the active tab; use loaded rows as-is.
+  const filteredVendors = vendors;
+  const filteredClients = clients;
 
-  const filteredClients = useMemo(() => {
-    return clients.filter(c =>
-      c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      c.companyName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      c.contactName.toLowerCase().includes(searchQuery.toLowerCase())
-    );
-  }, [clients, searchQuery]);
+  if (loading) {
+    return <LoadingSpinner message="Retrieving contact profiles..." subtitle="CONTACTS_LOAD" />;
+  }
 
   return (
     <div className="space-y-6" id="contacts-view">
-      
+
       {/* Top Toggle & Actions */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        
+
         {/* Toggle Selector */}
         <div className="flex space-x-1 p-1 bg-slate-100 rounded-lg border border-slate-200/50 self-start">
           <button
@@ -187,16 +192,12 @@ export default function ContactsView() {
 
         {/* Search Input & Button */}
         <div className="flex items-center space-x-2">
-          <div className="relative flex-1 sm:w-64">
-            <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-            <input
-              type="text"
-              placeholder={`Search ${activeTab === 'VENDORS' ? 'suppliers' : 'clients'}...`}
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-9 pr-4 py-2 bg-white border border-slate-200 rounded-lg text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-blue-500 font-sans"
-            />
-          </div>
+          <SearchInput
+            value={searchQuery}
+            onChange={setSearchQuery}
+            placeholder={`Search ${activeTab === 'VENDORS' ? 'suppliers' : 'clients'}...`}
+            className="relative flex-1 sm:w-64"
+          />
 
           <button
             onClick={() => setShowForm(!showForm)}
@@ -210,176 +211,142 @@ export default function ContactsView() {
       </div>
 
       {/* Creation form as Dialog Modal */}
-      {showForm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
-          <div className="w-full max-w-2xl bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden animate-in fade-in zoom-in duration-200">
-            <div className="p-5 border-b border-slate-100 flex items-center justify-between">
-              <h3 className="font-sans font-semibold text-slate-900 text-sm">
-                {editId ? 'Edit' : 'Create'} {activeTab === 'VENDORS' ? 'Preferred Raw Supplier Account' : 'Customer Client Account'}
-              </h3>
-              <button 
-                type="button" 
-                onClick={() => setShowForm(false)}
-                className="text-slate-400 hover:text-slate-600 font-bold text-base p-1 leading-none"
-              >
-                &times;
-              </button>
-            </div>
-            <form onSubmit={handleAddContact} className="p-5 space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs text-slate-600">
-                
-                {activeTab === 'VENDORS' ? (
-                  // Vendor Fields
-                  <>
-                    <div className="space-y-1">
-                      <label className="font-semibold block">Vendor / Company Name *</label>
-                      <input
-                        type="text" required value={vendorName} onChange={(e) => setVendorName(e.target.value)}
-                        placeholder="e.g. PentaSteel Mills"
-                        className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="font-semibold block">Contact Representative</label>
-                      <input
-                        type="text" value={vendorContact} onChange={(e) => setVendorContact(e.target.value)}
-                        placeholder="e.g. Tan Seng Jie"
-                        className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="font-semibold block">Business Email</label>
-                      <input
-                        type="email" value={vendorEmail} onChange={(e) => setVendorEmail(e.target.value)}
-                        placeholder="e.g. sales@pentasteel.com.my"
-                        className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="font-semibold block">Business Phone</label>
-                      <input
-                        type="text" value={vendorPhone} onChange={(e) => setVendorPhone(e.target.value)}
-                        placeholder="+60 3-8012 3456"
-                        className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500"
-                      />
-                    </div>
-                    <div className="space-y-1 sm:col-span-2">
-                      <label className="font-semibold block">Materials Supplied (Comma-separated SKUs or Names)</label>
-                      <input
-                        type="text" value={vendorMaterials} onChange={(e) => setVendorMaterials(e.target.value)}
-                        placeholder="Steel Billets, Ball Bearings, Machining Coolant"
-                        className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500"
-                      />
-                    </div>
-                    <div className="space-y-1 sm:col-span-2">
-                      <label className="font-semibold block">Headquarters Address</label>
-                      <input
-                        type="text" value={vendorAddress} onChange={(e) => setVendorAddress(e.target.value)}
-                        placeholder="Lot 102, Kawasan Perindustrian Balakong, Selangor, Malaysia"
-                        className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="font-semibold block">Vendor Performance Score (1-5 Stars)</label>
-                      <select
-                        value={vendorRating} onChange={(e) => setVendorRating(Number(e.target.value))}
-                        className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 font-sans"
-                      >
-                        <option value="5">⭐⭐⭐⭐⭐ (5/5) - Flawless</option>
-                        <option value="4">⭐⭐⭐⭐ (4/5) - High Quality</option>
-                        <option value="3">⭐⭐⭐ (3/5) - Standard</option>
-                        <option value="2">⭐⭐ (2/5) - Unreliable</option>
-                        <option value="1">⭐ (1/5) - At Risk</option>
-                      </select>
-                    </div>
-                  </>
-                ) : (
-                  // Client Fields
-                  <>
-                    <div className="space-y-1">
-                      <label className="font-semibold block">Client Company Name *</label>
-                      <input
-                        type="text" required value={clientCompany} onChange={(e) => setClientCompany(e.target.value)}
-                        placeholder="e.g. Mega Machinery Sdn Bhd"
-                        className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="font-semibold block">Contact Representative *</label>
-                      <input
-                        type="text" required value={clientName} onChange={(e) => setClientName(e.target.value)}
-                        placeholder="e.g. Mr. Lee"
-                        className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="font-semibold block">Email</label>
-                      <input
-                        type="email" value={clientEmail} onChange={(e) => setClientEmail(e.target.value)}
-                        placeholder="e.g. lee@megamachinery.com.my"
-                        className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="font-semibold block">Phone</label>
-                      <input
-                        type="text" value={clientPhone} onChange={(e) => setClientPhone(e.target.value)}
-                        placeholder="+60 3-8890 1122"
-                        className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500"
-                      />
-                    </div>
-                    <div className="space-y-1 sm:col-span-2">
-                      <label className="font-semibold block">Delivery / Billing Address</label>
-                      <input
-                        type="text" value={clientAddress} onChange={(e) => setClientAddress(e.target.value)}
-                        placeholder="e.g. Lot 45, Shah Alam Industrial Park, Selangor, Malaysia"
-                        className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500"
-                      />
-                    </div>
-                  </>
-                )}
+      <Dialog
+        open={showForm}
+        onClose={() => setShowForm(false)}
+        title={`${editId ? 'Edit' : 'Create'} ${activeTab === 'VENDORS' ? 'Preferred Raw Supplier Account' : 'Customer Client Account'}`}
+      >
+        <form onSubmit={handleAddContact} className="p-5 space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs text-slate-600">
 
-                <div className="sm:col-span-2">
-                  <AttachmentSection 
-                    attachment={formAttachment} 
-                    onAttachmentChange={setFormAttachment} 
-                    label="Business Profile Documents (Optional)"
-                    helperText="Upload any agreement, invoice, credentials, or branding assets (Max 1MB)"
+            {activeTab === 'VENDORS' ? (
+              // Vendor Fields
+              <>
+                <FormField label="Vendor / Company Name *">
+                  <input
+                    type="text" required value={vendorName} onChange={(e) => setVendorName(e.target.value)}
+                    placeholder="e.g. PentaSteel Mills"
+                    className={fieldInputClassName}
                   />
-                </div>
+                </FormField>
+                <FormField label="Contact Representative">
+                  <input
+                    type="text" value={vendorContact} onChange={(e) => setVendorContact(e.target.value)}
+                    placeholder="e.g. Tan Seng Jie"
+                    className={fieldInputClassName}
+                  />
+                </FormField>
+                <FormField label="Business Email">
+                  <input
+                    type="email" value={vendorEmail} onChange={(e) => setVendorEmail(e.target.value)}
+                    placeholder="e.g. sales@pentasteel.com.my"
+                    className={fieldInputClassName}
+                  />
+                </FormField>
+                <FormField label="Business Phone">
+                  <input
+                    type="text" value={vendorPhone} onChange={(e) => setVendorPhone(e.target.value)}
+                    placeholder="+60 3-8012 3456"
+                    className={fieldInputClassName}
+                  />
+                </FormField>
+                <FormField label="Materials Supplied (Comma-separated SKUs or Names)" colSpan="sm:col-span-2">
+                  <input
+                    type="text" value={vendorMaterials} onChange={(e) => setVendorMaterials(e.target.value)}
+                    placeholder="Steel Billets, Ball Bearings, Machining Coolant"
+                    className={fieldInputClassName}
+                  />
+                </FormField>
+                <FormField label="Headquarters Address" colSpan="sm:col-span-2">
+                  <input
+                    type="text" value={vendorAddress} onChange={(e) => setVendorAddress(e.target.value)}
+                    placeholder="Lot 102, Kawasan Perindustrian Balakong, Selangor, Malaysia"
+                    className={fieldInputClassName}
+                  />
+                </FormField>
+                <FormField label="Vendor Performance Score (1-5 Stars)">
+                  <ComboBox
+                    value={String(vendorRating)}
+                    onChange={(v) => setVendorRating(Number(v))}
+                    options={[
+                      { value: '5', label: '⭐⭐⭐⭐⭐ (5/5) - Flawless' },
+                      { value: '4', label: '⭐⭐⭐⭐ (4/5) - High Quality' },
+                      { value: '3', label: '⭐⭐⭐ (3/5) - Standard' },
+                      { value: '2', label: '⭐⭐ (2/5) - Unreliable' },
+                      { value: '1', label: '⭐ (1/5) - At Risk' },
+                    ]}
+                  />
+                </FormField>
+              </>
+            ) : (
+              // Client Fields
+              <>
+                <FormField label="Client Company Name *">
+                  <input
+                    type="text" required value={clientCompany} onChange={(e) => setClientCompany(e.target.value)}
+                    placeholder="e.g. Mega Machinery Sdn Bhd"
+                    className={fieldInputClassName}
+                  />
+                </FormField>
+                <FormField label="Contact Representative *">
+                  <input
+                    type="text" required value={clientName} onChange={(e) => setClientName(e.target.value)}
+                    placeholder="e.g. Mr. Lee"
+                    className={fieldInputClassName}
+                  />
+                </FormField>
+                <FormField label="Email">
+                  <input
+                    type="email" value={clientEmail} onChange={(e) => setClientEmail(e.target.value)}
+                    placeholder="e.g. lee@megamachinery.com.my"
+                    className={fieldInputClassName}
+                  />
+                </FormField>
+                <FormField label="Phone">
+                  <input
+                    type="text" value={clientPhone} onChange={(e) => setClientPhone(e.target.value)}
+                    placeholder="+60 3-8890 1122"
+                    className={fieldInputClassName}
+                  />
+                </FormField>
+                <FormField label="Delivery / Billing Address" colSpan="sm:col-span-2">
+                  <input
+                    type="text" value={clientAddress} onChange={(e) => setClientAddress(e.target.value)}
+                    placeholder="e.g. Lot 45, Shah Alam Industrial Park, Selangor, Malaysia"
+                    className={fieldInputClassName}
+                  />
+                </FormField>
+              </>
+            )}
 
-              </div>
-              <div className="flex items-center justify-end space-x-2 pt-3 border-t border-slate-100 text-xs mt-4">
-                <button
-                  type="button"
-                  onClick={() => setShowForm(false)}
-                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-medium transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors"
-                >
-                  {editId ? 'Save Profile' : 'Add Profile'}
-                </button>
-              </div>
-            </form>
+            <div className="sm:col-span-2">
+              <AttachmentSection
+                attachment={formAttachment}
+                onAttachmentChange={setFormAttachment}
+                label="Business Profile Documents (Optional)"
+                helperText="Upload any agreement, invoice, credentials, or branding assets (Max 1MB)"
+              />
+            </div>
+
           </div>
-        </div>
-      )}
+          <DialogFooter>
+            <DialogCancelButton onClick={() => setShowForm(false)} />
+            <DialogSubmitButton>{editId ? 'Save Profile' : 'Add Profile'}</DialogSubmitButton>
+          </DialogFooter>
+        </form>
+      </Dialog>
 
       {/* Grid displays */}
       {activeTab === 'VENDORS' ? (
         // VENDORS GRID
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
           {filteredVendors.length === 0 ? (
-            <div className="col-span-full text-center py-12 text-xs text-slate-400 bg-white border border-slate-200 rounded-xl">
+            <Card className="col-span-full text-center py-12 text-xs text-slate-400">
               No vendors found matching your query.
-            </div>
+            </Card>
           ) : (
             filteredVendors.map((vendor) => (
-              <div key={vendor.id} className="group bg-white border border-slate-200 rounded-xl p-5 shadow-sm hover:shadow-md transition-shadow flex flex-col justify-between space-y-4">
+              <Card key={vendor.id} className="group p-5 hover:shadow-md transition-shadow flex flex-col justify-between space-y-4">
                 <div className="space-y-2.5">
                   <div className="flex items-start justify-between">
                     <div>
@@ -413,16 +380,16 @@ export default function ContactsView() {
                         <span className="line-clamp-2">{vendor.address}</span>
                       </div>
                     )}
-                    {vendor.attachment && (
+                    {vendor.attachments?.[0] && (
                       <div className="pt-1 flex items-center">
                         <a
-                          href={vendor.attachment.dataUrl}
-                          download={vendor.attachment.name}
+                          href={vendor.attachments[0].dataUrl}
+                          download={vendor.attachments[0].name}
                           className="inline-flex items-center space-x-1 px-1.5 py-0.5 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded text-[10px] font-mono transition-colors"
                           title="Download attachment"
                         >
                           <Paperclip className="w-2.5 h-2.5 text-blue-500 shrink-0" />
-                          <span className="truncate max-w-[150px]">{vendor.attachment.name}</span>
+                          <span className="truncate max-w-[150px]">{vendor.attachments[0].name}</span>
                         </a>
                       </div>
                     )}
@@ -463,7 +430,7 @@ export default function ContactsView() {
                     </button>
                   </div>
                 </div>
-              </div>
+              </Card>
             ))
           )}
         </div>
@@ -471,12 +438,12 @@ export default function ContactsView() {
         // CLIENTS GRID
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
           {filteredClients.length === 0 ? (
-            <div className="col-span-full text-center py-12 text-xs text-slate-400 bg-white border border-slate-200 rounded-xl">
+            <Card className="col-span-full text-center py-12 text-xs text-slate-400">
               No clients found matching your query.
-            </div>
+            </Card>
           ) : (
             filteredClients.map((client) => (
-              <div key={client.id} className="group bg-white border border-slate-200 rounded-xl p-5 shadow-sm hover:shadow-md transition-shadow flex flex-col justify-between space-y-4">
+              <Card key={client.id} className="group p-5 hover:shadow-md transition-shadow flex flex-col justify-between space-y-4">
                 <div className="space-y-2.5">
                   <div className="flex items-start justify-between">
                     <div>
@@ -505,16 +472,16 @@ export default function ContactsView() {
                         <span className="line-clamp-2">{client.address}</span>
                       </div>
                     )}
-                    {client.attachment && (
+                    {client.attachments?.[0] && (
                       <div className="pt-1 flex items-center">
                         <a
-                          href={client.attachment.dataUrl}
-                          download={client.attachment.name}
+                          href={client.attachments[0].dataUrl}
+                          download={client.attachments[0].name}
                           className="inline-flex items-center space-x-1 px-1.5 py-0.5 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded text-[10px] font-mono transition-colors"
                           title="Download attachment"
                         >
                           <Paperclip className="w-2.5 h-2.5 text-blue-500 shrink-0" />
-                          <span className="truncate max-w-[150px]">{client.attachment.name}</span>
+                          <span className="truncate max-w-[150px]">{client.attachments[0].name}</span>
                         </a>
                       </div>
                     )}
@@ -547,11 +514,17 @@ export default function ContactsView() {
                     </button>
                   </div>
                 </div>
-              </div>
+              </Card>
             ))
           )}
         </div>
       )}
+
+      <InfiniteScrollSentinel
+        onLoadMore={activeTab === 'VENDORS' ? loadMoreVendors : loadMoreClients}
+        hasMore={activeTab === 'VENDORS' ? hasMoreVendors : hasMoreClients}
+        loading={activeTab === 'VENDORS' ? vendorsLoadingMore : clientsLoadingMore}
+      />
 
     </div>
   );

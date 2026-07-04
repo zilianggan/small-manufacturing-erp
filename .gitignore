@@ -32,3 +32,8 @@ Thumbs.db
 
 # TypeScript
 *.tsbuildinfo
+
+# AI skills
+.agents/
+knowledge.md
+.CLAUDE.md

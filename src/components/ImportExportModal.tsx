@@ -1,14 +1,14 @@
 import React, { useRef, useState } from 'react';
 import * as XLSX from 'xlsx';
-import { 
-  X, 
-  UploadCloud, 
-  CheckCircle2, 
-  AlertTriangle, 
-  Download, 
-  Clipboard, 
-  Info, 
-  FileText, 
+import {
+  X,
+  UploadCloud,
+  CheckCircle2,
+  AlertTriangle,
+  Download,
+  Clipboard,
+  Info,
+  FileText,
   Database,
   ArrowRight,
   FileSpreadsheet,
@@ -19,11 +19,11 @@ import {
   Briefcase
 } from 'lucide-react';
 import { InventoryItem, Vendor, Client, SalesOrder, PurchaseOrder, Employee } from '../types';
-import { 
-  getInventory, saveInventory, 
-  getVendors, saveVendors, 
-  getClients, saveClients, 
-  getSalesOrders, saveSalesOrders, 
+import {
+  getInventory, saveInventory,
+  getVendors, saveVendors,
+  getClients, saveClients,
+  getSalesOrders, saveSalesOrders,
   getPurchaseOrders, savePurchaseOrders,
   getEmployees, saveEmployees
 } from '../services/db';
@@ -35,6 +35,7 @@ interface ImportExportModalProps {
 }
 
 type ImportType = 'FULL_BACKUP' | 'INVENTORY' | 'VENDORS' | 'CLIENTS' | 'EMPLOYEES' | 'SALES' | 'PURCHASES';
+type ExportType = 'CONTACTS' | 'INVENTORY' | 'EMPLOYEES' | 'SALES' | 'PURCHASES';
 
 const EXPECTED_COLUMNS: Record<ImportType, { key: string, label: string, required: boolean }[]> = {
   FULL_BACKUP: [],
@@ -111,6 +112,175 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
 
   if (!isOpen) return null;
 
+  const dateStamp = new Date().toISOString().split('T')[0];
+
+  const listValue = (value: unknown): string => {
+    return Array.isArray(value) ? value.map(String).join(', ') : '';
+  };
+
+  const attachmentNames = (value: { name?: string }[] | undefined): string => {
+    return Array.isArray(value) ? value.map((item) => item.name || 'Attachment').join(', ') : '';
+  };
+
+  const appendRowsSheet = (wb: XLSX.WorkBook, sheetName: string, rows: Record<string, unknown>[]) => {
+    const data = rows.length > 0 ? rows : [{ Notice: 'No records found' }];
+    const ws = XLSX.utils.json_to_sheet(data);
+    XLSX.utils.book_append_sheet(wb, ws, sheetName);
+  };
+
+  const exportCategory = (type: ExportType) => {
+    const wb = XLSX.utils.book_new();
+    let fileName = `ERP_Export_${dateStamp}.xlsx`;
+    let exportedRecordCount = 0;
+
+    if (type === 'CONTACTS') {
+      const vendors = getVendors();
+      const clients = getClients();
+      appendRowsSheet(wb, 'Vendors', vendors.map((vendor) => ({
+        id: vendor.id,
+        name: vendor.name,
+        contactName: vendor.contactName,
+        email: vendor.email,
+        phone: vendor.phone,
+        address: vendor.address,
+        rating: vendor.rating,
+        materialsSupplied: listValue(vendor.materialsSupplied),
+        attachments: attachmentNames(vendor.attachments)
+      })));
+      appendRowsSheet(wb, 'Clients', clients.map((client) => ({
+        id: client.id,
+        name: client.name,
+        contactName: client.contactName,
+        companyName: client.companyName,
+        email: client.email,
+        phone: client.phone,
+        address: client.address,
+        totalOrdersValue: client.totalOrdersValue,
+        attachments: attachmentNames(client.attachments)
+      })));
+      fileName = `ERP_Vendors_Clients_${dateStamp}.xlsx`;
+      exportedRecordCount = vendors.length + clients.length;
+    } else if (type === 'INVENTORY') {
+      const inventory = getInventory();
+      appendRowsSheet(wb, 'Inventory', inventory.map((item) => ({
+        id: item.id,
+        name: item.name,
+        sku: item.sku,
+        type: item.type,
+        quantity: item.quantity,
+        unit: item.unit,
+        unitCost: item.unitCost,
+        reorderPoint: item.reorderPoint,
+        supplierId: item.supplierId || '',
+        description: item.description || '',
+        attachments: attachmentNames(item.attachments)
+      })));
+      fileName = `ERP_Inventory_${dateStamp}.xlsx`;
+      exportedRecordCount = inventory.length;
+    } else if (type === 'EMPLOYEES') {
+      const employees = getEmployees();
+      appendRowsSheet(wb, 'Employees', employees.map((employee) => ({
+        id: employee.id,
+        name: employee.name,
+        role: employee.role,
+        department: employee.department,
+        status: employee.status,
+        email: employee.email || '',
+        phone: employee.phone || ''
+      })));
+      fileName = `ERP_Employees_${dateStamp}.xlsx`;
+      exportedRecordCount = employees.length;
+    } else if (type === 'SALES') {
+      const orders = getSalesOrders();
+      appendRowsSheet(wb, 'Sales_Orders', orders.map((order) => ({
+        id: order.id,
+        clientId: order.clientId,
+        clientName: order.clientName,
+        orderDate: order.orderDate,
+        deliveryDate: order.deliveryDate,
+        status: order.status,
+        itemId: order.itemId,
+        itemName: order.itemName,
+        quantity: order.quantity,
+        unitPrice: order.unitPrice,
+        totalPrice: order.totalPrice,
+        workflowTaskId: order.workflowTaskId || '',
+        itemCount: order.items?.length || 1,
+        attachments: attachmentNames(order.attachments)
+      })));
+      appendRowsSheet(wb, 'Sales_Items', orders.flatMap((order) => {
+        const items = order.items && order.items.length > 0 ? order.items : [{
+          itemId: order.itemId,
+          itemName: order.itemName,
+          quantity: order.quantity,
+          unitPrice: order.unitPrice,
+          totalPrice: order.totalPrice
+        }];
+        return items.map((item) => ({
+          orderId: order.id,
+          clientName: order.clientName,
+          orderDate: order.orderDate,
+          deliveryDate: order.deliveryDate,
+          status: order.status,
+          itemId: item.itemId,
+          itemName: item.itemName,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          totalPrice: item.totalPrice
+        }));
+      }));
+      fileName = `ERP_Sales_${dateStamp}.xlsx`;
+      exportedRecordCount = orders.length;
+    } else if (type === 'PURCHASES') {
+      const orders = getPurchaseOrders();
+      appendRowsSheet(wb, 'Purchase_Orders', orders.map((order) => ({
+        id: order.id,
+        vendorId: order.vendorId,
+        vendorName: order.vendorName,
+        orderDate: order.orderDate,
+        receivedDate: order.receivedDate || '',
+        status: order.status,
+        itemId: order.itemId,
+        itemName: order.itemName,
+        quantity: order.quantity,
+        unitCost: order.unitCost,
+        totalCost: order.totalCost,
+        itemCount: order.items?.length || 1,
+        attachments: attachmentNames(order.attachments)
+      })));
+      appendRowsSheet(wb, 'Purchase_Items', orders.flatMap((order) => {
+        const items = order.items && order.items.length > 0 ? order.items : [{
+          itemId: order.itemId,
+          itemName: order.itemName,
+          quantity: order.quantity,
+          unitCost: order.unitCost,
+          totalCost: order.totalCost
+        }];
+        return items.map((item) => ({
+          purchaseOrderId: order.id,
+          vendorName: order.vendorName,
+          orderDate: order.orderDate,
+          receivedDate: order.receivedDate || '',
+          status: order.status,
+          itemId: item.itemId,
+          itemName: item.itemName,
+          quantity: item.quantity,
+          unitCost: item.unitCost,
+          totalCost: item.totalCost
+        }));
+      }));
+      fileName = `ERP_Purchases_${dateStamp}.xlsx`;
+      exportedRecordCount = orders.length;
+    }
+
+    XLSX.writeFile(wb, fileName);
+    setStatus({
+      type: 'success',
+      message: `Export file created: ${fileName}`,
+      details: [`Exported ${exportedRecordCount} primary records.`]
+    });
+  };
+
   // Formatter for help templates
   const getTemplateHeaders = (type: ImportType): string => {
     switch (type) {
@@ -186,10 +356,10 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
         });
 
         if (keysFound === 0) {
-          setStatus({ 
-            type: 'error', 
-            message: 'Invalid backup format!', 
-            details: ['The uploaded Excel file does not contain any recognizable ERP database sheets (e.g. erp_inventory).'] 
+          setStatus({
+            type: 'error',
+            message: 'Invalid backup format!',
+            details: ['The uploaded Excel file does not contain any recognizable ERP database sheets (e.g. erp_inventory).']
           });
           return;
         }
@@ -217,7 +387,7 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
         const current = importMode === 'OVERWRITE' ? [] : getInventory();
         const itemsToImport: InventoryItem[] = parsed.map((raw: any, index) => {
           if (!raw.name) throw new Error(`Record #${index + 1} is missing a required 'name' field.`);
-          
+
           const itemType = raw.type === 'RAW_MATERIAL' || raw.type === 'FINISHED_GOOD' ? raw.type : 'RAW_MATERIAL';
           const prefix = itemType === 'RAW_MATERIAL' ? 'rm' : 'fg';
 
@@ -328,7 +498,7 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
 
       else if (activeImportType === 'SALES') {
         const current = importMode === 'OVERWRITE' ? [] : getSalesOrders();
-        
+
         // Let's search inventory items & clients to resolve references
         const clientsList = getClients();
         const inventoryList = getInventory();
@@ -348,8 +518,8 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
             itemId = foundItem ? foundItem.id : 'fg-custom';
           }
 
-          const status = ['PENDING', 'IN_PRODUCTION', 'SHIPPED', 'DELIVERED', 'CANCELLED'].includes(raw.status) 
-            ? raw.status 
+          const status = ['PENDING', 'IN_PRODUCTION', 'SHIPPED', 'DELIVERED', 'CANCELLED'].includes(raw.status)
+            ? raw.status
             : 'PENDING';
 
           const qty = Number(raw.quantity) || 1;
@@ -402,8 +572,8 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
             itemId = foundItem ? foundItem.id : 'rm-1';
           }
 
-          const status = ['DRAFT', 'ORDERED', 'RECEIVED', 'CANCELLED'].includes(raw.status) 
-            ? raw.status 
+          const status = ['DRAFT', 'ORDERED', 'RECEIVED', 'CANCELLED'].includes(raw.status)
+            ? raw.status
             : 'ORDERED';
 
           return {
@@ -450,7 +620,7 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
   const downloadErrorExcel = (headers: string[], rows: any[][], errors: string[]) => {
     const newHeaders = [...headers, 'Error Message'];
     const newRows = rows.map((row, i) => [...row, errors[i] || '']);
-    
+
     const ws = XLSX.utils.aoa_to_sheet([newHeaders, ...newRows]);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Import_Errors");
@@ -460,14 +630,14 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
   const executeImport = () => {
     if (!mappingState) return;
     const expectedCols = EXPECTED_COLUMNS[activeImportType];
-    
+
     // Check if required columns are mapped
     const missingMapped = expectedCols.filter(col => col.required && !mappingState.mapping[col.key]);
     if (missingMapped.length > 0) {
-      setStatus({ 
-        type: 'error', 
-        message: 'Missing Required Column Mappings', 
-        details: missingMapped.map(m => `Please map: ${m.label}`) 
+      setStatus({
+        type: 'error',
+        message: 'Missing Required Column Mappings',
+        details: missingMapped.map(m => `Please map: ${m.label}`)
       });
       return;
     }
@@ -484,18 +654,18 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
 
       const mappedObj: any = {};
       let rowError = '';
-      
+
       expectedCols.forEach(col => {
         const fileHeader = mappingState.mapping[col.key];
         const val = fileHeader ? rowObj[fileHeader] : undefined;
         mappedObj[col.key] = val;
-        
+
         if (col.required && (val === undefined || val === null || String(val).trim() === '')) {
-           rowError += `Missing value for ${col.label}. `;
-           hasErrors = true;
+          rowError += `Missing value for ${col.label}. `;
+          hasErrors = true;
         }
       });
-      
+
       parsed.push(mappedObj);
       rowErrors.push(rowError);
     });
@@ -521,7 +691,7 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
       const data = e.target?.result;
       if (file.name.endsWith('.xlsx') || file.name.endsWith('.xls')) {
         const workbook = XLSX.read(data, { type: 'binary' });
-        
+
         if (activeImportType === 'FULL_BACKUP') {
           const fullBackupData: any = {};
           workbook.SheetNames.forEach(sheetName => {
@@ -532,12 +702,12 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
           const sheetName = workbook.SheetNames[0];
           const worksheet = workbook.Sheets[sheetName];
           const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' }) as any[][];
-          
+
           if (rows.length < 2) {
-             setStatus({ type: 'error', message: 'File has no data rows.' });
-             return;
+            setStatus({ type: 'error', message: 'File has no data rows.' });
+            return;
           }
-          
+
           const fileHeaders = rows[0].map(h => String(h || '').trim());
           const dataRows = rows.slice(1);
 
@@ -545,8 +715,8 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
           const expected = EXPECTED_COLUMNS[activeImportType];
           const mapping: Record<string, string> = {};
           expected.forEach(col => {
-             const match = fileHeaders.find(h => h.toLowerCase() === col.key.toLowerCase() || h.toLowerCase() === col.label.toLowerCase());
-             if (match) mapping[col.key] = match;
+            const match = fileHeaders.find(h => h.toLowerCase() === col.key.toLowerCase() || h.toLowerCase() === col.label.toLowerCase());
+            if (match) mapping[col.key] = match;
           });
 
           setMappingState({ fileHeaders, dataRows, mapping });
@@ -586,7 +756,7 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
       <div className="w-full max-w-4xl bg-white border border-slate-200 rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in duration-200">
-        
+
         {/* Modal Header */}
         <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50 shrink-0">
           <div className="flex items-center space-x-2.5">
@@ -594,14 +764,14 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
               <Database className="w-5 h-5" />
             </span>
             <div>
-              <h3 className="font-sans font-bold text-slate-900 text-sm">ERP Data Integration & Import Hub</h3>
-              <p className="text-[10px] text-slate-500 font-mono">Easily load, merge, or overwrite raw machinery inventories, clients, contracts, and purchases</p>
+              <h3 className="font-sans font-bold text-slate-900 text-sm">ERP Data Import & Export Hub</h3>
+              <p className="text-[10px] text-slate-500 font-mono">Load, merge, overwrite, or export vendors, clients, inventory, employees, sales, and purchases</p>
             </div>
           </div>
-          <button 
-            type="button" 
+          <button
+            type="button"
             onClick={onClose}
-            className="text-slate-400 hover:text-slate-600 font-bold text-base p-1.5 leading-none bg-white rounded-full border border-slate-200 shadow-sm hover:shadow-md transition-all"
+            className="text-slate-400 hover:text-slate-600 font-bold text-base p-1.5 leading-none bg-transparent"
           >
             &times;
           </button>
@@ -609,10 +779,10 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
 
         {/* Modal Body (Two Column Layout) */}
         <div className="flex-1 overflow-y-auto p-5 flex flex-col lg:flex-row gap-5 min-h-0">
-          
+
           {/* Left Column: Side Controls & Navigation */}
           <div className="w-full lg:w-1/3 flex flex-col space-y-4 shrink-0">
-            
+
             <div className="space-y-1.5">
               <span className="font-semibold block text-slate-700 text-xs uppercase tracking-wider">1. Select Target Category</span>
               <div className="space-y-1">
@@ -636,11 +806,10 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
                         setStatus({ type: 'idle', message: '' });
                         setMappingState(null);
                       }}
-                      className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-xs font-medium border transition-all text-left ${
-                        isActive 
-                          ? 'bg-blue-600 text-white border-blue-600 shadow-sm font-semibold' 
-                          : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50 hover:text-slate-900'
-                      }`}
+                      className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-xs font-medium border transition-all text-left ${isActive
+                        ? 'bg-blue-600 text-white border-blue-600 shadow-sm font-semibold'
+                        : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50 hover:text-slate-900 dark:hover:bg-slate-950'
+                        }`}
                     >
                       <div className="flex items-center space-x-2">
                         <Icon className="w-4 h-4 shrink-0" />
@@ -659,11 +828,10 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
                 <button
                   type="button"
                   onClick={() => setImportMode('MERGE')}
-                  className={`p-2 rounded-lg border text-center transition-all flex flex-col items-center justify-center ${
-                    importMode === 'MERGE'
-                      ? 'bg-blue-50 border-blue-500 text-blue-700 font-semibold shadow-sm'
-                      : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
-                  }`}
+                  className={`p-2 rounded-lg border text-center transition-all flex flex-col items-center justify-center ${importMode === 'MERGE'
+                    ? 'bg-blue-50 border-blue-500 text-blue-700 font-semibold shadow-sm'
+                    : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+                    }`}
                 >
                   <span className="text-xs">Merge Records</span>
                   <span className="text-[9px] text-slate-400 font-normal mt-0.5 font-mono">Updates or adds only</span>
@@ -675,11 +843,10 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
                       setImportMode('OVERWRITE');
                     }
                   }}
-                  className={`p-2 rounded-lg border text-center transition-all flex flex-col items-center justify-center ${
-                    importMode === 'OVERWRITE'
-                      ? 'bg-amber-50 border-amber-500 text-amber-700 font-semibold shadow-sm'
-                      : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
-                  }`}
+                  className={`p-2 rounded-lg border text-center transition-all flex flex-col items-center justify-center ${importMode === 'OVERWRITE'
+                    ? 'bg-amber-50 border-amber-500 text-amber-700 font-semibold shadow-sm'
+                    : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+                    }`}
                 >
                   <span className="text-xs text-amber-800">Overwrite DB</span>
                   <span className="text-[9px] text-red-500/80 font-normal mt-0.5 font-mono">Deletes old records!</span>
@@ -704,14 +871,13 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
 
           {/* Right Column: Interaction panel */}
           <div className="flex-1 flex flex-col space-y-4 min-w-0">
-            
+
             {/* Status indicators */}
             {status.type !== 'idle' && (
-              <div className={`p-4 rounded-xl border text-xs leading-relaxed animate-in slide-in-from-top-2 duration-200 ${
-                status.type === 'success' 
-                  ? 'bg-emerald-50 border-emerald-100 text-emerald-800' 
-                  : 'bg-red-50 border-red-100 text-red-800'
-              }`}>
+              <div className={`p-4 rounded-xl border text-xs leading-relaxed animate-in slide-in-from-top-2 duration-200 ${status.type === 'success'
+                ? 'bg-emerald-50 border-emerald-100 text-emerald-800'
+                : 'bg-red-50 border-red-100 text-red-800'
+                }`}>
                 <div className="flex items-start space-x-2.5">
                   {status.type === 'success' ? (
                     <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5 animate-bounce-subtle" />
@@ -779,58 +945,94 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
                 </div>
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* Box A: Drag and Drop Upload */}
-                <div
-                  onDragEnter={handleDrag}
-                  onDragOver={handleDrag}
-                  onDragLeave={handleDrag}
-                  onDrop={handleDrop}
-                  onClick={() => fileInputRef.current?.click()}
-                  className={`border-2 border-dashed rounded-xl p-6 flex flex-col items-center justify-center cursor-pointer transition-all min-h-[150px] ${
-                    dragActive 
-                      ? 'border-blue-500 bg-blue-50/40 scale-[0.99]' 
-                      : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50/50'
-                  }`}
-                >
-                  <input
-                    type="file"
-                    ref={fileInputRef}
-                    onChange={handleFileUpload}
-                    accept=".xlsx,.xls"
-                    className="hidden"
-                  />
-                  <UploadCloud className="w-8 h-8 text-slate-400 mb-2 animate-bounce-subtle" />
-                  <span className="text-xs font-semibold text-slate-800 text-center block">
-                    Upload raw file backup
-                  </span>
-                  <span className="text-[10px] text-slate-400 text-center mt-1">
-                    Drag and drop your exported <code className="font-mono bg-slate-100 px-1 py-0.5 rounded text-slate-600">.xlsx</code> file or click to browse
-                  </span>
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Box A: Drag and Drop Upload */}
+                  <div
+                    onDragEnter={handleDrag}
+                    onDragOver={handleDrag}
+                    onDragLeave={handleDrag}
+                    onDrop={handleDrop}
+                    onClick={() => fileInputRef.current?.click()}
+                    className={`border-2 border-dashed rounded-xl p-6 flex flex-col items-center justify-center cursor-pointer transition-all min-h-[150px] ${dragActive
+                      ? 'border-blue-500 bg-blue-50/40 scale-[0.99]'
+                      : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50/50 dark:hover:bg-slate-950'
+                      }`}
+                  >
+                    <input
+                      type="file"
+                      ref={fileInputRef}
+                      onChange={handleFileUpload}
+                      accept=".xlsx,.xls"
+                      className="hidden"
+                    />
+                    <UploadCloud className="w-8 h-8 text-slate-400 mb-2 animate-bounce-subtle" />
+                    <span className="text-xs font-semibold text-slate-800 text-center block">
+                      Upload raw file backup
+                    </span>
+                    <span className="text-[10px] text-slate-400 text-center mt-1">
+                      Drag and drop your exported <code className="font-mono bg-slate-100 px-1 py-0.5 rounded text-slate-600">.xlsx</code> file or click to browse
+                    </span>
+                  </div>
+
+                  {/* Box B: Explanatory Template */}
+                  <div className="bg-slate-900 text-slate-300 rounded-xl p-4 flex flex-col justify-between min-h-[150px] font-mono text-[10px]">
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between text-slate-400 pb-1.5 border-b border-slate-800">
+                        <span className="text-[9px] uppercase tracking-wider font-semibold text-blue-400">Excel Column Blueprint Template</span>
+                        <span className="text-[8px] bg-slate-800 px-1 py-0.5 rounded text-slate-500">Read-only template</span>
+                      </div>
+                      <pre className="mt-2 text-slate-300 font-mono text-[9px] leading-relaxed max-h-[100px] overflow-y-auto overflow-x-hidden select-all whitespace-pre-wrap">
+                        {getTemplateHeaders(activeImportType)}
+                      </pre>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(getTemplateHeaders(activeImportType));
+                        alert("Template copied to clipboard!");
+                      }}
+                      className="mt-3 w-full py-1.5 bg-slate-800 hover:bg-slate-700 hover:text-white rounded text-[10px] text-slate-300 font-sans font-medium transition-colors flex items-center justify-center space-x-1"
+                    >
+                      <Clipboard className="w-3 h-3" />
+                      <span>Copy Blueprint Template</span>
+                    </button>
+                  </div>
                 </div>
 
-                {/* Box B: Explanatory Template */}
-                <div className="bg-slate-900 text-slate-300 rounded-xl p-4 flex flex-col justify-between min-h-[150px] font-mono text-[10px]">
-                  <div className="space-y-1">
-                    <div className="flex items-center justify-between text-slate-400 pb-1.5 border-b border-slate-800">
-                      <span className="text-[9px] uppercase tracking-wider font-semibold text-blue-400">Excel Column Blueprint Template</span>
-                      <span className="text-[8px] bg-slate-800 px-1 py-0.5 rounded text-slate-500">Read-only template</span>
+                <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+                  <div className="flex items-center justify-between gap-3 mb-3">
+                    <div>
+                      <h4 className="font-bold text-slate-900 text-xs">Export Data</h4>
+                      <p className="text-[10px] text-slate-400">Download clean Excel files for accounting, audits, or migration.</p>
                     </div>
-                    <pre className="mt-2 text-slate-300 font-mono text-[9px] leading-relaxed max-h-[100px] overflow-y-auto overflow-x-hidden select-all whitespace-pre-wrap">
-                      {getTemplateHeaders(activeImportType)}
-                    </pre>
+                    <Download className="w-4 h-4 text-blue-500 shrink-0" />
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      navigator.clipboard.writeText(getTemplateHeaders(activeImportType));
-                      alert("Template copied to clipboard!");
-                    }}
-                    className="mt-3 w-full py-1.5 bg-slate-800 hover:bg-slate-700 hover:text-white rounded text-[10px] text-slate-300 font-sans font-medium transition-colors flex items-center justify-center space-x-1"
-                  >
-                    <Clipboard className="w-3 h-3" />
-                    <span>Copy Blueprint Template</span>
-                  </button>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {[
+                      { id: 'CONTACTS' as ExportType, label: 'Vendors & Clients', icon: Users, tone: 'hover:border-emerald-300 hover:bg-emerald-50/50 dark:hover:bg-slate-950' },
+                      { id: 'INVENTORY' as ExportType, label: 'Inventory Data', icon: Layers, tone: 'hover:border-amber-300 hover:bg-amber-50/50 dark:hover:bg-slate-950' },
+                      { id: 'EMPLOYEES' as ExportType, label: 'Employee Data', icon: Briefcase, tone: 'hover:border-teal-300 hover:bg-teal-50/50 dark:hover:bg-slate-950' },
+                      { id: 'SALES' as ExportType, label: 'Sales Data', icon: FileSpreadsheet, tone: 'hover:border-sky-300 hover:bg-sky-50/50 dark:hover:bg-slate-950' },
+                      { id: 'PURCHASES' as ExportType, label: 'Purchase Data', icon: ShoppingBag, tone: 'hover:border-pink-300 hover:bg-pink-50/50 dark:hover:bg-slate-950' },
+                    ].map((item) => {
+                      const Icon = item.icon;
+                      return (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => exportCategory(item.id)}
+                          className={`flex items-center justify-between gap-2 px-3 py-2.5 border border-slate-200 rounded-lg text-left text-xs text-slate-700 transition-all ${item.tone}`}
+                        >
+                          <span className="flex items-center gap-2 min-w-0">
+                            <Icon className="w-4 h-4 text-slate-500 shrink-0" />
+                            <span className="font-semibold truncate">{item.label}</span>
+                          </span>
+                          <Download className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
             )}

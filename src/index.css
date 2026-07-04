@@ -8,6 +8,20 @@
 
 @variant dark (&:where(.dark, .dark *));
 
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  overflow: hidden;
+}
+
+button {
+  cursor: pointer;
+}
+
 /* Base text selection comfort */
 ::selection {
   background-color: rgba(99, 102, 241, 0.15);
@@ -50,7 +64,8 @@
   color: #cbd5e1;
 }
 
-.markdown-body ul, .markdown-body ol {
+.markdown-body ul,
+.markdown-body ol {
   margin-bottom: 1rem;
   padding-left: 1.25rem;
   list-style-type: decimal;
@@ -88,7 +103,8 @@
   margin-bottom: 1rem;
 }
 
-.markdown-body th, .markdown-body td {
+.markdown-body th,
+.markdown-body td {
   border: 1px solid #1e293b;
   padding: 0.5rem;
   text-align: left;
@@ -117,7 +133,7 @@
 
 /* Modals, Cards, and Dropdown containers */
 .dark .bg-white,
-.dark [role="dialog"] > div:not(.keep-light) {
+.dark [role="dialog"]>div:not(.keep-light) {
   background-color: #0f172a !important;
   color: #cbd5e1 !important;
 }
@@ -127,8 +143,8 @@
 .dark .border-slate-150,
 .dark .border-slate-200,
 .dark .border-slate-300,
-.dark .divide-slate-100 > *,
-.dark .divide-slate-200 > *,
+.dark .divide-slate-100>*,
+.dark .divide-slate-200>*,
 .dark .border-b,
 .dark .border-t,
 .dark .border-r,
@@ -170,10 +186,10 @@
 }
 
 /* Light gray background panels/blocks */
-.dark .bg-slate-50/70,
+.dark .bg-slate-50\/70,
 .dark .bg-slate-50,
-.dark .bg-slate-100/50,
-.dark .bg-slate-100/80,
+.dark .bg-slate-100\/50,
+.dark .bg-slate-100\/80,
 .dark .bg-slate-100 {
   background-color: #1e293b !important;
 }
@@ -207,18 +223,22 @@
   background-color: rgba(30, 58, 138, 0.3) !important;
   color: #60a5fa !important;
 }
+
 .dark .bg-amber-50 {
   background-color: rgba(120, 53, 4, 0.3) !important;
   color: #fbbf24 !important;
 }
+
 .dark .bg-emerald-50 {
   background-color: rgba(6, 78, 59, 0.3) !important;
   color: #34d399 !important;
 }
+
 .dark .bg-sky-50 {
   background-color: rgba(12, 74, 96, 0.3) !important;
   color: #38bdf8 !important;
 }
+
 .dark .bg-red-50 {
   background-color: rgba(153, 27, 27, 0.3) !important;
   color: #f87171 !important;
@@ -235,4 +255,45 @@
   background-color: #0f172a !important;
   border-color: #1e293b !important;
   color: #cbd5e1 !important;
+}
+
+/* ==========================================
+   PREMIUM CUSTOM LOADING ANIMATIONS
+   ========================================== */
+@keyframes spin-reverse {
+  from {
+    transform: rotate(360deg);
+  }
+
+  to {
+    transform: rotate(0deg);
+  }
+}
+
+.animate-spin-reverse {
+  animation: spin-reverse 3s linear infinite;
+}
+
+.animate-spin-slow {
+  animation: spin 8s linear infinite;
+}
+
+@keyframes pulse-glow {
+
+  0%,
+  100% {
+    transform: scale(0.95);
+    opacity: 0.55;
+    filter: drop-shadow(0 0 4px rgba(99, 102, 241, 0.2));
+  }
+
+  50% {
+    transform: scale(1.05);
+    opacity: 1;
+    filter: drop-shadow(0 0 15px rgba(99, 102, 241, 0.7));
+  }
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
 }

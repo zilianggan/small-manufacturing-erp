@@ -1,6 +1,7 @@
 import React from 'react';
 import { ChevronDown, ChevronRight, ChevronLeft, User } from 'lucide-react';
 import { WorkflowTask } from '../types';
+import ComboBox from './ComboBox';
 
 interface OrderAccordionProps {
   orderId: string;
@@ -8,16 +9,20 @@ interface OrderAccordionProps {
   colKey: WorkflowTask['currentStep'];
   onAssignTask: (taskId: string, employeeName: string) => void;
   employees: any[];
+  onSearchEmployees: (query: string) => void;
+  employeesSearchLoading: boolean;
   onAdvance: (taskId: string, currentStep: WorkflowTask['currentStep']) => void;
   onRevert: (taskId: string, currentStep: WorkflowTask['currentStep']) => void;
   isOpen: boolean;
   onToggle: () => void;
 }
 
-export default function OrderAccordion({ orderId, tasks, colKey, onAssignTask, employees, onAdvance, onRevert, isOpen, onToggle }: OrderAccordionProps) {
+export default function OrderAccordion({ orderId, tasks, colKey, onAssignTask, employees, onSearchEmployees, employeesSearchLoading, onAdvance, onRevert, isOpen, onToggle }: OrderAccordionProps) {
   const handleBulkAssign = (employeeName: string) => {
     tasks.forEach(task => onAssignTask(task.id, employeeName));
   };
+
+  const employeeOptions = employees.map(emp => ({ value: emp.name, label: emp.name }));
 
   return (
     <div className="bg-white border border-slate-200 rounded-lg shadow-sm">
@@ -31,30 +36,27 @@ export default function OrderAccordion({ orderId, tasks, colKey, onAssignTask, e
       
       {isOpen && (
         <div className="p-2 border-t border-slate-100 space-y-2">
-            <select
-                onChange={(e) => handleBulkAssign(e.target.value)}
-                className="w-full text-[9px] border rounded p-1 mb-2"
-            >
-                <option value="">Bulk Assign</option>
-                {employees.filter(emp => emp.status === 'ACTIVE').map(emp => (
-                    <option key={emp.id} value={emp.name}>{emp.name}</option>
-                ))}
-            </select>
+            <ComboBox
+              value=""
+              onChange={handleBulkAssign}
+              noneLabel="Bulk Assign..."
+              options={employeeOptions}
+              onSearch={onSearchEmployees}
+              searchLoading={employeesSearchLoading}
+            />
           {tasks.map(task => (
             <div key={task.id} className="text-[10px] p-2 bg-slate-50 border border-slate-200 rounded shadow-sm space-y-1.5 mb-3">
                 <p className="font-semibold text-slate-800">{task.quantity}x {task.productName}</p>
                 <div className="flex items-center space-x-1.5">
                     <User className="w-3 h-3 text-slate-400" />
-                    <select
-                        value={task.assignedTo || ''}
-                        onChange={(e) => onAssignTask(task.id, e.target.value)}
-                        className="w-full text-[9px] border border-slate-200 rounded p-0.5 bg-white"
-                    >
-                        <option value="">Unassigned</option>
-                        {employees.filter(emp => emp.status === 'ACTIVE').map(emp => (
-                            <option key={emp.id} value={emp.name}>{emp.name}</option>
-                        ))}
-                    </select>
+                    <ComboBox
+                      value={task.assignedTo || ''}
+                      onChange={(v) => onAssignTask(task.id, v)}
+                      noneLabel="Unassigned"
+                      options={employeeOptions}
+                      onSearch={onSearchEmployees}
+                      searchLoading={employeesSearchLoading}
+                    />
                 </div>
                 <div className="flex justify-between pt-1 border-t border-slate-200">
                     {task.currentStep !== 'PREPARATION' ? (

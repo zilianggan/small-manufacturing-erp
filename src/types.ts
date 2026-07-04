@@ -22,6 +22,8 @@ export interface InventoryItem {
   supplierId?: string;
   description?: string;
   attachments?: Attachment[];
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface Vendor {
@@ -34,6 +36,8 @@ export interface Vendor {
   address: string;
   rating: number; // 1-5
   attachments?: Attachment[];
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface Client {
@@ -46,6 +50,8 @@ export interface Client {
   address: string;
   totalOrdersValue: number;
   attachments?: Attachment[];
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface SalesOrderItem {
@@ -71,6 +77,8 @@ export interface SalesOrder {
   workflowTaskId?: string;
   attachments?: Attachment[];
   items?: SalesOrderItem[];
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface PurchaseOrderItem {
@@ -95,6 +103,8 @@ export interface PurchaseOrder {
   receivedDate?: string;
   attachments?: Attachment[];
   items?: PurchaseOrderItem[];
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface WorkflowTask {
@@ -107,6 +117,8 @@ export interface WorkflowTask {
   startDate: string;
   endDate?: string;
   notes?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface Employee {
@@ -117,6 +129,8 @@ export interface Employee {
   status: 'ACTIVE' | 'INACTIVE';
   email?: string;
   phone?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface DashboardStats {

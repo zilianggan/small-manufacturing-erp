@@ -4,10 +4,14 @@
  */
 
 import React, { useState, useMemo, useEffect } from 'react';
-import { getPurchaseOrders, addPurchaseOrder, updatePurchaseOrderStatus, getVendors, getInventory } from '../services/db';
+import { addPurchaseOrder, getPurchaseOrders, savePurchaseOrders, updatePurchaseOrderStatus } from '../services/db';
+import { useTableData } from '../hooks/useTableData';
 import { PurchaseOrder, Vendor, InventoryItem, Attachment } from '../types';
-import { Search, Plus, Calendar, PackageCheck, AlertCircle, ShoppingBag, ClipboardList, Check, Paperclip, Trash2, Edit } from 'lucide-react';
+import { Plus, Calendar, Check, Paperclip, Trash2, Edit } from 'lucide-react';
 import AttachmentSection from './AttachmentSection';
+import LoadingSpinner from './LoadingSpinner';
+import ComboBox from './ComboBox';
+import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, FormField, SearchInput } from './ui';
 
 interface PurchasesViewProps {
   quickProcureState?: { itemId: string; itemName: string; vendorId: string } | null;
@@ -15,9 +19,11 @@ interface PurchasesViewProps {
 }
 
 export default function PurchasesView({ quickProcureState, clearQuickProcure }: PurchasesViewProps) {
-  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>(() => getPurchaseOrders());
-  const vendors = useMemo(() => getVendors(), []);
-  const inventory = useMemo(() => getInventory(), []);
+  const { data: purchaseOrdersData, loading } = useTableData<PurchaseOrder>('purchase_orders');
+  const { data: vendors } = useTableData<Vendor>('vendors');
+  const { data: inventory } = useTableData<InventoryItem>('inventory_items');
+  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
+  useEffect(() => { setPurchaseOrders(purchaseOrdersData); }, [purchaseOrdersData]);
 
   const rawMaterials = useMemo(() => {
     return inventory.filter(item => item.type === 'RAW_MATERIAL');
@@ -48,8 +54,8 @@ export default function PurchasesView({ quickProcureState, clearQuickProcure }: 
   const handleEditPO = (po: PurchaseOrder) => {
     setEditPOId(po.id);
     setFormVendorId(po.vendorId);
-    setFormAttachment(po.attachment);
-    
+    setFormAttachment(po.attachments?.[0]);
+
     if (po.items && po.items.length > 0) {
       setFormItems(po.items);
     } else {
@@ -61,7 +67,7 @@ export default function PurchasesView({ quickProcureState, clearQuickProcure }: 
         totalCost: po.totalCost
       }]);
     }
-    
+
     setShowAddForm(true);
   };
 
@@ -82,7 +88,7 @@ export default function PurchasesView({ quickProcureState, clearQuickProcure }: 
           totalCost: suggestQty * material.unitCost
         }]);
       }
-      
+
       // Clear parent trigger state
       if (clearQuickProcure) {
         clearQuickProcure();
@@ -186,7 +192,7 @@ export default function PurchasesView({ quickProcureState, clearQuickProcure }: 
       quantity: overallQty,
       unitCost: finalItems[0].unitCost,
       status: 'ORDERED' as PurchaseOrder['status'],
-      attachment: formAttachment,
+      attachments: formAttachment ? [formAttachment] : [],
       items: finalItems
     };
 
@@ -194,11 +200,8 @@ export default function PurchasesView({ quickProcureState, clearQuickProcure }: 
       const allPOs = getPurchaseOrders();
       const poIndex = allPOs.findIndex(po => po.id === editPOId);
       if (poIndex !== -1) {
-        allPOs[poIndex] = {
-          ...allPOs[poIndex],
-          ...newPOPayload
-        };
-        localStorage.setItem('erp_purchase_orders', JSON.stringify(allPOs));
+        allPOs[poIndex] = { ...allPOs[poIndex], ...newPOPayload };
+        savePurchaseOrders(allPOs, allPOs[poIndex]);
       }
     } else {
       addPurchaseOrder(newPOPayload);
@@ -226,7 +229,7 @@ export default function PurchasesView({ quickProcureState, clearQuickProcure }: 
   const handleDeletePO = (id: string) => {
     if (confirm('Are you sure you want to delete this Purchase Order?')) {
       const updated = getPurchaseOrders().filter(po => po.id !== id);
-      localStorage.setItem('erp_purchase_orders', JSON.stringify(updated));
+      savePurchaseOrders(updated, undefined, id);
       setPurchaseOrders(updated);
     }
   };
@@ -239,21 +242,20 @@ export default function PurchasesView({ quickProcureState, clearQuickProcure }: 
     );
   }, [purchaseOrders, searchQuery]);
 
+  if (loading) {
+    return <LoadingSpinner message="Verifying supply orders..." subtitle="PURCHASE_ORDERS" />;
+  }
+
   return (
     <div className="space-y-6" id="purchases-view">
-      
+
       {/* Top filter/search actions */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div className="relative flex-1 max-w-md">
-          <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-          <input
-            type="text"
-            placeholder="Search POs by supplier or material..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-9 pr-4 py-2 bg-white border border-slate-200 rounded-lg text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-blue-500 font-sans"
-          />
-        </div>
+        <SearchInput
+          value={searchQuery}
+          onChange={setSearchQuery}
+          placeholder="Search POs by supplier or material..."
+        />
 
         <button
           onClick={() => setShowAddForm(!showAddForm)}
@@ -265,180 +267,157 @@ export default function PurchasesView({ quickProcureState, clearQuickProcure }: 
       </div>
 
       {/* Creation PO form as Dialog Modal */}
-      {showAddForm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
-          <div className="w-full max-w-2xl bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden animate-in fade-in zoom-in duration-200">
-            <div className="p-5 border-b border-slate-100 flex items-center justify-between">
-              <h3 className="font-sans font-semibold text-slate-900 text-sm">
-                {editPOId ? 'Edit Material Purchase Order (PO)' : 'Issue Material Purchase Order (PO)'}
-              </h3>
-              <button 
-                type="button" 
-                onClick={() => { setShowAddForm(false); if (clearQuickProcure) clearQuickProcure(); }}
-                className="text-slate-400 hover:text-slate-600 font-bold text-base p-1 leading-none"
-              >
-                &times;
-              </button>
-            </div>
-            <form onSubmit={handleCreatePO} className="p-5 space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs text-slate-600">
-                
-                <div className="space-y-1 sm:col-span-2">
-                  <label className="font-semibold block text-slate-700">Select Vendor *</label>
-                  <select
-                    required
-                    value={formVendorId}
-                    onChange={(e) => handleVendorSelect(e.target.value)}
-                    className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 text-slate-800 font-medium"
-                  >
-                    <option value="">-- Select Vendor --</option>
-                    {vendors.map(v => (
-                      <option key={v.id} value={v.id}>{v.name} (Rating: {v.rating})</option>
-                    ))}
-                  </select>
-                </div>
+      <Dialog
+        open={showAddForm}
+        onClose={() => { setShowAddForm(false); if (clearQuickProcure) clearQuickProcure(); }}
+        title={editPOId ? 'Edit Material Purchase Order (PO)' : 'Issue Material Purchase Order (PO)'}
+      >
+        <form onSubmit={handleCreatePO} className="p-5 space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs text-slate-600">
 
-                {/* List of Added Purchase Items */}
-                <div className="sm:col-span-2 border border-slate-150 rounded-lg p-3 bg-slate-50/50 space-y-2">
-                  <span className="font-semibold block text-slate-700 text-xs">Materials to Procure ({formItems.length})</span>
-                  {formItems.length === 0 ? (
-                    <div className="text-center py-4 text-slate-400 border border-dashed border-slate-200 rounded-lg bg-white text-[11px]">
-                      No materials added yet. Specify material details below to add items to this PO.
-                    </div>
-                  ) : (
-                    <div className="overflow-x-auto border border-slate-200 rounded-lg bg-white">
-                      <table className="w-full text-left text-[11px] border-collapse">
-                        <thead>
-                          <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 font-medium dark:bg-slate-800 dark:border-slate-700 dark:text-slate-400">
-                            <th className="p-2">Material Name</th>
-                            <th className="p-2 text-right">Quantity</th>
-                            <th className="p-2 text-right">Unit Cost</th>
-                            <th className="p-2 text-right">Total (RM)</th>
-                            <th className="p-2 text-center" style={{ width: '40px' }}></th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-150 text-slate-700">
-                          {formItems.map((item, idx) => (
-                            <tr key={idx} className="hover:bg-slate-50">
-                              <td className="p-2 font-semibold text-slate-800">{item.itemName}</td>
-                              <td className="p-2 text-right font-mono">{item.quantity}</td>
-                              <td className="p-2 text-right font-mono">RM {item.unitCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                              <td className="p-2 text-right font-mono font-semibold">RM {item.totalCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                              <td className="p-2 text-center">
-                                <button
-                                  type="button"
-                                  onClick={() => handleRemoveFormItem(idx)}
-                                  className="text-red-500 hover:text-red-700 p-1"
-                                  title="Remove item"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </div>
+            <FormField label="Select Vendor *" labelClassName="font-semibold block text-slate-700" colSpan="sm:col-span-2">
+              <ComboBox
+                required
+                value={formVendorId}
+                onChange={(v) => handleVendorSelect(v)}
+                noneLabel="-- Select Vendor --"
+                options={vendors.map(v => ({ value: v.id, label: v.name, sublabel: `Rating: ${v.rating}` }))}
+              />
+            </FormField>
 
-                {/* Inline Add Material Panel */}
-                <div className="sm:col-span-2 border border-blue-100 rounded-lg p-4 bg-blue-50/20 grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
-                  <div className="sm:col-span-6 space-y-1">
-                    <label className="font-semibold block text-slate-700 text-[10px] uppercase tracking-wider">Material Selection</label>
-                    <select
-                      value={tempItemId}
-                      onChange={(e) => handleMaterialSelect(e.target.value)}
-                      disabled={!formVendorId}
-                      className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg focus:outline-none text-xs text-slate-800 disabled:bg-slate-50 disabled:text-slate-400"
-                    >
-                      <option value="">-- Choose Material --</option>
-                      {filteredMaterialsForVendor.map(m => (
-                        <option key={m.id} value={m.id}>{m.name} (Stock: {m.quantity})</option>
+            {/* List of Added Purchase Items */}
+            <div className="sm:col-span-2 border border-slate-150 rounded-lg p-3 bg-slate-50/50 space-y-2">
+              <span className="font-semibold block text-slate-700 text-xs">Materials to Procure ({formItems.length})</span>
+              {formItems.length === 0 ? (
+                <div className="text-center py-4 text-slate-400 border border-dashed border-slate-200 rounded-lg bg-white text-[11px]">
+                  No materials added yet. Specify material details below to add items to this PO.
+                </div>
+              ) : (
+                <div className="overflow-x-auto border border-slate-200 rounded-lg bg-white">
+                  <table className="w-full text-left text-[11px] border-collapse">
+                    <thead>
+                      <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 font-medium dark:bg-slate-800 dark:border-slate-700 dark:text-slate-400">
+                        <th className="p-2">Material Name</th>
+                        <th className="p-2 text-right">Quantity</th>
+                        <th className="p-2 text-right">Unit Cost</th>
+                        <th className="p-2 text-right">Total (RM)</th>
+                        <th className="p-2 text-center" style={{ width: '40px' }}></th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-150 text-slate-700">
+                      {formItems.map((item, idx) => (
+                        <tr key={idx} className="hover:bg-slate-50">
+                          <td className="p-2 font-semibold text-slate-800">{item.itemName}</td>
+                          <td className="p-2 text-right font-mono">{item.quantity}</td>
+                          <td className="p-2 text-right font-mono">RM {item.unitCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                          <td className="p-2 text-right font-mono font-semibold">RM {item.totalCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                          <td className="p-2 text-center">
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveFormItem(idx)}
+                              className="text-red-500 hover:text-red-700 p-1"
+                              title="Remove item"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </td>
+                        </tr>
                       ))}
-                    </select>
-                  </div>
-
-                  <div className="sm:col-span-2 space-y-1">
-                    <label className="font-semibold block text-slate-700 text-[10px] uppercase tracking-wider">Quantity</label>
-                    <input
-                      type="number"
-                      min="1"
-                      value={tempQuantity}
-                      onChange={(e) => setTempQuantity(Number(e.target.value))}
-                      disabled={!formVendorId}
-                      className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg focus:outline-none text-xs text-slate-800 disabled:bg-slate-50"
-                    />
-                  </div>
-
-                  <div className="sm:col-span-2 space-y-1">
-                    <label className="font-semibold block text-slate-700 text-[10px] uppercase tracking-wider">Unit Cost (RM)</label>
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={tempUnitCost}
-                      onChange={(e) => setTempUnitCost(Number(e.target.value))}
-                      disabled={!formVendorId}
-                      className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg focus:outline-none text-xs text-slate-800 disabled:bg-slate-50"
-                    />
-                  </div>
-
-                  <div className="sm:col-span-2">
-                    <button
-                      type="button"
-                      onClick={handleAddTempItem}
-                      disabled={!formVendorId || !tempItemId || tempQuantity <= 0}
-                      className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[10px] font-semibold transition-colors shadow-sm disabled:bg-slate-200 disabled:text-slate-400 disabled:shadow-none"
-                    >
-                      + Add Item
-                    </button>
-                  </div>
+                    </tbody>
+                  </table>
                 </div>
+              )}
+            </div>
 
-                {/* Subtotals Block */}
-                <div className="bg-amber-50 rounded-lg p-3 sm:col-span-2 flex items-center justify-between border border-amber-100">
-                  <div>
-                    <span className="font-semibold block text-[11px] text-amber-900">Total Purchase Cost:</span>
-                    <span className="text-[10px] text-amber-700 font-sans">Payment will be logged under company material costs.</span>
-                  </div>
-                  <div className="font-mono text-base font-bold text-amber-950">
-                    RM {Math.max(0, formItems.reduce((sum, item) => sum + item.totalCost, 0) + (tempItemId && tempQuantity > 0 ? tempQuantity * tempUnitCost : 0)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </div>
-                </div>
+            {/* Inline Add Material Panel */}
+            <div className="sm:col-span-2 border border-blue-100 rounded-lg p-4 bg-blue-50/20 grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
+              <FormField
+                label="Material Selection"
+                labelClassName="font-semibold block text-slate-700 text-[10px] uppercase tracking-wider"
+                colSpan="sm:col-span-6"
+              >
+                <ComboBox
+                  value={tempItemId}
+                  onChange={(v) => handleMaterialSelect(v)}
+                  disabled={!formVendorId}
+                  noneLabel="-- Choose Material --"
+                  options={filteredMaterialsForVendor.map(m => ({ value: m.id, label: m.name, sublabel: `Stock: ${m.quantity}` }))}
+                />
+              </FormField>
 
-                <div className="sm:col-span-2">
-                  <AttachmentSection 
-                    attachment={formAttachment} 
-                    onAttachmentChange={setFormAttachment} 
-                    label="Quotation or Invoice Document (Optional)"
-                    helperText="Upload any supplier quotation, invoice, specification, or receipt (Max 1MB)"
-                  />
-                </div>
+              <FormField
+                label="Quantity"
+                labelClassName="font-semibold block text-slate-700 text-[10px] uppercase tracking-wider"
+                colSpan="sm:col-span-2"
+              >
+                <input
+                  type="number"
+                  min="1"
+                  value={tempQuantity}
+                  onChange={(e) => setTempQuantity(Number(e.target.value))}
+                  disabled={!formVendorId}
+                  className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg focus:outline-none text-xs text-slate-800 disabled:bg-slate-50"
+                />
+              </FormField>
 
-              </div>
-              <div className="flex items-center justify-end space-x-2 pt-3 border-t border-slate-100 text-xs mt-4">
+              <FormField
+                label="Unit Cost (RM)"
+                labelClassName="font-semibold block text-slate-700 text-[10px] uppercase tracking-wider"
+                colSpan="sm:col-span-2"
+              >
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={tempUnitCost}
+                  onChange={(e) => setTempUnitCost(Number(e.target.value))}
+                  disabled={!formVendorId}
+                  className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg focus:outline-none text-xs text-slate-800 disabled:bg-slate-50"
+                />
+              </FormField>
+
+              <div className="sm:col-span-2">
                 <button
                   type="button"
-                  onClick={() => { setShowAddForm(false); if (clearQuickProcure) clearQuickProcure(); }}
-                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-medium transition-colors"
+                  onClick={handleAddTempItem}
+                  disabled={!formVendorId || !tempItemId || tempQuantity <= 0}
+                  className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[10px] font-semibold transition-colors shadow-sm disabled:bg-slate-200 disabled:text-slate-400 disabled:shadow-none"
                 >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors"
-                >
-                  {editPOId ? 'Update Purchase Order' : 'Issue Purchase Order'}
+                  + Add Item
                 </button>
               </div>
-            </form>
+            </div>
+
+            {/* Subtotals Block */}
+            <div className="bg-amber-50 rounded-lg p-3 sm:col-span-2 flex items-center justify-between border border-amber-100">
+              <div>
+                <span className="font-semibold block text-[11px] text-amber-900">Total Purchase Cost:</span>
+                <span className="text-[10px] text-amber-700 font-sans">Payment will be logged under company material costs.</span>
+              </div>
+              <div className="font-mono text-base font-bold text-amber-950">
+                RM {Math.max(0, formItems.reduce((sum, item) => sum + item.totalCost, 0) + (tempItemId && tempQuantity > 0 ? tempQuantity * tempUnitCost : 0)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </div>
+            </div>
+
+            <div className="sm:col-span-2">
+              <AttachmentSection
+                attachment={formAttachment}
+                onAttachmentChange={setFormAttachment}
+                label="Quotation or Invoice Document (Optional)"
+                helperText="Upload any supplier quotation, invoice, specification, or receipt (Max 1MB)"
+              />
+            </div>
+
           </div>
-        </div>
-      )}
+          <DialogFooter>
+            <DialogCancelButton onClick={() => { setShowAddForm(false); if (clearQuickProcure) clearQuickProcure(); }} />
+            <DialogSubmitButton>{editPOId ? 'Update Purchase Order' : 'Issue Purchase Order'}</DialogSubmitButton>
+          </DialogFooter>
+        </form>
+      </Dialog>
 
       {/* PO Listing Table */}
-      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
+      <Card className="overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs border-collapse">
             <thead>
@@ -462,7 +441,7 @@ export default function PurchasesView({ quickProcureState, clearQuickProcure }: 
               ) : (
                 filteredPOs.map((po) => (
                   <tr key={po.id} className="group hover:bg-slate-50/50 transition-colors">
-                    
+
                     {/* PO Code */}
                     <td className="p-4 font-mono font-semibold text-slate-900">
                       PO-#{po.id.split('-')[1] || po.id}
@@ -493,16 +472,16 @@ export default function PurchasesView({ quickProcureState, clearQuickProcure }: 
                             <div className="text-[10px] text-slate-400 font-mono">Qty: {po.quantity} units</div>
                           </div>
                         )}
-                        {po.attachment && (
+                        {po.attachments?.[0] && (
                           <div className="pt-1.5 flex items-center">
                             <a
-                              href={po.attachment.dataUrl}
-                              download={po.attachment.name}
+                              href={po.attachments[0].dataUrl}
+                              download={po.attachments[0].name}
                               className="inline-flex items-center space-x-1 px-1.5 py-0.5 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded text-[10px] font-mono transition-colors"
                               title="Download attachment"
                             >
                               <Paperclip className="w-2.5 h-2.5 text-blue-500 shrink-0" />
-                              <span className="truncate max-w-[120px]">{po.attachment.name}</span>
+                              <span className="truncate max-w-[120px]">{po.attachments[0].name}</span>
                             </a>
                           </div>
                         )}
@@ -524,12 +503,11 @@ export default function PurchasesView({ quickProcureState, clearQuickProcure }: 
 
                     {/* Status Badge */}
                     <td className="p-4">
-                      <span className={`px-2.5 py-1 rounded-full font-mono text-[10px] font-medium border ${
-                        po.status === 'DRAFT' ? 'bg-slate-50 text-slate-800 border-slate-200' :
-                        po.status === 'ORDERED' ? 'bg-amber-50 text-amber-800 border-amber-200' :
-                        po.status === 'RECEIVED' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' :
-                        'bg-red-50 text-red-800 border-red-200'
-                      }`}>
+                      <span className={`px-2.5 py-1 rounded-full font-mono text-[10px] font-medium border ${po.status === 'DRAFT' ? 'bg-slate-50 text-slate-800 border-slate-200' :
+                          po.status === 'ORDERED' ? 'bg-amber-50 text-amber-800 border-amber-200' :
+                            po.status === 'RECEIVED' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' :
+                              'bg-red-50 text-red-800 border-red-200'
+                        }`}>
                         {po.status === 'ORDERED' ? 'Pending Stock' : po.status}
                       </span>
                     </td>
@@ -552,7 +530,7 @@ export default function PurchasesView({ quickProcureState, clearQuickProcure }: 
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
-                        
+
                         {po.status === 'ORDERED' && (
                           <>
                             <button
@@ -587,7 +565,7 @@ export default function PurchasesView({ quickProcureState, clearQuickProcure }: 
             </tbody>
           </table>
         </div>
-      </div>
+      </Card>
     </div>
   );
 }

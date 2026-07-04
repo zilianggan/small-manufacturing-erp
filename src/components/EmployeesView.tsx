@@ -1,28 +1,27 @@
-import React, { useState, useRef } from 'react';
-import { 
-  Users, 
-  Plus, 
-  Trash2, 
-  Edit, 
-  Upload, 
-  Mail, 
-  Phone, 
-  Briefcase, 
-  Check, 
-  X, 
-  Search, 
-  ChevronRight,
-  Clipboard,
-  CheckCircle2,
-  AlertTriangle,
-  UploadCloud,
-  FileText
+import React, { useState, useEffect } from 'react';
+import {
+  Users,
+  Plus,
+  Trash2,
+  Edit,
+  Mail,
+  Phone,
+  Briefcase,
+  Search
 } from 'lucide-react';
 import { Employee } from '../types';
-import { getEmployees, saveEmployees } from '../services/db';
+import { saveEmployees } from '../services/db';
+import { useTableData } from '../hooks/useTableData';
+import LoadingSpinner from './LoadingSpinner';
+import ComboBox from './ComboBox';
+import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, FormField } from './ui';
+
+const employeeFieldInputClassName = 'w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 font-sans text-xs text-slate-800';
 
 export default function EmployeesView() {
-  const [employees, setEmployees] = useState<Employee[]>(() => getEmployees());
+  const { data: employeesData, loading } = useTableData<Employee>('employees');
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  useEffect(() => { setEmployees(employeesData); }, [employeesData]);
   
   // Search and Filters
   const [searchTerm, setSearchTerm] = useState('');
@@ -77,7 +76,7 @@ export default function EmployeesView() {
     if (confirm(`Are you sure you want to delete ${empName}? This employee will no longer be listed in the team catalog.`)) {
       const updated = employees.filter(e => e.id !== id);
       setEmployees(updated);
-      saveEmployees(updated);
+      saveEmployees(updated, undefined, id);
     }
   };
 
@@ -115,10 +114,17 @@ export default function EmployeesView() {
       updatedList = [...employees, newEmployee];
     }
 
+    const changedEmp = editingEmployee
+      ? updatedList.find(e => e.id === editingEmployee.id)
+      : updatedList[updatedList.length - 1];
     setEmployees(updatedList);
-    saveEmployees(updatedList);
+    saveEmployees(updatedList, changedEmp);
     setIsFormOpen(false);
   };
+
+  if (loading) {
+    return <LoadingSpinner message="Accessing workforce roster..." subtitle="TEAM_CATALOG" />;
+  }
 
   return (
     <div className="space-y-6">
@@ -149,7 +155,7 @@ export default function EmployeesView() {
       </div>
 
       {/* Searching & filters panel */}
-      <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm grid grid-cols-1 md:grid-cols-4 gap-3">
+      <Card className="p-4 grid grid-cols-1 md:grid-cols-4 gap-3">
         <div className="relative md:col-span-2">
           <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
           <input
@@ -163,47 +169,42 @@ export default function EmployeesView() {
         </div>
 
         <div>
-          <select
+          <ComboBox
             id="select-dept-filter"
             value={deptFilter}
-            onChange={(e) => setDeptFilter(e.target.value)}
-            className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-750 focus:outline-none focus:border-blue-500 font-sans"
-          >
-            <option value="ALL">All Departments</option>
-            {departments.map(dept => (
-              <option key={dept} value={dept}>{dept}</option>
-            ))}
-          </select>
+            onChange={setDeptFilter}
+            options={[{ value: 'ALL', label: 'All Departments' }, ...departments.map(d => ({ value: d, label: d }))]}
+          />
         </div>
 
         <div>
-          <select
+          <ComboBox
             id="select-status-filter"
             value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-750 focus:outline-none focus:border-blue-500 font-sans"
-          >
-            <option value="ALL">All Statuses</option>
-            <option value="ACTIVE">Active Team</option>
-            <option value="INACTIVE">Inactive / Leave</option>
-          </select>
+            onChange={setStatusFilter}
+            options={[
+              { value: 'ALL', label: 'All Statuses' },
+              { value: 'ACTIVE', label: 'Active Team' },
+              { value: 'INACTIVE', label: 'Inactive / Leave' },
+            ]}
+          />
         </div>
-      </div>
+      </Card>
 
       {/* Employees catalog list */}
       {filteredEmployees.length === 0 ? (
-        <div className="p-12 text-center bg-white border border-slate-200 rounded-xl shadow-sm">
+        <Card className="p-12 text-center">
           <Users className="w-10 h-10 text-slate-300 mx-auto stroke-1 mb-2" />
           <span className="text-sm font-semibold text-slate-800 block">No Personnel Found</span>
           <p className="text-xs text-slate-400 mt-1 max-w-md mx-auto">Try matching with different filters, using the import helper, or adding employees manually above.</p>
-        </div>
+        </Card>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {filteredEmployees.map(emp => (
-            <div 
+            <Card
               key={emp.id}
               id={`emp-card-${emp.id}`}
-              className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm hover:border-slate-300 hover:shadow-md transition-all flex flex-col justify-between relative group animate-in fade-in slide-in-from-bottom-2 duration-150"
+              className="p-5 hover:border-slate-300 hover:shadow-md transition-all flex flex-col justify-between relative group animate-in fade-in slide-in-from-bottom-2 duration-150"
             >
               <div className="space-y-3">
                 <div className="flex items-start justify-between">
@@ -269,124 +270,97 @@ export default function EmployeesView() {
                   <Trash2 className="w-3.5 h-3.5" />
                 </button>
               </div>
-            </div>
+            </Card>
           ))}
         </div>
       )}
 
       {/* Add / Edit Form Modal */}
-      {isFormOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
-          <div className="w-full max-w-md bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden animate-in fade-in zoom-in duration-200">
-            <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50">
-              <h3 className="font-sans font-bold text-slate-900 text-sm flex items-center space-x-2">
-                <span className="p-1 bg-blue-50 text-blue-600 rounded">
-                  <Users className="w-4 h-4" />
-                </span>
-                <span>{editingEmployee ? 'Edit Personnel Member' : 'Add New Personnel'}</span>
-              </h3>
-              <button 
-                type="button" 
-                onClick={() => setIsFormOpen(false)}
-                className="text-slate-400 hover:text-slate-600 font-bold text-base p-1"
-              >
-                &times;
-              </button>
-            </div>
+      <Dialog
+        open={isFormOpen}
+        onClose={() => setIsFormOpen(false)}
+        maxWidth="max-w-md"
+        headerClassName="bg-slate-50"
+        titleClassName="font-sans font-bold text-slate-900 text-sm"
+        titleIcon={
+          <span className="p-1 bg-blue-50 text-blue-600 rounded">
+            <Users className="w-4 h-4" />
+          </span>
+        }
+        title={editingEmployee ? 'Edit Personnel Member' : 'Add New Personnel'}
+      >
+        <form onSubmit={handleSubmit} className="p-5 space-y-4 text-xs text-slate-600">
+          <FormField label="Full Name *" labelClassName="font-semibold block text-slate-700">
+            <input
+              type="text"
+              required
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. John Doe"
+              className={employeeFieldInputClassName}
+            />
+          </FormField>
 
-            <form onSubmit={handleSubmit} className="p-5 space-y-4 text-xs text-slate-600">
-              <div className="space-y-1">
-                <label className="font-semibold block text-slate-700">Full Name *</label>
-                <input
-                  type="text"
-                  required
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="e.g. John Doe"
-                  className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 font-sans text-xs text-slate-800"
-                />
-              </div>
+          <FormField label="Designation / Role *" labelClassName="font-semibold block text-slate-700">
+            <input
+              type="text"
+              required
+              value={role}
+              onChange={(e) => setRole(e.target.value)}
+              placeholder="e.g. Mechanical Engineer, QC Lead"
+              className={employeeFieldInputClassName}
+            />
+          </FormField>
 
-              <div className="space-y-1">
-                <label className="font-semibold block text-slate-700">Designation / Role *</label>
-                <input
-                  type="text"
-                  required
-                  value={role}
-                  onChange={(e) => setRole(e.target.value)}
-                  placeholder="e.g. Mechanical Engineer, QC Lead"
-                  className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 font-sans text-xs text-slate-800"
-                />
-              </div>
+          <div className="grid grid-cols-2 gap-3">
+            <FormField label="Department" labelClassName="font-semibold block text-slate-700">
+              <ComboBox
+                value={department}
+                onChange={setDepartment}
+                options={departments.map(d => ({ value: d, label: d }))}
+              />
+            </FormField>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <label className="font-semibold block text-slate-700">Department</label>
-                  <select
-                    value={department}
-                    onChange={(e) => setDepartment(e.target.value)}
-                    className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 font-sans text-xs text-slate-800"
-                  >
-                    {departments.map(dept => (
-                      <option key={dept} value={dept}>{dept}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="font-semibold block text-slate-700">Availability Status</label>
-                  <select
-                    value={status}
-                    onChange={(e) => setStatus(e.target.value as 'ACTIVE' | 'INACTIVE')}
-                    className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 font-sans text-xs text-slate-800"
-                  >
-                    <option value="ACTIVE">ACTIVE</option>
-                    <option value="INACTIVE">INACTIVE</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="space-y-1">
-                <label className="font-semibold block text-slate-700">E-mail Address</label>
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="e.g. j.doe@sengjie.com"
-                  className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 font-sans text-xs text-slate-850"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <label className="font-semibold block text-slate-700">Phone Contact</label>
-                <input
-                  type="text"
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  placeholder="e.g. +60 12-345-6789"
-                  className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 font-sans text-xs text-slate-850"
-                />
-              </div>
-
-              <div className="flex items-center justify-end space-x-2 pt-3 border-t border-slate-100 text-xs mt-4">
-                <button
-                  type="button"
-                  onClick={() => setIsFormOpen(false)}
-                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-medium transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors shadow-sm"
-                >
-                  {editingEmployee ? 'Save Changes' : 'Create Record'}
-                </button>
-              </div>
-            </form>
+            <FormField label="Availability Status" labelClassName="font-semibold block text-slate-700">
+              <ComboBox
+                value={status}
+                onChange={(v) => setStatus(v as 'ACTIVE' | 'INACTIVE')}
+                options={[
+                  { value: 'ACTIVE', label: 'ACTIVE' },
+                  { value: 'INACTIVE', label: 'INACTIVE' },
+                ]}
+              />
+            </FormField>
           </div>
-        </div>
-      )}
+
+          <FormField label="E-mail Address" labelClassName="font-semibold block text-slate-700">
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="e.g. j.doe@sengjie.com"
+              className={employeeFieldInputClassName}
+            />
+          </FormField>
+
+          <FormField label="Phone Contact" labelClassName="font-semibold block text-slate-700">
+            <input
+              type="text"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              placeholder="e.g. +60 12-345-6789"
+              className={employeeFieldInputClassName}
+            />
+          </FormField>
+
+          <DialogFooter>
+            <DialogCancelButton onClick={() => setIsFormOpen(false)} />
+            <DialogSubmitButton className="shadow-sm">
+              {editingEmployee ? 'Save Changes' : 'Create Record'}
+            </DialogSubmitButton>
+          </DialogFooter>
+        </form>
+      </Dialog>
 
     </div>
   );

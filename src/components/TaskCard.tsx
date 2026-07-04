@@ -1,6 +1,7 @@
 import React from 'react';
 import { WorkflowTask } from '../types';
 import { User } from 'lucide-react';
+import ComboBox from './ComboBox';
 
 interface TaskCardProps {
   task: WorkflowTask;
@@ -16,17 +17,13 @@ export default function TaskCard({ task, onAssignTask, employees, onAdvance, onR
         <div className="font-semibold text-slate-900">{task.productName}</div>
         <div className="text-[10px] text-slate-500 font-mono">Order: {task.orderId}</div>
         <div className="flex items-center space-x-2 text-[10px]">
-            <User className="w-3 h-3 text-slate-400" />
-            <select
-                value={task.assignedTo || ''}
-                onChange={(e) => onAssignTask(task.id, e.target.value)}
-                className="border border-slate-200 rounded p-1 text-[9px] w-full"
-            >
-                <option value="">Unassigned</option>
-                {employees.filter(emp => emp.status === 'ACTIVE').map(emp => (
-                    <option key={emp.id} value={emp.name}>{emp.name}</option>
-                ))}
-            </select>
+            <User className="w-3 h-3 text-slate-400 shrink-0" />
+            <ComboBox
+              value={task.assignedTo || ''}
+              onChange={(v) => onAssignTask(task.id, v)}
+              noneLabel="Unassigned"
+              options={employees.filter(emp => emp.status === 'ACTIVE').map(emp => ({ value: emp.name, label: emp.name }))}
+            />
         </div>
         <div className="flex justify-between pt-2 border-t border-slate-100">
             <button onClick={onRevert} className="text-[9px] px-2 py-1 bg-slate-100 hover:bg-slate-200 rounded">Prev</button>

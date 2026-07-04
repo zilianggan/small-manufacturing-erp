@@ -5,20 +5,20 @@
 
 import React, { useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
-import { 
-  LayoutDashboard, 
-  Package, 
-  Users, 
-  FileSpreadsheet, 
-  ShoppingBag, 
-  Shuffle, 
-  BarChart3, 
-  Database, 
-  Download, 
-  Upload, 
-  BookOpen, 
-  Menu, 
-  X, 
+import {
+  LayoutDashboard,
+  Package,
+  Users,
+  FileSpreadsheet,
+  ShoppingBag,
+  Shuffle,
+  BarChart3,
+  Database,
+  Download,
+  Upload,
+  BookOpen,
+  Menu,
+  X,
   ArrowUpRight,
   Factory,
   Cpu,
@@ -28,7 +28,7 @@ import {
   Sun,
   Moon
 } from 'lucide-react';
-import { getCompanyProfile, saveCompanyProfile, loadInitialDataFromSupabase, useSyncStore } from './services/db';
+import { saveCompanyProfile, useSyncStore } from './services/db';
 import { CompanyProfile } from './types';
 import SignaturePad from './components/SignaturePad';
 
@@ -71,19 +71,30 @@ export default function App() {
   const [quickProcureItem, setQuickProcureItem] = useState<{ itemId: string; itemName: string; vendorId: string } | null>(null);
 
   // Company Profile states
-  const [companyProfile, setCompanyProfile] = useState<CompanyProfile>(() => getCompanyProfile());
+  const EMPTY_PROFILE: CompanyProfile = { name: '', iconType: 'database' };
+  const [companyProfile, setCompanyProfile] = useState<CompanyProfile>(EMPTY_PROFILE);
   const [showBrandingModal, setShowBrandingModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [isAppLoaded, setIsAppLoaded] = useState(false);
   const isSyncing = useSyncStore((state: any) => state.isSyncing);
-  
+
+  // Fetch company profile — localStorage first, fallback to API
   useEffect(() => {
-    loadInitialDataFromSupabase().then(() => {
-       setIsAppLoaded(true);
-       setRefreshKey(prev => prev + 1);
-       setCompanyProfile(getCompanyProfile());
-    });
+    setIsAppLoaded(true);
+    const cached = localStorage.getItem('erp_company_profile');
+    if (JSON.parse(cached)?.name) {
+      try { setCompanyProfile(JSON.parse(cached)); return; } catch { }
+    }
+    fetch('/api/profile')
+      .then(r => r.json())
+      .then(data => {
+        if (data) {
+          setCompanyProfile(data);
+          localStorage.setItem('erp_company_profile', JSON.stringify(data));
+        }
+      })
+      .catch(err => console.error('Failed to load company profile:', err));
   }, []);
 
 
@@ -103,15 +114,15 @@ export default function App() {
   const renderCompanyIcon = (sizeClass = "w-5 h-5") => {
     if (companyProfile.iconType === 'custom_image' && companyProfile.iconDataUrl) {
       return (
-        <img 
-          src={companyProfile.iconDataUrl} 
-          alt="Company logo" 
+        <img
+          src={companyProfile.iconDataUrl}
+          alt="Company logo"
           className={`${sizeClass} object-contain rounded`}
           referrerPolicy="no-referrer"
         />
       );
     }
-    
+
     switch (companyProfile.iconType) {
       case 'factory':
         return <Factory className={sizeClass} />;
@@ -139,7 +150,7 @@ export default function App() {
     const keys = ['erp_inventory', 'erp_vendors', 'erp_clients', 'erp_employees', 'erp_sales_orders', 'erp_purchase_orders', 'erp_workflow_tasks'];
     const wb = XLSX.utils.book_new();
     let hasData = false;
-    
+
     keys.forEach(key => {
       const value = localStorage.getItem(key);
       if (value) {
@@ -174,24 +185,24 @@ export default function App() {
   // Define Navigation Items
   const navItems = [
     { id: 'DASHBOARD' as TabType, label: 'Operations Board', icon: LayoutDashboard },
-    { id: 'INVENTORY' as TabType, label: 'Inventory Stock', icon: Package },
     { id: 'CONTACTS' as TabType, label: 'Vendors & Clients', icon: Users },
+    { id: 'INVENTORY' as TabType, label: 'Inventory Stock', icon: Package },
     { id: 'EMPLOYEES' as TabType, label: 'Employee Directory', icon: Briefcase },
-    { id: 'ORDERS' as TabType, label: 'Sales Contracts', icon: FileSpreadsheet },
     { id: 'PURCHASES' as TabType, label: 'Material purchases', icon: ShoppingBag },
+    { id: 'ORDERS' as TabType, label: 'Sales Contracts', icon: FileSpreadsheet },
     { id: 'WORKFLOWS' as TabType, label: 'Production Kanban', icon: Shuffle },
-    { id: 'REPORTS' as TabType, label: 'AI Automated Reports', icon: BarChart3 },
-    { id: 'EXPORT_GUIDE' as TabType, label: 'Desktop/Mobile Export', icon: BookOpen }
+    // { id: 'REPORTS' as TabType, label: 'AI Automated Reports', icon: BarChart3 },
+    // { id: 'EXPORT_GUIDE' as TabType, label: 'Desktop/Mobile Export', icon: BookOpen }
   ];
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row text-slate-900 font-sans">
-      
+    <div className="h-dvh max-h-dvh bg-slate-50 flex flex-col md:flex-row text-slate-900 font-sans overflow-hidden">
+
       {/* Sidebar - Desktop */}
-      <aside className="hidden md:flex flex-col w-64 bg-slate-900 text-slate-300 border-r border-slate-800 shrink-0 select-none">
-        
+      <aside className="hidden md:flex flex-col w-64 h-dvh bg-slate-900 text-slate-300 border-r border-slate-800 shrink-0 select-none overflow-hidden">
+
         {/* Sidebar Header Brand */}
-        <div 
+        <div
           onClick={() => {
             setBrandingName(companyProfile.name);
             setBrandingIconType(companyProfile.iconType);
@@ -226,7 +237,7 @@ export default function App() {
         </div>
 
         {/* Navigation Section */}
-        <nav className="flex-1 p-4 space-y-1">
+        <nav className="flex-1 min-h-0 p-4 space-y-1 overflow-y-auto overscroll-contain">
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = activeTab === item.id;
@@ -234,11 +245,10 @@ export default function App() {
               <button
                 key={item.id}
                 onClick={() => setActiveTab(item.id)}
-                className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg text-xs font-medium transition-all ${
-                  isActive 
-                    ? 'bg-blue-600/10 text-blue-400 font-semibold border-l-4 border-blue-500' 
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-                }`}
+                className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg text-xs font-medium transition-all ${isActive
+                  ? 'bg-blue-600/10 text-blue-400 font-semibold border-l-4 border-blue-500'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                  }`}
               >
                 <Icon className="w-4.5 h-4.5 shrink-0" />
                 <span>{item.label}</span>
@@ -250,22 +260,22 @@ export default function App() {
         {/* Sidebar Footer Operations */}
         <div className="p-4 border-t border-slate-800 space-y-2 text-[10px] text-slate-500 font-mono">
           <div className="flex items-center justify-between text-[11px] text-slate-400 font-sans pb-1 font-semibold border-b border-slate-800/60">
-            <span>Database Backup</span>
-            <span className="text-[9px] bg-slate-800 text-emerald-400 px-1 py-0.5 rounded uppercase">Local SQL Ready</span>
+            <span>Data Import / Export</span>
+            {/* <span className="text-[9px] bg-slate-800 text-emerald-400 px-1 py-0.5 rounded uppercase">Local SQL Ready</span> */}
           </div>
           <button
             onClick={() => setShowImportModal(true)}
             className="w-full flex items-center space-x-2 px-2.5 py-1.5 text-blue-400 hover:text-white hover:bg-blue-600/10 rounded transition-colors text-left font-semibold"
           >
             <Upload className="w-3.5 h-3.5 animate-bounce-subtle" />
-            <span>Import & Integration Hub</span>
+            <span>Import / Export Hub</span>
           </button>
           <button
             onClick={downloadBackup}
             className="w-full flex items-center space-x-2 px-2.5 py-1.5 hover:text-white hover:bg-slate-800 rounded transition-colors text-left"
           >
             <Download className="w-3.5 h-3.5" />
-            <span>Export Excel Backup</span>
+            <span>Export Full Excel Backup</span>
           </button>
           <button
             onClick={resetDatabase}
@@ -280,7 +290,7 @@ export default function App() {
 
       {/* Mobile Top Bar */}
       <header className="md:hidden bg-slate-900 text-slate-300 p-4 border-b border-slate-800 flex items-center justify-between select-none shrink-0">
-        <div 
+        <div
           onClick={() => {
             setBrandingName(companyProfile.name);
             setBrandingIconType(companyProfile.iconType);
@@ -317,9 +327,9 @@ export default function App() {
 
       {/* Mobile Menu Drawer */}
       {mobileMenuOpen && (
-        <div className="md:hidden fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex justify-end">
-          <div className="w-64 bg-slate-900 text-slate-300 p-4 flex flex-col justify-between animate-fade-in-left">
-            <div className="space-y-4">
+        <div className="md:hidden fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex justify-end overflow-hidden">
+          <div className="w-64 h-dvh bg-slate-900 text-slate-300 p-4 flex flex-col justify-between animate-fade-in-left overflow-hidden">
+            <div className="space-y-4 min-h-0 flex-1 overflow-y-auto overscroll-contain">
               <div className="flex items-center justify-between border-b border-slate-800 pb-3">
                 <span className="font-semibold text-white text-xs">Menu Navigations</span>
                 <button onClick={() => setMobileMenuOpen(false)}>
@@ -334,11 +344,10 @@ export default function App() {
                     <button
                       key={item.id}
                       onClick={() => { setActiveTab(item.id); setMobileMenuOpen(false); }}
-                      className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg text-xs font-medium transition-all ${
-                        isActive 
-                          ? 'bg-blue-600/10 text-blue-400 font-semibold border-l-4 border-blue-500' 
-                          : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-                      }`}
+                      className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg text-xs font-medium transition-all ${isActive
+                        ? 'bg-blue-600/10 text-blue-400 font-semibold border-l-4 border-blue-500'
+                        : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                        }`}
                     >
                       <Icon className="w-4.5 h-4.5 shrink-0" />
                       <span>{item.label}</span>
@@ -361,14 +370,14 @@ export default function App() {
                 className="w-full flex items-center space-x-2 px-2.5 py-1.5 text-blue-400 hover:text-white hover:bg-blue-600/10 rounded transition-colors text-left font-semibold"
               >
                 <Upload className="w-3.5 h-3.5" />
-                <span>Import & Integration Hub</span>
+                <span>Import / Export Hub</span>
               </button>
               <button
                 onClick={downloadBackup}
                 className="w-full flex items-center space-x-2 px-2.5 py-1.5 hover:text-white hover:bg-slate-800 rounded transition-colors text-left"
               >
                 <Download className="w-3.5 h-3.5" />
-                <span>Export Excel Backup</span>
+                <span>Export Full Excel Backup</span>
               </button>
               <button
                 onClick={resetDatabase}
@@ -383,8 +392,8 @@ export default function App() {
       )}
 
       {/* Main Content Area */}
-      <main className="flex-1 flex flex-col min-w-0 bg-slate-50 relative overflow-y-auto">
-        
+      <main className="flex-1 min-h-0 flex flex-col min-w-0 bg-slate-50 relative overflow-hidden">
+
         {/* Main Content Top Global Status Header */}
         <header className="bg-white border-b border-slate-200 px-6 py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 shrink-0 select-none">
           <div className="space-y-0.5">
@@ -397,12 +406,6 @@ export default function App() {
           </div>
 
           <div className="flex items-center space-x-4">
-            {/* Supabase Sync Indicator */}
-            <div className="flex items-center space-x-1.5 px-2.5 py-1.5 bg-emerald-50 border border-emerald-100 rounded-lg text-xs font-semibold text-emerald-700 shadow-sm">
-              <Database className="w-3.5 h-3.5 text-emerald-500" />
-              <span>{isSyncing ? 'Syncing...' : 'Supabase Connected'}</span>
-            </div>
-            
             <button
               onClick={() => setDarkMode(!darkMode)}
               className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-100 dark:border-slate-700 dark:hover:bg-slate-850 text-slate-700 dark:text-slate-300 transition-all font-sans text-xs font-medium cursor-pointer"
@@ -420,28 +423,33 @@ export default function App() {
                 </>
               )}
             </button>
+            {/* Supabase Sync Indicator */}
+            <div className="flex items-center space-x-1.5 px-2.5 py-1.5 bg-emerald-50 border border-emerald-100 rounded-lg text-xs font-semibold text-emerald-700 shadow-sm">
+              <Database className="w-3.5 h-3.5 text-emerald-500" />
+              <span>{isSyncing ? 'Syncing...' : 'Supabase Connected'}</span>
+            </div>
 
-            <div className="h-6 w-px bg-slate-200 dark:bg-slate-700 hidden sm:block"></div>
+            {/* <div className="h-6 w-px bg-slate-200 dark:bg-slate-700 hidden sm:block"></div> */}
 
-            <div className="flex items-center space-x-2 text-xs font-mono">
+            {/* <div className="flex items-center space-x-2 text-xs font-mono">
               <span className="w-2.5 h-2.5 bg-emerald-500 rounded-full animate-pulse" />
               <span className="text-slate-500">Offline-First Local Storage Sandbox</span>
-            </div>
+            </div> */}
           </div>
         </header>
 
         {/* Render Active Tab View */}
-        <div className="p-6 flex-1 min-w-0">
+        <div className="p-6 flex-1 min-h-0 min-w-0 overflow-y-auto overscroll-contain">
           {activeTab === 'DASHBOARD' && <DashboardView key={refreshKey} />}
           {activeTab === 'INVENTORY' && <InventoryView key={refreshKey} onQuickProcure={handleQuickProcure} />}
           {activeTab === 'CONTACTS' && <ContactsView key={refreshKey} />}
           {activeTab === 'EMPLOYEES' && <EmployeesView key={refreshKey} />}
           {activeTab === 'ORDERS' && <OrdersView key={refreshKey} />}
           {activeTab === 'PURCHASES' && (
-            <PurchasesView 
+            <PurchasesView
               key={refreshKey}
-              quickProcureState={quickProcureItem} 
-              clearQuickProcure={clearQuickProcure} 
+              quickProcureState={quickProcureItem}
+              clearQuickProcure={clearQuickProcure}
             />
           )}
           {activeTab === 'WORKFLOWS' && <WorkflowsView key={refreshKey} />}
@@ -462,8 +470,8 @@ export default function App() {
                 </span>
                 <span>Company Profile & Branding</span>
               </h3>
-              <button 
-                type="button" 
+              <button
+                type="button"
                 onClick={() => {
                   setBrandingName(companyProfile.name);
                   setBrandingIconType(companyProfile.iconType);
@@ -483,7 +491,7 @@ export default function App() {
                 &times;
               </button>
             </div>
-            
+
             <form onSubmit={(e) => {
               e.preventDefault();
               if (!brandingName.trim()) {
@@ -507,7 +515,7 @@ export default function App() {
               setRefreshKey(prev => prev + 1); // Refresh views that rely on company profile
               setShowBrandingModal(false);
             }} className="p-5 space-y-4 text-xs text-slate-600 max-h-[85vh] overflow-y-auto">
-              
+
               {brandingError && (
                 <div className="p-3 bg-red-50 text-red-700 rounded-lg border border-red-100 font-medium">
                   {brandingError}
@@ -543,11 +551,10 @@ export default function App() {
                         key={preset.type}
                         type="button"
                         onClick={() => setBrandingIconType(preset.type)}
-                        className={`flex flex-col items-center justify-center p-2 rounded-lg border transition-all ${
-                          isSelected 
-                            ? 'bg-blue-50 border-blue-500 text-blue-600 font-semibold' 
-                            : 'bg-slate-50 border-slate-200 text-slate-500 hover:border-slate-300'
-                        }`}
+                        className={`flex flex-col items-center justify-center p-2 rounded-lg border transition-all ${isSelected
+                          ? 'bg-blue-50 border-blue-500 text-blue-600 font-semibold'
+                          : 'bg-slate-50 border-slate-200 text-slate-500 hover:border-slate-300'
+                          }`}
                       >
                         <PresetIcon className="w-4 h-4 mb-1 shrink-0" />
                         <span className="text-[9px] truncate max-w-full">{preset.label}</span>
@@ -560,13 +567,13 @@ export default function App() {
               {brandingIconType === 'custom_image' && (
                 <div className="space-y-2 border border-dashed border-slate-200 rounded-lg p-3 bg-slate-50/50">
                   <span className="font-semibold block text-slate-700">Upload Company Logo Icon</span>
-                  
+
                   <div className="flex items-center space-x-3">
                     {brandingIconDataUrl ? (
                       <div className="relative shrink-0">
-                        <img 
-                          src={brandingIconDataUrl} 
-                          alt="Custom logo preview" 
+                        <img
+                          src={brandingIconDataUrl}
+                          alt="Custom logo preview"
                           className="w-12 h-12 rounded-lg border border-slate-200 object-contain bg-white p-0.5"
                           referrerPolicy="no-referrer"
                         />
@@ -584,7 +591,7 @@ export default function App() {
                         <Camera className="w-5 h-5 stroke-1" />
                       </div>
                     )}
-                    
+
                     <div className="flex-1 min-w-0">
                       <input
                         type="file"
@@ -592,7 +599,7 @@ export default function App() {
                         onChange={(e) => {
                           const file = e.target.files?.[0];
                           if (!file) return;
-                          
+
                           if (!file.type.startsWith('image/')) {
                             setBrandingError('Only image files are allowed');
                             return;
@@ -601,7 +608,7 @@ export default function App() {
                             setBrandingError('Logo image must be smaller than 500KB');
                             return;
                           }
-                          
+
                           const reader = new FileReader();
                           reader.onload = (event) => {
                             setBrandingIconDataUrl(event.target?.result as string);
@@ -620,7 +627,7 @@ export default function App() {
               {/* Invoicing and Contact Details Section */}
               <div className="pt-3 border-t border-slate-100 space-y-3">
                 <span className="font-bold text-slate-800 text-[11px] block uppercase tracking-wider">Invoicing & Contact Details</span>
-                
+
                 <div className="space-y-1">
                   <label className="font-semibold block text-slate-700">Company Address</label>
                   <textarea
@@ -684,20 +691,20 @@ export default function App() {
               {/* Handwritten Authorized Signature Section */}
               <div className="pt-3 border-t border-slate-100 space-y-3">
                 <span className="font-bold text-slate-800 text-[11px] block uppercase tracking-wider">Authorized Signature</span>
-                
+
                 <div className="border border-slate-100 bg-slate-50/50 rounded-lg p-3 space-y-3">
-                  <SignaturePad 
-                    value={brandingSignatureUrl} 
-                    onChange={(dataUrl) => setBrandingSignatureUrl(dataUrl)} 
+                  <SignaturePad
+                    value={brandingSignatureUrl}
+                    onChange={(dataUrl) => setBrandingSignatureUrl(dataUrl)}
                   />
-                  
+
                   {brandingSignatureUrl && (
                     <div className="space-y-1">
                       <span className="font-semibold block text-slate-500 text-[9px] uppercase tracking-wider">Current Signature Preview</span>
                       <div className="bg-white border border-slate-200 rounded-lg p-2 flex justify-center items-center">
-                        <img 
-                          src={brandingSignatureUrl} 
-                          alt="Signature Preview" 
+                        <img
+                          src={brandingSignatureUrl}
+                          alt="Signature Preview"
                           className="h-14 max-w-full object-contain"
                           referrerPolicy="no-referrer"
                         />
@@ -740,9 +747,9 @@ export default function App() {
         </div>
       )}
 
-      <ImportExportModal 
-        isOpen={showImportModal} 
-        onClose={() => setShowImportModal(false)} 
+      <ImportExportModal
+        isOpen={showImportModal}
+        onClose={() => setShowImportModal(false)}
         onDataImported={() => setRefreshKey(prev => prev + 1)}
       />
 

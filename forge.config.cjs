@@ -10,7 +10,6 @@ module.exports = {
       config: {
         name: 'SengJieEngineeringERP',
         setupIcon: "./assets/icon.ico",
-        // iconUrl: "./assets/icon.png",
       },
     },
     {

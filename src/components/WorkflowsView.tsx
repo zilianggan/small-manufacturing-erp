@@ -3,15 +3,21 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useMemo } from 'react';
-import { getWorkflowTasks, updateWorkflowStep, getEmployees, saveWorkflowTasks } from '../services/db';
-import { WorkflowTask } from '../types';
+import React, { useState, useMemo, useEffect } from 'react';
+import { updateWorkflowStep, saveWorkflowTasks, getWorkflowTasks } from '../services/db';
+import { useTableData } from '../hooks/useTableData';
+import { WorkflowTask, Employee } from '../types';
 import { ClipboardCheck } from 'lucide-react';
 import OrderAccordion from './OrderAccordion';
+import LoadingSpinner from './LoadingSpinner';
+import InfiniteScrollSentinel from './InfiniteScrollSentinel';
 
 export default function WorkflowsView() {
-  const [tasks, setTasks] = useState<WorkflowTask[]>(() => getWorkflowTasks());
-  const [employees] = useState(() => getEmployees());
+  const { data: tasksData, loading, refetch, loadMore, hasMore, loadingMore } = useTableData<WorkflowTask>('workflow_tasks');
+  const [employeeQuery, setEmployeeQuery] = useState('');
+  const { data: employees, loading: employeesSearchLoading } = useTableData<Employee>('employees', { search: employeeQuery, filters: { status: 'ACTIVE' } });
+  const [tasks, setTasks] = useState<WorkflowTask[]>([]);
+  useEffect(() => { setTasks(tasksData); }, [tasksData]);
   const [orderFilter, setOrderFilter] = useState('');
   const [assigneeFilter, setAssigneeFilter] = useState('');
   const [expandedOrders, setExpandedOrders] = useState<Record<string, boolean>>({});
@@ -31,16 +37,16 @@ export default function WorkflowsView() {
     });
   }, [tasks, orderFilter, assigneeFilter]);
 
-  const handleAssignTask = (taskId: string, employeeName: string) => {
-    const currentTasks = getWorkflowTasks();
-    const updated = currentTasks.map(t => {
+  const handleAssignTask = async (taskId: string, employeeName: string) => {
+    const updated = tasks.map(t => {
       if (t.id === taskId) {
         return { ...t, assignedTo: employeeName || undefined };
       }
       return t;
     });
-    saveWorkflowTasks(updated);
     setTasks(updated);
+    await saveWorkflowTasks(updated, updated.find(t => t.id === taskId));
+    refetch();
   };
 
   const columns: { key: WorkflowTask['currentStep']; label: string; bg: string; text: string; desc: string }[] = [
@@ -51,7 +57,7 @@ export default function WorkflowsView() {
     { key: 'COMPLETED', label: '5. Completed', bg: 'bg-emerald-50/30', text: 'text-emerald-700', desc: 'Added to Finished Stock' }
   ];
 
-  const handleAdvanceStep = (taskId: string, currentStep: WorkflowTask['currentStep']) => {
+  const handleAdvanceStep = async (taskId: string, currentStep: WorkflowTask['currentStep']) => {
     const nextSteps: Record<WorkflowTask['currentStep'], WorkflowTask['currentStep']> = {
       PREPARATION: 'ASSEMBLY',
       ASSEMBLY: 'QUALITY_CONTROL',
@@ -60,11 +66,14 @@ export default function WorkflowsView() {
       COMPLETED: 'COMPLETED'
     };
 
-    updateWorkflowStep(taskId, nextSteps[currentStep]);
-    setTasks(getWorkflowTasks()); // refresh local state
+    const nextStep = nextSteps[currentStep];
+    const updated = tasks.map(t => t.id === taskId ? { ...t, currentStep: nextStep } : t);
+    setTasks(updated);
+    await updateWorkflowStep(taskId, nextStep);
+    refetch();
   };
 
-  const handleRevertStep = (taskId: string, currentStep: WorkflowTask['currentStep']) => {
+  const handleRevertStep = async (taskId: string, currentStep: WorkflowTask['currentStep']) => {
     const prevSteps: Record<WorkflowTask['currentStep'], WorkflowTask['currentStep']> = {
       PREPARATION: 'PREPARATION',
       ASSEMBLY: 'PREPARATION',
@@ -73,8 +82,11 @@ export default function WorkflowsView() {
       COMPLETED: 'PACKAGING'
     };
 
-    updateWorkflowStep(taskId, prevSteps[currentStep]);
-    setTasks(getWorkflowTasks()); // refresh local state
+    const prevStep = prevSteps[currentStep];
+    const updated = tasks.map(t => t.id === taskId ? { ...t, currentStep: prevStep } : t);
+    setTasks(updated);
+    await updateWorkflowStep(taskId, prevStep);
+    refetch();
   };
 
   // Group filtered tasks by their current step
@@ -93,6 +105,10 @@ export default function WorkflowsView() {
     });
     return groups;
   }, [filteredTasks]);
+
+  if (loading) {
+    return <LoadingSpinner message="Monitoring production floor..." subtitle="WORKFLOWS_LOAD" />;
+  }
 
   return (
     <div className="space-y-6" id="workflows-view">
@@ -170,6 +186,8 @@ export default function WorkflowsView() {
                         colKey={col.key} 
                         onAssignTask={handleAssignTask} 
                         employees={employees}
+                        onSearchEmployees={setEmployeeQuery}
+                        employeesSearchLoading={employeesSearchLoading}
                         onAdvance={handleAdvanceStep}
                         onRevert={handleRevertStep}
                         isOpen={!!expandedOrders[orderId]}
@@ -178,6 +196,7 @@ export default function WorkflowsView() {
                   ))
                 )}
               </div>
+              <InfiniteScrollSentinel onLoadMore={loadMore} hasMore={hasMore} loading={loadingMore} />
             </div>
           );
         })}

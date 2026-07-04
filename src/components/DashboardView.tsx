@@ -3,17 +3,35 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useMemo } from 'react';
+import { useMemo } from 'react';
 import { DollarSign, Package, TrendingUp, AlertTriangle, Play, ClipboardList, ShoppingCart } from 'lucide-react';
-import { getDashboardStats, getInventory, getSalesOrders, getPurchaseOrders, getWorkflowTasks } from '../services/db';
+import { useTableData } from '../hooks/useTableData';
+import { InventoryItem, SalesOrder, PurchaseOrder, WorkflowTask, DashboardStats } from '../types';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell, PieChart, Pie } from 'recharts';
+import LoadingSpinner from './LoadingSpinner';
 
 export default function DashboardView() {
-  const stats = useMemo(() => getDashboardStats(), []);
-  const inventory = useMemo(() => getInventory(), []);
-  const salesOrders = useMemo(() => getSalesOrders(), []);
-  const purchaseOrders = useMemo(() => getPurchaseOrders(), []);
-  const workflows = useMemo(() => getWorkflowTasks(), []);
+  const { data: inventory, loading: invLoading } = useTableData<InventoryItem>('inventory_items');
+  const { data: salesOrders, loading: soLoading } = useTableData<SalesOrder>('sales_orders');
+  const { data: purchaseOrders, loading: poLoading } = useTableData<PurchaseOrder>('purchase_orders');
+  const { data: workflows, loading: wfLoading } = useTableData<WorkflowTask>('workflow_tasks');
+  const loading = invLoading || soLoading || poLoading || wfLoading;
+
+  console.log(inventory, salesOrders, purchaseOrders, workflows)
+
+  const stats = useMemo<DashboardStats>(() => {
+    const totalSales = salesOrders.filter(s => s.status !== 'CANCELLED').reduce((sum, s) => sum + s.totalPrice, 0);
+    const totalPurchaseCosts = purchaseOrders.filter(p => p.status === 'RECEIVED').reduce((sum, p) => sum + p.totalCost, 0);
+    return {
+      totalSales,
+      totalPurchaseCosts,
+      totalProfit: totalSales - totalPurchaseCosts,
+      inventoryValuation: inventory.reduce((sum, i) => sum + i.quantity * i.unitCost, 0),
+      lowStockCount: inventory.filter(i => i.quantity <= i.reorderPoint).length,
+      pendingOrdersCount: salesOrders.filter(s => s.status === 'PENDING').length,
+      activeWorkflowsCount: workflows.filter(w => w.currentStep !== 'COMPLETED').length,
+    };
+  }, [inventory, salesOrders, purchaseOrders, workflows]);
 
   // Format currencies
   const formatCurrency = (val: number) => {
@@ -59,11 +77,15 @@ export default function DashboardView() {
     return workflows.filter(w => w.currentStep !== 'COMPLETED').slice(0, 5);
   }, [workflows]);
 
+  if (loading) {
+    return <LoadingSpinner message="Assembling metrics..." subtitle="DASHBOARD_LOAD" />;
+  }
+
   return (
     <div className="space-y-6" id="dashboard-view">
       {/* KPI Cards Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-        
+
         {/* Sales Card */}
         <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-5 shadow-sm hover:shadow-md transition-shadow flex items-start justify-between">
           <div className="space-y-1.5">
@@ -122,7 +144,7 @@ export default function DashboardView() {
 
       {/* Main Charts Section */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        
+
         {/* Financial Bar Chart */}
         <div className="lg:col-span-2 bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex flex-col justify-between">
           <div className="space-y-1 mb-4">
@@ -192,7 +214,7 @@ export default function DashboardView() {
 
       {/* Grid: Low Stock Alert & Active Workflows */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        
+
         {/* Low Stock Panel */}
         <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm space-y-4">
           <div className="flex items-center justify-between border-b border-slate-100 pb-3">

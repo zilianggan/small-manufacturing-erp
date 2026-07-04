@@ -1,7 +1,11 @@
 import { supabase } from './supabase';
 import { create } from 'zustand';
 
-export const useSyncStore = create((set) => ({ isSyncing: false, setSyncing: (val) => set({ isSyncing: val }) }));
+interface SyncStore {
+  isSyncing: boolean;
+  setSyncing: (val: boolean) => void;
+}
+export const useSyncStore = create<SyncStore>((set) => ({ isSyncing: false, setSyncing: (val) => set({ isSyncing: val }) }));
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -9,248 +13,112 @@ export const useSyncStore = create((set) => ({ isSyncing: false, setSyncing: (va
 
 import { InventoryItem, Vendor, Client, SalesOrder, PurchaseOrder, WorkflowTask, DashboardStats, CompanyProfile, Employee, SalesOrderItem, PurchaseOrderItem } from '../types';
 
-// Let's define the ingredients (Recipe) for each Finished Good
-// This lets us automatically subtract raw materials when a production run finishes!
-export const RECIPES: Record<string, { materialId: string; quantityNeeded: number }[]> = {
-  'fg-1': [ // Precision Gearbox Assembly
-    { materialId: 'rm-1', quantityNeeded: 0.05 }, // Steel Billets (tons)
-    { materialId: 'rm-2', quantityNeeded: 4 },    // Industrial Ball Bearings (pcs)
-    { materialId: 'rm-3', quantityNeeded: 2 },    // Machining Coolant & Lubricant (liters)
-    { materialId: 'rm-4', quantityNeeded: 12 }    // High-Tensile Bolts (pcs)
-  ],
-  'fg-2': [ // Machined Steel Shaft
-    { materialId: 'rm-1', quantityNeeded: 0.02 }, // Steel Billets (tons)
-    { materialId: 'rm-3', quantityNeeded: 1 }     // Machining Coolant & Lubricant (liters)
-  ],
-  'fg-3': [ // Hydraulic Cylinder Unit
-    { materialId: 'rm-1', quantityNeeded: 0.1 },  // Steel Billets (tons)
-    { materialId: 'rm-2', quantityNeeded: 2 },    // Industrial Ball Bearings (pcs)
-    { materialId: 'rm-3', quantityNeeded: 3 },    // Machining Coolant & Lubricant (liters)
-    { materialId: 'rm-4', quantityNeeded: 8 },    // High-Tensile Bolts (pcs)
-    { materialId: 'rm-5', quantityNeeded: 1 }     // Hydraulic Seals Kit (sets)
-  ]
+// RECIPES: loaded dynamically from Supabase (no hardcoded values).
+// Populated at runtime by loadRecipes() into this module-level cache.
+export let RECIPES: Record<string, { materialId: string; quantityNeeded: number }[]> = {};
+
+// Helper to retrieve from LocalStorage (Supabase is source of truth; no seed fallbacks)
+const getStorageItem = <T>(key: string, defaultValue: T): T => {
+  const data = localStorage.getItem(key);
+  if (!data) return defaultValue;
+  return JSON.parse(data);
 };
 
-// Seed Data
-const initialInventory: InventoryItem[] = [
-  // Raw Materials
-  { id: 'rm-1', name: 'Premium Steel Billets', sku: 'RM-SBLT-01', type: 'RAW_MATERIAL', quantity: 25, unit: 'tons', unitCost: 1200, reorderPoint: 5, supplierId: 'v-1', description: 'High-quality industrial carbon steel billets for precision hot forging and machining.' },
-  { id: 'rm-2', name: 'Industrial Ball Bearings', sku: 'RM-BRNG-02', type: 'RAW_MATERIAL', quantity: 180, unit: 'pcs', unitCost: 25, reorderPoint: 40, supplierId: 'v-2', description: 'Deep groove heavy-duty radial ball bearings with reinforced chrome steel shields.' },
-  { id: 'rm-3', name: 'CNC Coolant & Lubricant', sku: 'RM-COOL-03', type: 'RAW_MATERIAL', quantity: 120, unit: 'liters', unitCost: 15, reorderPoint: 20, supplierId: 'v-3', description: 'Soluble cutting oil fluid for optimal thermal stabilization during high-speed CNC milling.' },
-  { id: 'rm-4', name: 'High-Tensile Bolts (M12)', sku: 'RM-BLT-04', type: 'RAW_MATERIAL', quantity: 1500, unit: 'pcs', unitCost: 1.5, reorderPoint: 200, supplierId: 'v-2', description: 'Grade 10.9 zinc plated high-tensile structural hexagon flange fastening bolts.' },
-  { id: 'rm-5', name: 'Hydraulic Seal Kits', sku: 'RM-SEAL-05', type: 'RAW_MATERIAL', quantity: 45, unit: 'sets', unitCost: 45, reorderPoint: 15, supplierId: 'v-3', description: 'Double-acting nitrile rubber piston seal kits with polyurethane wear rings.' },
+// ─── Row serialisers: camelCase entity → snake_case DB row ──────────────────
+const toDbRow: Record<string, (item: any) => any> = {
+  erp_inventory: (i) => ({
+    id: i.id, name: i.name, sku: i.sku, type: i.type,
+    quantity: i.quantity, unit: i.unit, unit_cost: i.unitCost,
+    reorder_point: i.reorderPoint, supplier_id: i.supplierId,
+    description: i.description, attachments: i.attachments || []
+  }),
+  erp_vendors: (v) => ({
+    id: v.id, name: v.name, contact_name: v.contactName,
+    email: v.email, phone: v.phone,
+    materials_supplied: v.materialsSupplied || [],
+    address: v.address, rating: v.rating, attachments: v.attachments || []
+  }),
+  erp_clients: (c) => ({
+    id: c.id, name: c.name, contact_name: c.contactName,
+    email: c.email, phone: c.phone, company_name: c.companyName,
+    address: c.address, total_orders_value: c.totalOrdersValue,
+    attachments: c.attachments || []
+  }),
+  erp_sales_orders: (o) => ({
+    id: o.id, client_id: o.clientId, client_name: o.clientName,
+    item_id: o.itemId, item_name: o.itemName,
+    quantity: o.quantity, unit_price: o.unitPrice, total_price: o.totalPrice,
+    order_date: o.orderDate, delivery_date: o.deliveryDate,
+    status: o.status, workflow_task_id: o.workflowTaskId,
+    attachments: o.attachments || [], items: o.items || []
+  }),
+  erp_purchase_orders: (o) => ({
+    id: o.id, vendor_id: o.vendorId, vendor_name: o.vendorName,
+    item_id: o.itemId, item_name: o.itemName,
+    quantity: o.quantity, unit_cost: o.unitCost, total_cost: o.totalCost,
+    order_date: o.orderDate, status: o.status, received_date: o.receivedDate,
+    attachments: o.attachments || [], items: o.items || []
+  }),
+  erp_workflow_tasks: (t) => ({
+    id: t.id, order_id: t.orderId, product_name: t.productName,
+    quantity: t.quantity, current_step: t.currentStep,
+    assigned_to: t.assignedTo, start_date: t.startDate,
+    end_date: t.endDate, notes: t.notes
+  }),
+  erp_employees: (e) => ({
+    id: e.id, name: e.name, role: e.role, department: e.department,
+    status: e.status, email: e.email, phone: e.phone
+  }),
+};
 
-  // Finished Goods
-  { id: 'fg-1', name: 'Precision Gearbox Assembly', sku: 'FG-GRBX-01', type: 'FINISHED_GOOD', quantity: 12, unit: 'pcs', unitCost: 450, reorderPoint: 5, supplierId: undefined, description: 'Dual-reduction inline helical gearbox with high torque transfer capacity.' },
-  { id: 'fg-2', name: 'Machined Steel Shaft', sku: 'FG-SHFT-02', type: 'FINISHED_GOOD', quantity: 24, unit: 'pcs', unitCost: 180, reorderPoint: 10, supplierId: undefined, description: 'Micro-polished balanced carbon steel drive shaft designed for high torque machines.' },
-  { id: 'fg-3', name: 'Hydraulic Cylinder Unit', sku: 'FG-HYDR-03', type: 'FINISHED_GOOD', quantity: 4, unit: 'pcs', unitCost: 850, reorderPoint: 3, supplierId: undefined, description: 'Heavy-duty linear motion hydraulic cylinder actuator with chrome-plated rod.' }
-];
+const LS_TO_TABLE: Record<string, string> = {
+  erp_inventory: 'inventory_items',
+  erp_vendors: 'vendors',
+  erp_clients: 'clients',
+  erp_sales_orders: 'sales_orders',
+  erp_purchase_orders: 'purchase_orders',
+  erp_workflow_tasks: 'workflow_tasks',
+  erp_employees: 'employees',
+};
 
-const initialVendors: Vendor[] = [
-  { id: 'v-1', name: 'PentaSteel Mills', contactName: 'Tan Seng Jie', email: 'sales@pentasteel.com.my', phone: '+60 3-8012 3456', materialsSupplied: ['rm-1'], address: 'Lot 102, Kawasan Perindustrian Balakong, Selangor, Malaysia', rating: 4.8 },
-  { id: 'v-2', name: 'Nippon Bearing & Fasteners', contactName: 'Kenji Sato', email: 'support@nipponbearing.com.my', phone: '+60 3-5631 8899', materialsSupplied: ['rm-2', 'rm-4'], address: '15, Jalan Subang 3, Subang Jaya, Selangor, Malaysia', rating: 4.5 },
-  { id: 'v-3', name: 'Apex Fluid & Seals', contactName: 'Sarah Wong', email: 'wong@apexfluid.com.my', phone: '+60 3-7956 2211', materialsSupplied: ['rm-3', 'rm-5'], address: 'A-3-G, Block A, Jaya One, Petaling Jaya, Selangor, Malaysia', rating: 4.9 }
-];
+/**
+ * Upsert a SINGLE record to Supabase — only that row's updated_at changes.
+ */
+const upsertRecord = async (lsKey: string, item: any): Promise<void> => {
+  const tableName = LS_TO_TABLE[lsKey];
+  if (!tableName) return;
+  const serialiser = toDbRow[lsKey];
+  if (!serialiser) return;
+  const row = serialiser(item);
+  const { error } = await supabase.from(tableName).upsert(row);
+  if (error) console.error(`upsertRecord(${tableName}) error:`, error);
+};
 
-const initialClients: Client[] = [
-  { id: 'c-1', name: 'Mega Machinery Sdn Bhd', contactName: 'Mr. Lee', email: 'lee@megamachinery.com.my', phone: '+60 3-8890 1122', companyName: 'Mega Machinery Sdn Bhd', address: 'Lot 45, Shah Alam Industrial Park, Selangor, Malaysia', totalOrdersValue: 125000 },
-  { id: 'c-2', name: 'United Palm Oil Engineering', contactName: 'Aris Munandar', email: 'aris@unitedpalm.com.my', phone: '+60 3-3341 5566', companyName: 'United Palm Oil Engineering', address: 'Klang Port Industrial Zone, Selangor, Malaysia', totalOrdersValue: 84000 },
-  { id: 'c-3', name: 'Kuala Lumpur Tech Parts', contactName: 'Alex Tan', email: 'alex@kltechparts.com', phone: '+60 3-2144 9900', companyName: 'Kuala Lumpur Tech Parts', address: 'No. 8, Jalan Tuanku Abdul Rahman, Kuala Lumpur, Malaysia', totalOrdersValue: 189000 }
-];
-
-const initialSalesOrders: SalesOrder[] = [
-  { id: 'so-1', clientId: 'c-1', clientName: 'Mega Machinery Sdn Bhd', itemId: 'fg-1', itemName: 'Precision Gearbox Assembly', quantity: 5, unitPrice: 950, totalPrice: 4750, orderDate: '2026-06-15', deliveryDate: '2026-07-05', status: 'DELIVERED' },
-  { id: 'so-2', clientId: 'c-2', clientName: 'United Palm Oil Engineering', itemId: 'fg-2', itemName: 'Machined Steel Shaft', quantity: 12, unitPrice: 380, totalPrice: 4560, orderDate: '2026-06-20', deliveryDate: '2026-07-10', status: 'IN_PRODUCTION', workflowTaskId: 'wf-1' },
-  { id: 'so-3', clientId: 'c-3', clientName: 'Kuala Lumpur Tech Parts', itemId: 'fg-3', itemName: 'Hydraulic Cylinder Unit', quantity: 2, unitPrice: 1800, totalPrice: 3600, orderDate: '2026-06-28', deliveryDate: '2026-07-20', status: 'PENDING' }
-];
-
-const initialPurchaseOrders: PurchaseOrder[] = [
-  { id: 'po-1', vendorId: 'v-1', vendorName: 'PentaSteel Mills', itemId: 'rm-1', itemName: 'Premium Steel Billets', quantity: 10, unitCost: 1200, totalCost: 12000, orderDate: '2026-06-10', status: 'RECEIVED', receivedDate: '2026-06-14' },
-  { id: 'po-2', vendorId: 'v-3', vendorName: 'Apex Fluid & Seals', itemId: 'rm-3', itemName: 'CNC Coolant & Lubricant', quantity: 50, unitCost: 15, totalCost: 750, orderDate: '2026-06-25', status: 'ORDERED' }
-];
-
-const initialWorkflowTasks: WorkflowTask[] = [
-  { id: 'wf-1', orderId: 'so-2', productName: 'Machined Steel Shaft', quantity: 12, currentStep: 'ASSEMBLY', assignedTo: 'Jim Halpert', startDate: '2026-06-22', notes: 'Using custom heat treatment profile and hard-chrome finishing.' }
-];
-
-// Helper to initialize and retrieve from LocalStorage
-const getStorageItem = <T>(key: string, defaultValue: T): T => {
-  // Check if stale woodcraft data exists, and if so, clear to trigger clean engineering reseed
-  try {
-    const rawInv = localStorage.getItem('erp_inventory');
-    if (rawInv && (rawInv.includes('Timber') || rawInv.includes('Varnish') || rawInv.includes('Desk'))) {
-      localStorage.clear();
-    }
-  } catch (e) {
-    console.error('LocalStorage migration error:', e);
-  }
-
-  const data = localStorage.getItem(key);
-  if (!data) {
-    localStorage.setItem(key, JSON.stringify(defaultValue));
-    return defaultValue;
-  }
-  return JSON.parse(data);
+/**
+ * Delete a SINGLE record from Supabase by id.
+ */
+const deleteRecord = async (lsKey: string, id: string): Promise<void> => {
+  const tableName = LS_TO_TABLE[lsKey];
+  if (!tableName) return;
+  const { error } = await supabase.from(tableName).delete().eq('id', id);
+  if (error) console.error(`deleteRecord(${tableName}) error:`, error);
 };
 
 const setStorageItem = <T>(key: string, value: T): void => {
   localStorage.setItem(key, JSON.stringify(value));
-  
-  // Sync to Supabase in background
-  const syncToSupabase = async () => {
-    useSyncStore.getState().setSyncing(true);
-    try {
-      const tableMap: Record<string, string> = {
-        'erp_inventory': 'inventory_items',
-        'erp_vendors': 'vendors',
-        'erp_clients': 'clients',
-        'erp_sales_orders': 'sales_orders',
-        'erp_purchase_orders': 'purchase_orders',
-        'erp_workflow_tasks': 'workflow_tasks',
-        'erp_employees': 'employees',
-        'erp_company_profile': 'company_profile'
-      };
-      const tableName = tableMap[key];
-      if (!tableName) return;
-      
-      if (key === 'erp_company_profile') {
-        const v = value as any;
-        await supabase.from(tableName).upsert({
-          id: 'default',
-          name: v.name,
-          icon_type: v.iconType,
-          icon_data_url: v.iconDataUrl,
-          address: v.address,
-          phone: v.phone,
-          email: v.email,
-          bank_name: v.bankName,
-          bank_account: v.bankAccount,
-          signature_url: v.signatureUrl,
-          chop_url: v.chopUrl
-        });
-      } else {
-        const items = value as any[];
-        // We do a simple upsert of all items
-        if (items.length > 0) {
-           let payload = items;
-           if (key === 'erp_inventory') payload = items.map(i => ({
-              id: i.id,
-              name: i.name,
-              sku: i.sku,
-              type: i.type,
-              quantity: i.quantity,
-              unit: i.unit,
-              unit_cost: i.unitCost,
-              reorder_point: i.reorderPoint,
-              supplier_id: i.supplierId,
-              description: i.description,
-              attachments: i.attachments || []
-           }));
-           else if (key === 'erp_vendors') payload = items.map(v => ({
-              id: v.id,
-              name: v.name,
-              contact_name: v.contactName,
-              email: v.email,
-              phone: v.phone,
-              materials_supplied: v.materialsSupplied || [],
-              address: v.address,
-              rating: v.rating,
-              attachments: v.attachments || []
-           }));
-           else if (key === 'erp_clients') payload = items.map(c => ({
-              id: c.id,
-              name: c.name,
-              contact_name: c.contactName,
-              email: c.email,
-              phone: c.phone,
-              company_name: c.companyName,
-              address: c.address,
-              total_orders_value: c.totalOrdersValue,
-              attachments: c.attachments || []
-           }));
-           else if (key === 'erp_sales_orders') payload = items.map(o => ({
-              id: o.id,
-              client_id: o.clientId,
-              client_name: o.clientName,
-              item_id: o.itemId,
-              item_name: o.itemName,
-              quantity: o.quantity,
-              unit_price: o.unitPrice,
-              total_price: o.totalPrice,
-              order_date: o.orderDate,
-              delivery_date: o.deliveryDate,
-              status: o.status,
-              workflow_task_id: o.workflowTaskId,
-              attachments: o.attachments || [],
-              items: o.items || []
-           }));
-           else if (key === 'erp_purchase_orders') payload = items.map(o => ({
-              id: o.id,
-              vendor_id: o.vendorId,
-              vendor_name: o.vendorName,
-              item_id: o.itemId,
-              item_name: o.itemName,
-              quantity: o.quantity,
-              unit_cost: o.unitCost,
-              total_cost: o.totalCost,
-              order_date: o.orderDate,
-              status: o.status,
-              received_date: o.receivedDate,
-              attachments: o.attachments || [],
-              items: o.items || []
-           }));
-           else if (key === 'erp_workflow_tasks') payload = items.map(t => ({
-              id: t.id,
-              order_id: t.orderId,
-              product_name: t.productName,
-              quantity: t.quantity,
-              current_step: t.currentStep,
-              assigned_to: t.assignedTo,
-              start_date: t.startDate,
-              end_date: t.endDate,
-              notes: t.notes
-           }));
-           
-           await supabase.from(tableName).upsert(payload);
-           
-           // Fetch current db to delete missing
-           const { data: currentData } = await supabase.from(tableName).select('id');
-           if (currentData) {
-              const currentIds = currentData.map((d: any) => d.id);
-              const newIds = new Set(items.map(i => i.id));
-              const toDelete = currentIds.filter((id: string) => !newIds.has(id));
-              if (toDelete.length > 0) {
-                 await supabase.from(tableName).delete().in('id', toDelete);
-              }
-           }
-        } else {
-           // Delete all if array is empty
-           const { data: currentData } = await supabase.from(tableName).select('id');
-           if (currentData && currentData.length > 0) {
-             await supabase.from(tableName).delete().in('id', currentData.map((d: any) => d.id));
-           }
-        }
-      }
-    } catch (err) {
-      console.error("Supabase sync error:", err);
-    } finally {
-      useSyncStore.getState().setSyncing(false);
-    }
-  };
-  
-  syncToSupabase();
-
-  localStorage.setItem(key, JSON.stringify(value));
+  // NOTE: Supabase writes are now done per-record via upsertRecord / deleteRecord
+  // called directly from each mutation function. setStorageItem no longer does
+  // bulk upserts so unrelated rows never get their updated_at touched.
 };
 
-export const getInventory = (): InventoryItem[] => getStorageItem('erp_inventory', initialInventory);
-export const getVendors = (): Vendor[] => getStorageItem('erp_vendors', initialVendors);
-export const getClients = (): Client[] => getStorageItem('erp_clients', initialClients);
-export const getSalesOrders = (): SalesOrder[] => getStorageItem('erp_sales_orders', initialSalesOrders);
-export const getPurchaseOrders = (): PurchaseOrder[] => getStorageItem('erp_purchase_orders', initialPurchaseOrders);
+export const getInventory = (): InventoryItem[] => getStorageItem('erp_inventory', []);
+export const getVendors = (): Vendor[] => getStorageItem('erp_vendors', []);
+export const getClients = (): Client[] => getStorageItem('erp_clients', []);
+export const getSalesOrders = (): SalesOrder[] => getStorageItem('erp_sales_orders', []);
+export const getPurchaseOrders = (): PurchaseOrder[] => getStorageItem('erp_purchase_orders', []);
 export const getWorkflowTasks = (): WorkflowTask[] => {
-  const tasks = getStorageItem<WorkflowTask[]>('erp_workflow_tasks', initialWorkflowTasks);
-  
+  const tasks = getStorageItem<WorkflowTask[]>('erp_workflow_tasks', []);
+
   // Migration to split concatenated tasks
   let migrated = false;
   const newTasks: WorkflowTask[] = [];
@@ -282,17 +150,44 @@ export const getWorkflowTasks = (): WorkflowTask[] => {
     setStorageItem('erp_workflow_tasks', newTasks);
     return newTasks;
   }
-  
+
   return tasks;
 };
 
-// Base mutations
-export const saveInventory = (items: InventoryItem[]) => setStorageItem('erp_inventory', items);
-export const saveVendors = (items: Vendor[]) => setStorageItem('erp_vendors', items);
-export const saveClients = (items: Client[]) => setStorageItem('erp_clients', items);
-export const saveSalesOrders = (items: SalesOrder[]) => setStorageItem('erp_sales_orders', items);
-export const savePurchaseOrders = (items: PurchaseOrder[]) => setStorageItem('erp_purchase_orders', items);
-export const saveWorkflowTasks = (items: WorkflowTask[]) => setStorageItem('erp_workflow_tasks', items);
+// ─── Base mutations: write localStorage + fire targeted Supabase ops ─────────
+// Each saver accepts the full in-memory array (for localStorage) plus the
+// specific changed/deleted record so Supabase only touches that one row.
+
+export const saveInventory = (items: InventoryItem[], changed?: InventoryItem, deletedId?: string) => {
+  setStorageItem('erp_inventory', items);
+  if (changed) upsertRecord('erp_inventory', changed);
+  if (deletedId) deleteRecord('erp_inventory', deletedId);
+};
+export const saveVendors = (items: Vendor[], changed?: Vendor, deletedId?: string) => {
+  setStorageItem('erp_vendors', items);
+  if (changed) upsertRecord('erp_vendors', changed);
+  if (deletedId) deleteRecord('erp_vendors', deletedId);
+};
+export const saveClients = (items: Client[], changed?: Client, deletedId?: string) => {
+  setStorageItem('erp_clients', items);
+  if (changed) upsertRecord('erp_clients', changed);
+  if (deletedId) deleteRecord('erp_clients', deletedId);
+};
+export const saveSalesOrders = (items: SalesOrder[], changed?: SalesOrder, deletedId?: string) => {
+  setStorageItem('erp_sales_orders', items);
+  if (changed) upsertRecord('erp_sales_orders', changed);
+  if (deletedId) deleteRecord('erp_sales_orders', deletedId);
+};
+export const savePurchaseOrders = (items: PurchaseOrder[], changed?: PurchaseOrder, deletedId?: string) => {
+  setStorageItem('erp_purchase_orders', items);
+  if (changed) upsertRecord('erp_purchase_orders', changed);
+  if (deletedId) deleteRecord('erp_purchase_orders', deletedId);
+};
+export const saveWorkflowTasks = async (items: WorkflowTask[], changed?: WorkflowTask, deletedId?: string) => {
+  setStorageItem('erp_workflow_tasks', items);
+  if (changed) await upsertRecord('erp_workflow_tasks', changed);
+  if (deletedId) await deleteRecord('erp_workflow_tasks', deletedId);
+};
 
 // Complex manufacturing triggers and actions
 
@@ -302,7 +197,7 @@ export const saveWorkflowTasks = (items: WorkflowTask[]) => setStorageItem('erp_
  */
 export const addPurchaseOrder = (po: Omit<PurchaseOrder, 'id' | 'orderDate' | 'totalCost'> & { items?: PurchaseOrderItem[] }): PurchaseOrder => {
   const pos = getPurchaseOrders();
-  
+
   const items = po.items && po.items.length > 0 ? po.items : [{
     itemId: po.itemId,
     itemName: po.itemName,
@@ -326,7 +221,7 @@ export const addPurchaseOrder = (po: Omit<PurchaseOrder, 'id' | 'orderDate' | 't
   };
 
   pos.push(newPo);
-  savePurchaseOrders(pos);
+  savePurchaseOrders(pos, newPo);
 
   if (newPo.status === 'RECEIVED') {
     items.forEach(item => {
@@ -344,7 +239,7 @@ export const updatePurchaseOrderStatus = (poId: string, status: PurchaseOrder['s
 
   const previousStatus = pos[index].status;
   const currentPo = pos[index];
-  
+
   const items = currentPo.items && currentPo.items.length > 0 ? currentPo.items : [{
     itemId: currentPo.itemId,
     itemName: currentPo.itemName,
@@ -370,7 +265,7 @@ export const updatePurchaseOrderStatus = (poId: string, status: PurchaseOrder['s
   }
 
   currentPo.status = status;
-  savePurchaseOrders(pos);
+  savePurchaseOrders(pos, currentPo);
   return currentPo;
 };
 
@@ -410,14 +305,14 @@ export const addSalesOrder = (so: Omit<SalesOrder, 'id' | 'orderDate' | 'totalPr
   }
 
   sos.push(newSo);
-  saveSalesOrders(sos);
+  saveSalesOrders(sos, newSo);
 
   // Update client metrics
   const clients = getClients();
   const clientIdx = clients.findIndex(c => c.id === so.clientId);
   if (clientIdx !== -1) {
     clients[clientIdx].totalOrdersValue += newSo.totalPrice;
-    saveClients(clients);
+    saveClients(clients, clients[clientIdx]);
   }
 
   return newSo;
@@ -449,7 +344,7 @@ export const updateSalesOrderStatus = (soId: string, status: SalesOrder['status'
     currentSo.workflowTaskId = 'created';
   }
 
-  saveSalesOrders(sos);
+  saveSalesOrders(sos, currentSo);
   return currentSo;
 };
 
@@ -460,7 +355,7 @@ export const updateSalesOrderStatus = (soId: string, status: SalesOrder['status'
  * 2. Subtract required raw materials (based on RECIPES).
  * 3. Transition Sales Order status to SHIPPED.
  */
-export const updateWorkflowStep = (taskId: string, step: WorkflowTask['currentStep'], notes?: string): WorkflowTask | null => {
+export const updateWorkflowStep = async (taskId: string, step: WorkflowTask['currentStep'], notes?: string): Promise<WorkflowTask | null> => {
   const tasks = getWorkflowTasks();
   const index = tasks.findIndex(t => t.id === taskId);
   if (index === -1) return null;
@@ -479,7 +374,7 @@ export const updateWorkflowStep = (taskId: string, step: WorkflowTask['currentSt
     const soIdx = sos.findIndex(s => s.id === tasks[index].orderId);
     if (soIdx !== -1) {
       sos[soIdx].status = 'SHIPPED'; // Automatically ready to ship or shipped
-      saveSalesOrders(sos);
+      saveSalesOrders(sos, sos[soIdx]);
 
       // Perform manufacturing inventory transformations!
       const items = sos[soIdx].items && sos[soIdx].items.length > 0 ? sos[soIdx].items : [{
@@ -504,7 +399,7 @@ export const updateWorkflowStep = (taskId: string, step: WorkflowTask['currentSt
     const soIdx = sos.findIndex(s => s.id === tasks[index].orderId);
     if (soIdx !== -1) {
       sos[soIdx].status = 'IN_PRODUCTION';
-      saveSalesOrders(sos);
+      saveSalesOrders(sos, sos[soIdx]);
 
       const items = sos[soIdx].items && sos[soIdx].items.length > 0 ? sos[soIdx].items : [{
         itemId: sos[soIdx].itemId,
@@ -522,7 +417,7 @@ export const updateWorkflowStep = (taskId: string, step: WorkflowTask['currentSt
     tasks[index].endDate = undefined;
   }
 
-  saveWorkflowTasks(tasks);
+  await saveWorkflowTasks(tasks, tasks[index]);
   return tasks[index];
 };
 
@@ -532,32 +427,28 @@ const consumeRawMaterials = (finishedGoodId: string, quantityProduced: number) =
   if (!recipe) return;
 
   const inventory = getInventory();
+  const changedItems: InventoryItem[] = [];
   recipe.forEach(requirement => {
     const itemIdx = inventory.findIndex(i => i.id === requirement.materialId);
     if (itemIdx !== -1) {
-      // quantityProduced * needed per item
       inventory[itemIdx].quantity = Math.max(0, inventory[itemIdx].quantity - (requirement.quantityNeeded * quantityProduced));
+      changedItems.push(inventory[itemIdx]);
     }
   });
-  saveInventory(inventory);
+  // upsert each affected raw material individually
+  setStorageItem('erp_inventory', inventory);
+  changedItems.forEach(item => upsertRecord('erp_inventory', item));
 };
 
-// Help map client item ids if they diverge, just safety
-const finishedGoodGoodMapping = (id: string): string => {
-  // E.g. if so.itemId matches fg-1, return fg-1
-  if (id.startsWith('fg-')) return id;
-  // If named something else
-  if (id.toLowerCase().includes('gearbox')) return 'fg-1';
-  if (id.toLowerCase().includes('shaft')) return 'fg-2';
-  return 'fg-3';
-};
+// Map item id to recipe key (id is already the key in RECIPES)
+const finishedGoodGoodMapping = (id: string): string => id;
 
 const adjustRawMaterialStock = (materialId: string, quantityChange: number) => {
   const inventory = getInventory();
   const idx = inventory.findIndex(i => i.id === materialId);
   if (idx !== -1) {
     inventory[idx].quantity = Math.max(0, inventory[idx].quantity + quantityChange);
-    saveInventory(inventory);
+    saveInventory(inventory, inventory[idx]);
   }
 };
 
@@ -566,7 +457,7 @@ const adjustFinishedGoodStock = (fgId: string, quantityChange: number) => {
   const idx = inventory.findIndex(i => i.id === fgId || i.sku === fgId);
   if (idx !== -1) {
     inventory[idx].quantity = Math.max(0, inventory[idx].quantity + quantityChange);
-    saveInventory(inventory);
+    saveInventory(inventory, inventory[idx]);
   }
 };
 
@@ -582,7 +473,7 @@ const createWorkflowTaskForOrder = (orderId: string, productName: string, quanti
     notes: 'Auto-initiated workflow task from sales order.'
   };
   tasks.push(newTask);
-  saveWorkflowTasks(tasks);
+  saveWorkflowTasks(tasks, newTask);
   return newTask;
 };
 
@@ -617,18 +508,10 @@ export const getDashboardStats = (): DashboardStats => {
   };
 };
 
-const initialCompanyProfile: CompanyProfile = {
-  name: 'Seng Jie Engineering',
-  iconType: 'database',
-  address: 'Lot 102, Kawasan Perindustrian Balakong, 43300 Selangor, Malaysia',
-  phone: '+60 3-8012 3456',
-  email: 'finance@sengjie.com.my',
-  bankName: 'Maybank Berhad (Kuala Lumpur)',
-  bankAccount: '5142-8821-3956'
-};
+const EMPTY_COMPANY_PROFILE: CompanyProfile = { name: '', iconType: 'database' };
 
 export const getCompanyProfile = (): CompanyProfile => {
-  return getStorageItem('erp_company_profile', initialCompanyProfile);
+  return getStorageItem('erp_company_profile', EMPTY_COMPANY_PROFILE);
 };
 
 export const saveCompanyProfile = (profile: CompanyProfile): void => {
@@ -636,135 +519,156 @@ export const saveCompanyProfile = (profile: CompanyProfile): void => {
 };
 
 // --- Employees database ---
-const initialEmployees: Employee[] = [
-  { id: 'emp-1', name: 'Jim Halpert', role: 'Production Supervisor', department: 'Operations', status: 'ACTIVE', email: 'jim@sengjie.com', phone: '+60 12-445-9871' },
-  { id: 'emp-2', name: 'Pam Beesly', role: 'Quality Control Lead', department: 'Quality', status: 'ACTIVE', email: 'pam@sengjie.com', phone: '+60 17-233-1244' },
-  { id: 'emp-3', name: 'Dwight Schrute', role: 'Machinist Technician', department: 'Machining', status: 'ACTIVE', email: 'dwight@sengjie.com', phone: '+60 13-909-5632' },
-  { id: 'emp-4', name: 'Ryan Howard', role: 'Material Handling Associate', department: 'Logistics', status: 'ACTIVE', email: 'ryan@sengjie.com', phone: '+60 19-331-8976' }
-];
+export const getEmployees = (): Employee[] => getStorageItem('erp_employees', []);
 
-export const getEmployees = (): Employee[] => getStorageItem('erp_employees', initialEmployees);
-
-export const saveEmployees = (employees: Employee[]): void => {
+export const saveEmployees = (employees: Employee[], changed?: Employee, deletedId?: string): void => {
   setStorageItem('erp_employees', employees);
+  if (changed) upsertRecord('erp_employees', changed);
+  if (deletedId) deleteRecord('erp_employees', deletedId);
 };
 
 
 
+// ─── Per-tab lazy loaders ───────────────────────────────────────────────────
+// Each view calls its own loader; data is cached in localStorage after first
+// fetch so subsequent tab visits are instant (no network round-trip).
+
+const isTabLoaded = (key: string): boolean => !!localStorage.getItem(key);
+
+const loadTable = async (lsKey: string, tableName: string) => {
+  if (isTabLoaded(lsKey)) return; // already cached, skip
+  await loadTableProgressively(lsKey, tableName);
+};
+
+export const loadInventoryData = () => loadTable('erp_inventory', 'inventory_items');
+export const loadVendorsData = () => loadTable('erp_vendors', 'vendors');
+export const loadClientsData = () => loadTable('erp_clients', 'clients');
+export const loadEmployeesData = () => loadTable('erp_employees', 'employees');
+export const loadSalesOrdersData = () => loadTable('erp_sales_orders', 'sales_orders');
+export const loadPurchaseOrdersData = () => loadTable('erp_purchase_orders', 'purchase_orders');
+export const loadWorkflowsData = () => loadTable('erp_workflow_tasks', 'workflow_tasks');
+
+// Contacts tab = vendors + clients
+export const loadContactsData = () => Promise.all([
+  loadTable('erp_vendors', 'vendors'),
+  loadTable('erp_clients', 'clients')
+]);
+
+// Dashboard needs a snapshot of everything for stats — load all in parallel
+export const loadDashboardData = () => Promise.all([
+  loadTable('erp_inventory', 'inventory_items'),
+  loadTable('erp_sales_orders', 'sales_orders'),
+  loadTable('erp_purchase_orders', 'purchase_orders'),
+  loadTable('erp_workflow_tasks', 'workflow_tasks')
+]);
+
+// Row-shape mappers, keyed by localStorage key (same table set as before)
+const ROW_MAPPERS: Record<string, (row: any) => any> = {
+  erp_inventory: (i) => ({
+    id: i.id, name: i.name, sku: i.sku, type: i.type,
+    quantity: Number(i.quantity), unit: i.unit, unitCost: Number(i.unit_cost),
+    reorderPoint: Number(i.reorder_point), supplierId: i.supplier_id,
+    description: i.description, attachments: i.attachments || [],
+    createdAt: i.created_at, updatedAt: i.updated_at
+  }),
+  erp_vendors: (v) => ({
+    id: v.id, name: v.name, contactName: v.contact_name, email: v.email, phone: v.phone,
+    materialsSupplied: v.materials_supplied || [], address: v.address,
+    rating: Number(v.rating), attachments: v.attachments || [],
+    createdAt: v.created_at, updatedAt: v.updated_at
+  }),
+  erp_clients: (c) => ({
+    id: c.id, name: c.name, contactName: c.contact_name, email: c.email, phone: c.phone,
+    companyName: c.company_name, address: c.address,
+    totalOrdersValue: Number(c.total_orders_value), attachments: c.attachments || [],
+    createdAt: c.created_at, updatedAt: c.updated_at
+  }),
+  erp_sales_orders: (o) => ({
+    id: o.id, clientId: o.client_id, clientName: o.client_name, itemId: o.item_id,
+    itemName: o.item_name, quantity: Number(o.quantity), unitPrice: Number(o.unit_price),
+    totalPrice: Number(o.total_price), orderDate: o.order_date, deliveryDate: o.delivery_date,
+    status: o.status, workflowTaskId: o.workflow_task_id,
+    attachments: o.attachments || [], items: o.items || [],
+    createdAt: o.created_at, updatedAt: o.updated_at
+  }),
+  erp_purchase_orders: (o) => ({
+    id: o.id, vendorId: o.vendor_id, vendorName: o.vendor_name, itemId: o.item_id,
+    itemName: o.item_name, quantity: Number(o.quantity), unitCost: Number(o.unit_cost),
+    totalCost: Number(o.total_cost), orderDate: o.order_date, status: o.status,
+    receivedDate: o.received_date, attachments: o.attachments || [], items: o.items || [],
+    createdAt: o.created_at, updatedAt: o.updated_at
+  }),
+  erp_workflow_tasks: (t) => ({
+    id: t.id, orderId: t.order_id, productName: t.product_name, quantity: Number(t.quantity),
+    currentStep: t.current_step, assignedTo: t.assigned_to, startDate: t.start_date,
+    endDate: t.end_date, notes: t.notes,
+    createdAt: t.created_at, updatedAt: t.updated_at
+  }),
+  erp_employees: (e) => ({
+    id: e.id, name: e.name, role: e.role, department: e.department, status: e.status,
+    email: e.email, phone: e.phone,
+    createdAt: e.created_at, updatedAt: e.updated_at
+  }),
+};
+
+const TABLE_MAP: Record<string, string> = {
+  'erp_inventory': 'inventory_items',
+  'erp_vendors': 'vendors',
+  'erp_clients': 'clients',
+  'erp_sales_orders': 'sales_orders',
+  'erp_purchase_orders': 'purchase_orders',
+  'erp_workflow_tasks': 'workflow_tasks',
+  'erp_employees': 'employees'
+};
+
+interface DataResponse {
+  data: any[];
+  total: number;
+  hasMore: boolean;
+}
+
+// Fetches the full table via the backend endpoint.
+// NOTE: limit/offset pagination was rolled back here (it was causing bugs) -
+// this now always fetches the whole table in one request, same as useTableData.ts.
+const fetchAllRows = async (table: string): Promise<DataResponse> => {
+  const res = await fetch(`/api/data/${table}`);
+  if (!res.ok) throw new Error(`Failed to fetch ${table}: ${res.status}`);
+  return res.json();
+};
+
+// Loads a table's full contents into localStorage in one shot.
+const loadTableProgressively = async (key: string, tableName: string) => {
+  const mapper = ROW_MAPPERS[key] || ((r: any) => r);
+  const result = await fetchAllRows(tableName);
+  const rows = (result.data || []).map(mapper);
+  if (rows.length > 0) {
+    localStorage.setItem(key, JSON.stringify(rows));
+  }
+};
+
 export const loadInitialDataFromSupabase = async () => {
   useSyncStore.getState().setSyncing(true);
   try {
-    const tableMap: Record<string, string> = {
-      'erp_inventory': 'inventory_items',
-      'erp_vendors': 'vendors',
-      'erp_clients': 'clients',
-      'erp_sales_orders': 'sales_orders',
-      'erp_purchase_orders': 'purchase_orders',
-      'erp_workflow_tasks': 'workflow_tasks',
-      'erp_employees': 'employees'
-    };
-    
-    for (const [key, tableName] of Object.entries(tableMap)) {
-       const { data, error } = await supabase.from(tableName).select('*');
-       if (!error && data && data.length > 0) {
-          let mapped = data;
-          if (key === 'erp_inventory') mapped = data.map(i => ({
-             id: i.id,
-             name: i.name,
-             sku: i.sku,
-             type: i.type,
-             quantity: Number(i.quantity),
-             unit: i.unit,
-             unitCost: Number(i.unit_cost),
-             reorderPoint: Number(i.reorder_point),
-             supplierId: i.supplier_id,
-             description: i.description,
-             attachments: i.attachments || []
-          }));
-          else if (key === 'erp_vendors') mapped = data.map(v => ({
-             id: v.id,
-             name: v.name,
-             contactName: v.contact_name,
-             email: v.email,
-             phone: v.phone,
-             materialsSupplied: v.materials_supplied || [],
-             address: v.address,
-             rating: Number(v.rating),
-             attachments: v.attachments || []
-          }));
-          else if (key === 'erp_clients') mapped = data.map(c => ({
-             id: c.id,
-             name: c.name,
-             contactName: c.contact_name,
-             email: c.email,
-             phone: c.phone,
-             companyName: c.company_name,
-             address: c.address,
-             totalOrdersValue: Number(c.total_orders_value),
-             attachments: c.attachments || []
-          }));
-          else if (key === 'erp_sales_orders') mapped = data.map(o => ({
-             id: o.id,
-             clientId: o.client_id,
-             clientName: o.client_name,
-             itemId: o.item_id,
-             itemName: o.item_name,
-             quantity: Number(o.quantity),
-             unitPrice: Number(o.unit_price),
-             totalPrice: Number(o.total_price),
-             orderDate: o.order_date,
-             deliveryDate: o.delivery_date,
-             status: o.status,
-             workflowTaskId: o.workflow_task_id,
-             attachments: o.attachments || [],
-             items: o.items || []
-          }));
-          else if (key === 'erp_purchase_orders') mapped = data.map(o => ({
-             id: o.id,
-             vendorId: o.vendor_id,
-             vendorName: o.vendor_name,
-             itemId: o.item_id,
-             itemName: o.item_name,
-             quantity: Number(o.quantity),
-             unitCost: Number(o.unit_cost),
-             totalCost: Number(o.total_cost),
-             orderDate: o.order_date,
-             status: o.status,
-             receivedDate: o.received_date,
-             attachments: o.attachments || [],
-             items: o.items || []
-          }));
-          else if (key === 'erp_workflow_tasks') mapped = data.map(t => ({
-             id: t.id,
-             orderId: t.order_id,
-             productName: t.product_name,
-             quantity: Number(t.quantity),
-             currentStep: t.current_step,
-             assignedTo: t.assigned_to,
-             startDate: t.start_date,
-             endDate: t.end_date,
-             notes: t.notes
-          }));
-          
-          localStorage.setItem(key, JSON.stringify(mapped));
-       }
-    }
-    
-    // profile
+    // Load all tables in parallel for fast startup.
+    await Promise.all(
+      Object.entries(TABLE_MAP).map(([key, tableName]) => loadTableProgressively(key, tableName))
+    );
+
+    // profile (single row, no pagination needed)
     const { data: profileData } = await supabase.from('company_profile').select('*').eq('id', 'default').single();
     if (profileData) {
-       localStorage.setItem('erp_company_profile', JSON.stringify({
-          name: profileData.name,
-          iconType: profileData.icon_type,
-          iconDataUrl: profileData.icon_data_url,
-          address: profileData.address,
-          phone: profileData.phone,
-          email: profileData.email,
-          bankName: profileData.bank_name,
-          bankAccount: profileData.bank_account,
-          signatureUrl: profileData.signature_url,
-          chopUrl: profileData.chop_url
-       }));
+      localStorage.setItem('erp_company_profile', JSON.stringify({
+        name: profileData.name,
+        iconType: profileData.icon_type,
+        iconDataUrl: profileData.icon_data_url,
+        address: profileData.address,
+        phone: profileData.phone,
+        email: profileData.email,
+        bankName: profileData.bank_name,
+        bankAccount: profileData.bank_account,
+        signatureUrl: profileData.signature_url,
+        chopUrl: profileData.chop_url
+      }));
     }
   } catch (err) {
     console.error("Initial load error", err);

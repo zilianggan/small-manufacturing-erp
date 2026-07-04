@@ -7,6 +7,7 @@ import React, { useState, useMemo } from 'react';
 import { getInventory, getSalesOrders, getPurchaseOrders, getWorkflowTasks, getDashboardStats, addPurchaseOrder } from '../services/db';
 import { Sparkles, AlertTriangle, RefreshCw, ChevronRight, FileText, BrainCircuit, Play, ShoppingCart } from 'lucide-react';
 import Markdown from 'react-markdown';
+import LoadingSpinner from './LoadingSpinner';
 
 export default function ReportsView() {
   const [stats, setStats] = useState(() => getDashboardStats());
@@ -207,13 +208,10 @@ export default function ReportsView() {
 
           {/* Report Display or Loading State */}
           {isLoading && (
-            <div className="border border-slate-800 bg-slate-950/60 rounded-xl p-8 flex flex-col items-center justify-center space-y-3 font-mono text-xs relative z-10 text-center min-h-[250px]">
-              <BrainCircuit className="w-12 h-12 text-indigo-400 animate-pulse" />
-              <div className="text-slate-200 font-semibold">{loadingStep}</div>
-              <p className="text-[10px] text-slate-500 max-w-sm">
-                Gemini is auditing bills of materials (BOM), evaluating production queue bottlenecks, and preparing automated recommendations...
-              </p>
-            </div>
+            <LoadingSpinner 
+              message={loadingStep} 
+              subtitle="GEMINI_COGNITION_ACTIVE" 
+            />
           )}
 
           {!isLoading && aiReport && (
