@@ -252,6 +252,26 @@ export interface ProductSalesHistoryItem {
   createdAt?: string;
 }
 
+export type InventoryTransactionType = 'PURCHASE' | 'SALES' | 'PURCHASE_RETURN' | 'SALES_RETURN' | 'ADJUSTMENT';
+
+// A single stock movement row (inventory_transaction). Insert-only — the
+// update_material_stock() DB trigger applies `quantity` (signed) to
+// material.quantity or product.quantity on INSERT, so there is no
+// update/delete path for this type.
+export interface InventoryTransaction {
+  id: string;
+  transactionType: InventoryTransactionType;
+  quantity: number; // signed: + increases stock, - decreases stock
+  unitCost?: number;
+  remark?: string;
+  materialId?: string; // exactly one of materialId/productId is set
+  materialName?: string; // joined, display only
+  productId?: string;
+  productName?: string; // joined, display only
+  transactionDate: string;
+  createdAt?: string;
+}
+
 export interface SystemAdminData {
   job_positions: JobPosition[];
   material_categories: MaterialCategory[];
