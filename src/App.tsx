@@ -74,10 +74,6 @@ export default function App() {
     }
   }, [darkMode]);
 
-  // Cross-component quick-procure state
-  // If user clicks "Procure" on inventory, we pass it down to Purchase orders and switch the tab
-  const [quickProcureItem, setQuickProcureItem] = useState<{ itemId: string; itemName: string; vendorId: string } | null>(null);
-
   // Company Profile states
   const EMPTY_PROFILE: CompanyProfile = { name: '', icon_type: 'database' };
   const [companyProfile, setCompanyProfile] = useState<CompanyProfile>(EMPTY_PROFILE);
@@ -168,15 +164,6 @@ export default function App() {
       default:
         return <Database className={sizeClass} />;
     }
-  };
-
-  const handleQuickProcure = (itemId: string, itemName: string, vendorId: string) => {
-    setQuickProcureItem({ itemId, itemName, vendorId });
-    setActiveTab('PURCHASES');
-  };
-
-  const clearQuickProcure = () => {
-    setQuickProcureItem(null);
   };
 
   // Automated Excel data backup helper
@@ -489,19 +476,13 @@ export default function App() {
         {/* Render Active Tab View */}
         <div className="p-6 flex-1 min-h-0 min-w-0 overflow-y-auto overscroll-contain">
           {activeTab === 'DASHBOARD' && <DashboardView key={refreshKey} />}
-          {activeTab === 'INVENTORY' && <InventoryView key={refreshKey} onQuickProcure={handleQuickProcure} />}
+          {activeTab === 'INVENTORY' && <InventoryView key={refreshKey} />}
           {activeTab === 'MATERIAL' && <MaterialView key={refreshKey} />}
           {activeTab === 'PRODUCT' && <ProductView key={refreshKey} />}
           {activeTab === 'CONTACTS' && <ContactsView key={refreshKey} />}
           {activeTab === 'EMPLOYEES' && <EmployeesView key={refreshKey} />}
           {activeTab === 'ORDERS' && <OrdersView key={refreshKey} />}
-          {activeTab === 'PURCHASES' && (
-            <PurchasesView
-              key={refreshKey}
-              quickProcureState={quickProcureItem}
-              clearQuickProcure={clearQuickProcure}
-            />
-          )}
+          {activeTab === 'PURCHASES' && <PurchasesView key={refreshKey} />}
           {activeTab === 'WORKFLOWS' && <WorkflowsView key={refreshKey} />}
           {activeTab === 'SYSTEM_ADMIN' && <SystemAdminView key={refreshKey} />}
           {activeTab === 'REPORTS' && <ReportsView key={refreshKey} />}

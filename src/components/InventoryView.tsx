@@ -3,495 +3,366 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
-  generateId,
-  getMaterialCategories,
-  getProductCategories,
-  saveInventory
-} from '../services/InventoryService';
-import { useTableData } from '../hooks/useTableData';
-import { InventoryItem, MaterialCategory, ProductCategory, Vendor, Attachment } from '../types';
-import { Plus, AlertTriangle, ShoppingCart, Paperclip, Trash2 } from 'lucide-react';
-import AttachmentSection from './AttachmentSection';
-import SegmentedControl from './SegmentedControl';
+  generateId, getInventoryTransactions, saveInventoryTransaction
+} from '../services/InventoryTransactionService';
+import { getMaterials } from '../services/MaterialService';
+import { getProducts } from '../services/ProductService';
+import { InventoryTransaction, InventoryTransactionType, Material, Product } from '../types';
+import { Plus, Calendar } from 'lucide-react';
 import LoadingSpinner from './LoadingSpinner';
 import ComboBox from './ComboBox';
+import SegmentedControl from './SegmentedControl';
 import InfiniteScrollSentinel from './InfiniteScrollSentinel';
 import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, FormField, fieldInputClassName, SearchInput } from './ui';
 import { CallAPI } from './UIHelper';
 
-interface InventoryViewProps {
-  onQuickProcure?: (itemId: string, itemName: string, vendorId: string) => void;
-}
+const PAGE_SIZE = 20;
 
-export default function InventoryView({ onQuickProcure }: InventoryViewProps) {
+const TRANSACTION_TYPES: { value: InventoryTransactionType; label: string }[] = [
+  { value: 'PURCHASE', label: 'Purchase' },
+  { value: 'SALES', label: 'Sales' },
+  { value: 'PURCHASE_RETURN', label: 'Purchase Return' },
+  { value: 'SALES_RETURN', label: 'Sales Return' },
+  { value: 'ADJUSTMENT', label: 'Adjustment' },
+];
+
+const TYPE_BADGE_CLASSNAME: Record<InventoryTransactionType, string> = {
+  PURCHASE: 'bg-blue-50 text-blue-700 border-blue-100',
+  SALES: 'bg-emerald-50 text-emerald-700 border-emerald-100',
+  PURCHASE_RETURN: 'bg-amber-50 text-amber-800 border-amber-200',
+  SALES_RETURN: 'bg-teal-50 text-teal-700 border-teal-100',
+  ADJUSTMENT: 'bg-slate-50 text-slate-700 border-slate-200',
+};
+
+const today = (): string => new Date().toISOString().split('T')[0];
+
+export default function InventoryView() {
+  // ─── Ledger list ──────────────────────────────────────────────────────────
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeFilter, setActiveFilter] = useState<'ALL' | 'RAW_MATERIAL' | 'FINISHED_GOOD'>('ALL');
-  const { data: inventoryData, loading, loadMore, hasMore, loadingMore, refetch } = useTableData<InventoryItem>('inventory_items', {
-    search: searchQuery,
-    filters: activeFilter === 'ALL' ? undefined : { type: activeFilter }
-  });
+  const [typeFilter, setTypeFilter] = useState<'ALL' | InventoryTransactionType>('ALL');
+  const [transactions, setTransactions] = useState<InventoryTransaction[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
+  const [offset, setOffset] = useState(0);
 
-  // Vendor supplier picker — search-as-you-type instead of a full vendor fetch
-  const [supplierQuery, setSupplierQuery] = useState('');
-  const { data: vendors, loading: vendorsSearchLoading } = useTableData<Vendor>('vendors', { search: supplierQuery });
-
-  const [inventory, setInventory] = useState<InventoryItem[]>([]);
-  useEffect(() => { setInventory(inventoryData); }, [inventoryData]);
-
-  // UI state
-  const [showAddForm, setShowAddForm] = useState(false);
-
-  // Form states
-  const [formName, setFormName] = useState('');
-  const [formSku, setFormSku] = useState('');
-  const [formType, setFormType] = useState<InventoryItem['type']>('RAW_MATERIAL');
-  const [formMaterialCategoryId, setFormMaterialCategoryId] = useState('');
-  const [formProductCategoryId, setFormProductCategoryId] = useState('');
-  const [formQuantity, setFormQuantity] = useState(0);
-  const [formUnit, setFormUnit] = useState('pcs');
-  const [formUnitCost, setFormUnitCost] = useState(0);
-  const [formReorderPoint, setFormReorderPoint] = useState(0);
-  const [formSupplierId, setFormSupplierId] = useState('');
-  const [formDescription, setFormDescription] = useState('');
-  const [formAttachment, setFormAttachment] = useState<Attachment | undefined>(undefined);
-  const [materialCategories, setMaterialCategories] = useState<MaterialCategory[]>([]);
-  const [productCategories, setProductCategories] = useState<ProductCategory[]>([]);
-
-  const loadCategories = async () => {
-    await CallAPI(getMaterialCategories, {
-      onCompleted: setMaterialCategories,
-      onError: console.error,
-    });
-    await CallAPI(getProductCategories, {
-      onCompleted: setProductCategories,
-      onError: console.error,
+  const loadTransactions = (nextOffset: number, append: boolean) => {
+    const setBusy = append ? setLoadingMore : setLoading;
+    setBusy(true);
+    CallAPI(() => getInventoryTransactions({ search: searchQuery, typeFilter, offset: nextOffset, limit: PAGE_SIZE }), {
+      onCompleted: ({ rows, hasMore: more }) => {
+        setTransactions(prev => append ? [...prev, ...rows] : rows);
+        setHasMore(more);
+        setOffset(nextOffset + rows.length);
+        setBusy(false);
+      },
+      onError: (err) => { console.error(err); setBusy(false); },
     });
   };
+
+  useEffect(() => { loadTransactions(0, false); }, []);
+
+  // Debounced: search text or type filter changing both restart from page 1
+  useEffect(() => {
+    const t = setTimeout(() => loadTransactions(0, false), 300);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchQuery, typeFilter]);
+
+  const handleLoadMore = () => {
+    if (loadingMore || !hasMore) return;
+    loadTransactions(offset, true);
+  };
+
+  // ─── Add Transaction form ────────────────────────────────────────────────
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [formType, setFormType] = useState<InventoryTransactionType>('PURCHASE');
+  const [formAdjustmentTarget, setFormAdjustmentTarget] = useState<'MATERIAL' | 'PRODUCT'>('MATERIAL');
+  const [formItemId, setFormItemId] = useState('');
+  const [formQuantity, setFormQuantity] = useState(1);
+  const [formDirection, setFormDirection] = useState<'INCREASE' | 'DECREASE'>('INCREASE');
+  const [formUnitCost, setFormUnitCost] = useState(0);
+  const [formDate, setFormDate] = useState(today());
+  const [formRemark, setFormRemark] = useState('');
+
+  const [materialQuery, setMaterialQuery] = useState('');
+  const [materials, setMaterials] = useState<Material[]>([]);
+  const [materialsLoading, setMaterialsLoading] = useState(false);
+  const [productQuery, setProductQuery] = useState('');
+  const [products, setProducts] = useState<Product[]>([]);
+  const [productsLoading, setProductsLoading] = useState(false);
+
+  const usesMaterialList = formType === 'PURCHASE' || formType === 'PURCHASE_RETURN'
+    || (formType === 'ADJUSTMENT' && formAdjustmentTarget === 'MATERIAL');
 
   useEffect(() => {
-    loadCategories();
-  }, []);
+    if (!usesMaterialList) return;
+    setMaterialsLoading(true);
+    CallAPI(() => getMaterials(materialQuery), {
+      onCompleted: (data) => { setMaterials(data); setMaterialsLoading(false); },
+      onError: (err) => { console.error(err); setMaterialsLoading(false); },
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [materialQuery, usesMaterialList]);
 
-  // Handle addition
-  const handleAddItem = async (e: React.FormEvent) => {
+  useEffect(() => {
+    if (usesMaterialList) return;
+    setProductsLoading(true);
+    CallAPI(() => getProducts(productQuery), {
+      onCompleted: (data) => { setProducts(data); setProductsLoading(false); },
+      onError: (err) => { console.error(err); setProductsLoading(false); },
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [productQuery, usesMaterialList]);
+
+  const showsUnitCost = formType === 'PURCHASE' || formType === 'PURCHASE_RETURN';
+  const showsDirectionToggle = formType === 'ADJUSTMENT';
+
+  const resetForm = () => {
+    setFormType('PURCHASE');
+    setFormAdjustmentTarget('MATERIAL');
+    setFormItemId('');
+    setFormQuantity(1);
+    setFormDirection('INCREASE');
+    setFormUnitCost(0);
+    setFormDate(today());
+    setFormRemark('');
+    setMaterialQuery('');
+    setProductQuery('');
+  };
+
+  const openAddForm = () => {
+    resetForm();
+    setShowAddForm(true);
+  };
+
+  const computeSignedQuantity = (): number => {
+    switch (formType) {
+      case 'PURCHASE': return formQuantity;
+      case 'SALES': return -formQuantity;
+      case 'PURCHASE_RETURN': return -formQuantity;
+      case 'SALES_RETURN': return formQuantity;
+      case 'ADJUSTMENT': return formDirection === 'INCREASE' ? formQuantity : -formQuantity;
+    }
+  };
+
+  const handleAddTransaction = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formName || !formSku) return;
+    if (!formItemId || formQuantity <= 0) return;
 
-    const newItem: InventoryItem = {
+    const record: InventoryTransaction = {
       id: generateId(),
-      name: formName,
-      sku: formSku,
-      type: formType,
-      materialCategoryId: formType === 'RAW_MATERIAL' ? formMaterialCategoryId || undefined : undefined,
-      productCategoryId: formType === 'FINISHED_GOOD' ? formProductCategoryId || undefined : undefined,
-      quantity: formQuantity,
-      unit: formUnit,
-      unitCost: formUnitCost,
-      reorderPoint: formReorderPoint,
-      supplierId: formSupplierId || undefined,
-      description: formDescription || undefined,
-      attachments: formAttachment ? [formAttachment] : []
+      transactionType: formType,
+      quantity: computeSignedQuantity(),
+      unitCost: showsUnitCost ? formUnitCost : undefined,
+      remark: formRemark.trim() || undefined,
+      materialId: usesMaterialList ? formItemId : undefined,
+      productId: usesMaterialList ? undefined : formItemId,
+      transactionDate: formDate,
     };
 
-    const previous = inventory;
-    const updated = [...inventory, newItem];
-    setInventory(updated);
-
-    await CallAPI(() => saveInventory(updated, newItem), {
-      onCompleted: refetch,
-      onError: (err) => {
-        console.error(err);
-        setInventory(previous);
-      },
+    await CallAPI(() => saveInventoryTransaction(record), {
+      onCompleted: () => loadTransactions(0, false),
+      onError: console.error,
     });
 
-    // Reset fields
-    setFormName('');
-    setFormSku('');
-    setFormMaterialCategoryId('');
-    setFormProductCategoryId('');
-    setFormQuantity(0);
-    setFormUnit('pcs');
-    setFormUnitCost(0);
-    setFormReorderPoint(0);
-    setFormSupplierId('');
-    setFormDescription('');
-    setFormAttachment(undefined);
     setShowAddForm(false);
+    resetForm();
   };
-
-  const handleDeleteItem = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this item?')) return;
-
-    const previous = inventory;
-    const updated = inventory.filter(item => item.id !== id);
-    setInventory(updated);
-
-    await CallAPI(() => saveInventory(updated, undefined, id), {
-      onCompleted: refetch,
-      onError: (err) => {
-        console.error(err);
-        setInventory(previous);
-      },
-    });
-  };
-
-  // Server already applied search + type filter; use the loaded rows as-is.
-  const filteredInventory = inventory;
-
-  // Vendor Lookup Map
-  const vendorMap = useMemo(() => {
-    return new Map(vendors.map(v => [v.id, v.companyName]));
-  }, [vendors]);
-
-  const materialCategoryMap = useMemo(() => {
-    return new Map(materialCategories.map(category => [category.id, category.name]));
-  }, [materialCategories]);
-
-  const productCategoryMap = useMemo(() => {
-    return new Map(productCategories.map(category => [category.id, category.name]));
-  }, [productCategories]);
-
-  const activeMaterialCategories = materialCategories.filter(category => category.is_active);
-  const activeProductCategories = productCategories.filter(category => category.is_active);
 
   if (loading) {
-    return <LoadingSpinner message="Auditing inventory levels..." subtitle="STOCK_METRICS" />;
+    return <LoadingSpinner message="Loading inventory ledger..." subtitle="INVENTORY_LEDGER" />;
   }
 
   return (
     <div className="space-y-6" id="inventory-view">
-      {/* Search and Action Bar */}
+      {/* Top bar */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <SearchInput
           value={searchQuery}
           onChange={setSearchQuery}
-          placeholder="Search items by name or SKU..."
+          placeholder="Search by material or product name..."
         />
 
         <div className="flex items-center space-x-2">
-          {/* Segmented control for filtering */}
-          <SegmentedControl
-            options={[
-              { value: 'ALL', label: 'All Items' },
-              { value: 'RAW_MATERIAL', label: 'Raw Materials' },
-              { value: 'FINISHED_GOOD', label: 'Finished Goods' }
-            ]}
-            active={activeFilter}
-            onChange={(value) => setActiveFilter(value as any)}
-            getActiveClassName={(value) => {
-              if (value === 'RAW_MATERIAL') return 'bg-white text-blue-600 shadow-sm dark:bg-slate-800 dark:text-blue-400';
-              if (value === 'FINISHED_GOOD') return 'bg-white text-emerald-600 shadow-sm dark:bg-slate-800 dark:text-emerald-400';
-              return 'bg-white text-slate-900 shadow-sm dark:bg-slate-800 dark:text-slate-100';
-            }}
+          <ComboBox
+            value={typeFilter}
+            onChange={(v) => setTypeFilter(v as 'ALL' | InventoryTransactionType)}
+            options={[{ value: 'ALL', label: 'All Types' }, ...TRANSACTION_TYPES]}
+            className="w-44"
           />
 
           <button
-            onClick={() => setShowAddForm(!showAddForm)}
+            onClick={openAddForm}
             className="flex items-center space-x-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium transition-colors font-sans shadow-sm"
           >
             <Plus className="w-4 h-4" />
-            <span>Add Item</span>
+            <span>Add Transaction</span>
           </button>
         </div>
       </div>
 
-      {/* Add Item Form as Dialog Modal */}
-      <Dialog open={showAddForm} onClose={() => setShowAddForm(false)} title="Add New Inventory Item">
-        <form onSubmit={handleAddItem} className="p-5 space-y-4">
+      {/* Add Transaction Dialog */}
+      <Dialog open={showAddForm} onClose={() => setShowAddForm(false)} title="Add Inventory Transaction">
+        <form onSubmit={handleAddTransaction} className="p-5 space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs text-slate-600">
 
-            <FormField label="Item Name *">
-              <input
-                type="text"
-                required
-                value={formName}
-                onChange={(e) => setFormName(e.target.value)}
-                placeholder="e.g. High-Tensile Bolts"
-                className={fieldInputClassName}
-              />
-            </FormField>
-
-            <FormField label="SKU / Code *">
-              <input
-                type="text"
-                required
-                value={formSku}
-                onChange={(e) => setFormSku(e.target.value.toUpperCase())}
-                placeholder="e.g. RM-BLT-04"
-                className={`${fieldInputClassName} uppercase font-mono`}
-              />
-            </FormField>
-
-            <FormField label="Item Type">
+            <FormField label="Transaction Type *" colSpan="sm:col-span-2">
               <ComboBox
+                required
                 value={formType}
                 onChange={(v) => {
-                  setFormType(v as InventoryItem['type']);
+                  setFormType(v as InventoryTransactionType);
+                  setFormItemId('');
                 }}
-                options={[
-                  { value: 'RAW_MATERIAL', label: 'Raw Material (Ingredient)' },
-                  { value: 'FINISHED_GOOD', label: 'Finished Good (End Product)' },
-                ]}
+                options={TRANSACTION_TYPES}
               />
             </FormField>
 
-            {formType === 'RAW_MATERIAL' ? (
-              <FormField label="Material Category">
-                <ComboBox
-                  value={formMaterialCategoryId}
-                  onChange={setFormMaterialCategoryId}
-                  noneLabel="-- Select Material Category --"
-                  options={activeMaterialCategories.map(category => ({
-                    value: category.id,
-                    label: category.name
-                  }))}
-                />
-              </FormField>
-            ) : (
-              <FormField label="Product Category">
-                <ComboBox
-                  value={formProductCategoryId}
-                  onChange={setFormProductCategoryId}
-                  noneLabel="-- Select Product Category --"
-                  options={activeProductCategories.map(category => ({
-                    value: category.id,
-                    label: category.name
-                  }))}
+            {showsDirectionToggle && (
+              <FormField label="Direction">
+                <SegmentedControl
+                  options={[{ value: 'INCREASE', label: 'Increase (+)' }, { value: 'DECREASE', label: 'Decrease (-)' }]}
+                  active={formDirection}
+                  onChange={(v) => setFormDirection(v as 'INCREASE' | 'DECREASE')}
                 />
               </FormField>
             )}
 
-            <FormField label="Initial Stock Quantity">
+            {formType === 'ADJUSTMENT' && (
+              <FormField label="Adjust Stock For">
+                <SegmentedControl
+                  options={[{ value: 'MATERIAL', label: 'Material' }, { value: 'PRODUCT', label: 'Product' }]}
+                  active={formAdjustmentTarget}
+                  onChange={(v) => { setFormAdjustmentTarget(v); setFormItemId(''); }}
+                />
+              </FormField>
+            )}
+
+            <FormField label={usesMaterialList ? 'Material *' : 'Product *'} colSpan="sm:col-span-2">
+              <ComboBox
+                required
+                value={formItemId}
+                onChange={setFormItemId}
+                noneLabel={usesMaterialList ? '-- Select Material --' : '-- Select Product --'}
+                options={usesMaterialList
+                  ? materials.map(m => ({ value: m.id, label: m.name, sublabel: m.code }))
+                  : products.map(p => ({ value: p.id, label: p.name, sublabel: p.code }))}
+                onSearch={usesMaterialList ? setMaterialQuery : setProductQuery}
+                searchLoading={usesMaterialList ? materialsLoading : productsLoading}
+              />
+            </FormField>
+
+            <FormField label="Quantity *">
               <input
                 type="number"
-                min="0"
+                required
+                min="1"
                 value={formQuantity}
                 onChange={(e) => setFormQuantity(Number(e.target.value))}
                 className={fieldInputClassName}
               />
             </FormField>
 
-            <FormField label="Measurement Unit">
-              <input
-                type="text"
-                placeholder="e.g. tons, pcs, liters"
-                value={formUnit}
-                onChange={(e) => setFormUnit(e.target.value)}
-                className={fieldInputClassName}
-              />
-            </FormField>
-
-            <FormField label="Unit Cost (RM)">
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                value={formUnitCost}
-                onChange={(e) => setFormUnitCost(Number(e.target.value))}
-                className={fieldInputClassName}
-              />
-            </FormField>
-
-            <FormField label="Reorder Alert Level (Threshold)">
-              <input
-                type="number"
-                min="0"
-                value={formReorderPoint}
-                onChange={(e) => setFormReorderPoint(Number(e.target.value))}
-                className={fieldInputClassName}
-              />
-            </FormField>
-
-            {formType === 'RAW_MATERIAL' && (
-              <FormField label="Preferred Supplier">
-                <ComboBox
-                  value={formSupplierId}
-                  onChange={setFormSupplierId}
-                  noneLabel="-- Select Preferred Supplier --"
-                  options={vendors.map(v => ({ value: v.id, label: v.companyName }))}
-                  onSearch={setSupplierQuery}
-                  searchLoading={vendorsSearchLoading}
+            {showsUnitCost && (
+              <FormField label="Unit Cost (RM)">
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={formUnitCost}
+                  onChange={(e) => setFormUnitCost(Number(e.target.value))}
+                  className={fieldInputClassName}
                 />
               </FormField>
             )}
 
-            <FormField label="Description" colSpan="sm:col-span-2">
-              <textarea
-                value={formDescription}
-                onChange={(e) => setFormDescription(e.target.value)}
-                rows={2}
-                placeholder="Brief item description..."
+            <FormField label="Transaction Date *">
+              <input
+                type="date"
+                required
+                value={formDate}
+                onChange={(e) => setFormDate(e.target.value)}
                 className={fieldInputClassName}
               />
             </FormField>
 
-            <div className="sm:col-span-2">
-              <AttachmentSection
-                attachment={formAttachment}
-                onAttachmentChange={setFormAttachment}
-                label="Item Document or Blueprint (Optional)"
-                helperText="Upload any technical blueprint, sheet, or manual (Max 1MB)"
+            <FormField label="Remark" colSpan="sm:col-span-2">
+              <textarea
+                value={formRemark}
+                onChange={(e) => setFormRemark(e.target.value)}
+                rows={2}
+                placeholder="Optional note..."
+                className={fieldInputClassName}
               />
-            </div>
+            </FormField>
 
           </div>
           <DialogFooter>
             <DialogCancelButton onClick={() => setShowAddForm(false)} />
-            <DialogSubmitButton>Save Item</DialogSubmitButton>
+            <DialogSubmitButton>Save Transaction</DialogSubmitButton>
           </DialogFooter>
         </form>
       </Dialog>
 
-      {/* Inventory Table Card */}
+      {/* Ledger table */}
       <Card className="overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs border-collapse">
             <thead>
               <tr className="bg-slate-50/75 border-b border-slate-200 text-slate-500 uppercase font-mono tracking-wider dark:bg-slate-800/80 dark:border-slate-700 dark:text-slate-400">
-                <th className="p-4">Item Details</th>
-                <th className="p-4">SKU</th>
+                <th className="p-4">Date</th>
                 <th className="p-4">Type</th>
-                <th className="p-4 text-center">Stock Level</th>
-                <th className="p-4">Unit Cost</th>
-                <th className="p-4">Valuation</th>
-                <th className="p-4 text-right">Actions</th>
+                <th className="p-4">Item</th>
+                <th className="p-4 text-right">Quantity</th>
+                <th className="p-4 text-right">Unit Cost</th>
+                <th className="p-4">Remark</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-slate-700">
-              {filteredInventory.length === 0 ? (
+              {transactions.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="text-center py-12 text-xs text-slate-400 font-sans">
-                    No items match your filters or search. Add an item or clear search query.
+                  <td colSpan={6} className="text-center py-12 text-xs text-slate-400 font-sans">
+                    No inventory transactions match your filters or search.
                   </td>
                 </tr>
               ) : (
-                filteredInventory.map((item) => {
-                  const isLow = item.quantity <= item.reorderPoint;
-                  const supplierName = item.supplierId ? vendorMap.get(item.supplierId) : null;
-
-                  // Compute reorder scale percent (max 100)
-                  const percent = Math.min(100, Math.max(5, (item.quantity / (item.reorderPoint || 10)) * 50));
-
-                  return (
-                    <tr key={item.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-950 transition-colors">
-                      {/* Name / Description */}
-                      <td className="p-4 max-w-sm">
-                        <div className="space-y-0.5">
-                          <div className="font-semibold text-slate-900 flex items-center space-x-1.5">
-                            <span>{item.name}</span>
-                            {isLow && (
-                              <span className="inline-flex items-center space-x-0.5 text-[9px] font-mono font-medium px-1.5 py-0.5 bg-amber-50 text-amber-800 rounded-full border border-amber-200">
-                                <AlertTriangle className="w-2.5 h-2.5 shrink-0" />
-                                <span>Low</span>
-                              </span>
-                            )}
-                          </div>
-                          {item.description && <p className="text-[11px] text-slate-400 line-clamp-1">{item.description}</p>}
-                          {supplierName && (
-                            <div className="text-[10px] text-slate-500 flex items-center space-x-1">
-                              <span className="font-mono text-slate-400">Supplier:</span>
-                              <span>{supplierName}</span>
-                            </div>
-                          )}
-                          {(item.materialCategoryId || item.productCategoryId) && (
-                            <div className="text-[10px] text-slate-500 flex items-center space-x-1">
-                              <span className="font-mono text-slate-400">Category:</span>
-                              <span>
-                                {item.type === 'RAW_MATERIAL'
-                                  ? materialCategoryMap.get(item.materialCategoryId || '') || 'Unassigned'
-                                  : productCategoryMap.get(item.productCategoryId || '') || 'Unassigned'}
-                              </span>
-                            </div>
-                          )}
-                          {item.attachments?.[0] && (
-                            <div className="mt-1.5 flex items-center">
-                              <a
-                                href={item.attachments[0].dataUrl}
-                                download={item.attachments[0].name}
-                                className="inline-flex items-center space-x-1 px-1.5 py-0.5 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded text-[10px] font-mono transition-colors"
-                                title="Download / view attachment"
-                              >
-                                <Paperclip className="w-2.5 h-2.5 text-blue-500 shrink-0" />
-                                <span className="truncate max-w-[150px]">{item.attachments[0].name}</span>
-                              </a>
-                            </div>
-                          )}
-                        </div>
-                      </td>
-
-                      {/* SKU */}
-                      <td className="p-4 font-mono text-slate-500 font-medium">{item.sku}</td>
-
-                      {/* Type Badge */}
-                      <td className="p-4">
-                        <span className={`px-2 py-0.5 rounded-full font-mono text-[10px] font-medium border ${item.type === 'RAW_MATERIAL'
-                          ? 'bg-blue-50 text-blue-700 border-blue-100'
-                          : 'bg-emerald-50 text-emerald-700 border-emerald-100'
-                          }`}>
-                          {item.type === 'RAW_MATERIAL' ? 'Raw Material' : 'Finished'}
-                        </span>
-                      </td>
-
-                      {/* Quantity Progress Bar */}
-                      <td className="p-4 max-w-[150px]">
-                        <div className="space-y-1">
-                          <div className="flex items-center justify-between font-mono font-semibold text-slate-900">
-                            <span>{item.quantity} {item.unit}</span>
-                            <span className="text-[10px] text-slate-400">min: {item.reorderPoint}</span>
-                          </div>
-                          {/* Progress indicator */}
-                          <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
-                            <div
-                              className={`h-full rounded-full ${isLow ? 'bg-amber-500' : item.type === 'RAW_MATERIAL' ? 'bg-blue-500' : 'bg-emerald-500'}`}
-                              style={{ width: `${percent}%` }}
-                            />
-                          </div>
-                        </div>
-                      </td>
-
-                      {/* Unit Cost */}
-                      <td className="p-4 font-mono text-slate-900">
-                        RM {item.unitCost.toFixed(2)}
-                      </td>
-
-                      {/* Valuation */}
-                      <td className="p-4 font-mono font-medium text-slate-900">
-                        RM {(item.quantity * item.unitCost).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      </td>
-
-                      {/* Actions */}
-                      <td className="p-4 text-right">
-                        <div className="flex items-center justify-end space-x-2">
-                          {item.type === 'RAW_MATERIAL' && item.supplierId && onQuickProcure && (
-                            <button
-                              onClick={() => onQuickProcure(item.id, item.name, item.supplierId!)}
-                              title="Procure more raw materials"
-                              className="p-1 text-slate-500 hover:text-blue-600 hover:bg-slate-50 rounded transition-colors"
-                            >
-                              <ShoppingCart className="w-4 h-4" />
-                            </button>
-                          )}
-                          <button
-                            onClick={() => handleDeleteItem(item.id)}
-                            className="p-1 text-slate-400 hover:text-red-600 hover:bg-slate-50 rounded transition-colors"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </td>
-
-                    </tr>
-                  );
-                })
+                transactions.map((tx) => (
+                  <tr key={tx.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-950 transition-colors">
+                    <td className="p-4">
+                      <div className="flex items-center space-x-1.5 text-slate-600 font-mono text-[11px]">
+                        <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                        <span>{tx.transactionDate}</span>
+                      </div>
+                    </td>
+                    <td className="p-4">
+                      <span className={`px-2 py-0.5 rounded-full font-mono text-[10px] font-medium border ${TYPE_BADGE_CLASSNAME[tx.transactionType]}`}>
+                        {TRANSACTION_TYPES.find(t => t.value === tx.transactionType)?.label ?? tx.transactionType}
+                      </span>
+                    </td>
+                    <td className="p-4">
+                      <div className="space-y-0.5">
+                        <div className="font-semibold text-slate-900">{tx.materialName || tx.productName || '—'}</div>
+                        <div className="text-[10px] text-slate-400 font-mono">{tx.materialId ? 'Material' : 'Product'}</div>
+                      </div>
+                    </td>
+                    <td className={`p-4 text-right font-mono font-semibold ${tx.quantity < 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                      {tx.quantity > 0 ? `+${tx.quantity}` : tx.quantity}
+                    </td>
+                    <td className="p-4 font-mono text-slate-900 text-right">
+                      {tx.unitCost != null ? `RM ${tx.unitCost.toFixed(2)}` : '—'}
+                    </td>
+                    <td className="p-4 text-slate-500">{tx.remark || '—'}</td>
+                  </tr>
+                ))
               )}
             </tbody>
           </table>
         </div>
       </Card>
-      <InfiniteScrollSentinel onLoadMore={loadMore} hasMore={hasMore} loading={loadingMore} />
+      <InfiniteScrollSentinel onLoadMore={handleLoadMore} hasMore={hasMore} loading={loadingMore} />
     </div>
   );
 }
