@@ -1,11 +1,11 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { X, Printer, FileText, Mail, Phone, MapPin, Database, Factory, Cpu, Wrench } from 'lucide-react';
-import { SalesOrder, Client, CompanyProfile } from '../types';
+import { SalesHeader, Client, CompanyProfile } from '../types';
 import { getClients } from '../services/ContactsService';
 import { getCompanyProfile } from '../services/CompanyProfileService';
 
 interface InvoiceModalProps {
-  order: SalesOrder | null;
+  order: SalesHeader | null;
   isOpen: boolean;
   onClose: () => void;
 }
@@ -54,7 +54,7 @@ export default function InvoiceModal({ order, isOpen, onClose }: InvoiceModalPro
   const invoiceNo = `INV-2026-${order.id.slice(0, 8).toUpperCase()}`;
 
   // Compute tax (Malaysia Sales & Service Tax @ 6%)
-  const subtotal = order.totalPrice;
+  const subtotal = order.totalAmount;
   const sstTax = subtotal * 0.06;
   const grandTotal = subtotal + sstTax;
 
@@ -376,18 +376,12 @@ export default function InvoiceModal({ order, isOpen, onClose }: InvoiceModalPro
                   </tr>
                 </thead>
                 <tbody>
-                  ${(order.items && order.items.length > 0 ? order.items : [{
-            itemId: order.itemId,
-            itemName: order.itemName,
-            quantity: order.quantity,
-            unitPrice: order.unitPrice,
-            totalPrice: order.totalPrice
-          }]).map((item, idx) => `
+                  ${order.details.map((item, idx) => `
                     <tr>
                       <td class="text-mono" style="color: #94a3b8;">${String(idx + 1).padStart(2, '0')}</td>
                       <td>
-                        <div class="item-name">${item.itemName}</div>
-                        <span class="item-desc">Precision supply item. ID: ${item.itemId}</span>
+                        <div class="item-name">${item.productName}</div>
+                        <span class="item-desc">Finished product. Code: ${item.productCode || item.productId}</span>
                       </td>
                       <td class="text-right text-mono">${item.quantity} pcs</td>
                       <td class="text-right text-mono">RM ${item.unitPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
@@ -669,18 +663,12 @@ export default function InvoiceModal({ order, isOpen, onClose }: InvoiceModalPro
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-slate-700 print:divide-slate-200">
-                  {(order.items && order.items.length > 0 ? order.items : [{
-                    itemId: order.itemId,
-                    itemName: order.itemName,
-                    quantity: order.quantity,
-                    unitPrice: order.unitPrice,
-                    totalPrice: order.totalPrice
-                  }]).map((item, idx) => (
-                    <tr key={idx}>
+                  {order.details.map((item, idx) => (
+                    <tr key={item.detailId || idx}>
                       <td className="p-3 font-mono text-slate-400">{String(idx + 1).padStart(2, '0')}</td>
                       <td className="p-3 font-semibold text-slate-800">
-                        <div>{item.itemName}</div>
-                        <span className="text-[9px] text-slate-400 font-normal">Precision supply item. ID: {item.itemId}</span>
+                        <div>{item.productName}</div>
+                        <span className="text-[9px] text-slate-400 font-normal">Finished product. Code: {item.productCode || item.productId}</span>
                       </td>
                       <td className="p-3 text-right font-mono">{item.quantity} pcs</td>
                       <td className="p-3 text-right font-mono">RM {item.unitPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
