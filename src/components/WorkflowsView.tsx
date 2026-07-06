@@ -4,13 +4,14 @@
  */
 
 import React, { useState, useMemo, useEffect } from 'react';
-import { updateWorkflowStep, saveWorkflowTasks, getWorkflowTasks } from '../services/db';
+import { updateWorkflowStep, saveWorkflowTasks } from '../services/WorkflowsService';
 import { useTableData } from '../hooks/useTableData';
 import { WorkflowTask, Employee } from '../types';
 import { ClipboardCheck } from 'lucide-react';
 import OrderAccordion from './OrderAccordion';
 import LoadingSpinner from './LoadingSpinner';
 import InfiniteScrollSentinel from './InfiniteScrollSentinel';
+import { CallAPI } from './UIHelper';
 
 export default function WorkflowsView() {
   const { data: tasksData, loading, refetch, loadMore, hasMore, loadingMore } = useTableData<WorkflowTask>('workflow_tasks');
@@ -38,6 +39,7 @@ export default function WorkflowsView() {
   }, [tasks, orderFilter, assigneeFilter]);
 
   const handleAssignTask = async (taskId: string, employeeName: string) => {
+    const previous = tasks;
     const updated = tasks.map(t => {
       if (t.id === taskId) {
         return { ...t, assignedTo: employeeName || undefined };
@@ -45,8 +47,14 @@ export default function WorkflowsView() {
       return t;
     });
     setTasks(updated);
-    await saveWorkflowTasks(updated, updated.find(t => t.id === taskId));
-    refetch();
+
+    await CallAPI(() => saveWorkflowTasks(updated, updated.find(t => t.id === taskId)), {
+      onCompleted: refetch,
+      onError: (err) => {
+        console.error(err);
+        setTasks(previous);
+      },
+    });
   };
 
   const columns: { key: WorkflowTask['currentStep']; label: string; bg: string; text: string; desc: string }[] = [
@@ -67,10 +75,17 @@ export default function WorkflowsView() {
     };
 
     const nextStep = nextSteps[currentStep];
+    const previous = tasks;
     const updated = tasks.map(t => t.id === taskId ? { ...t, currentStep: nextStep } : t);
     setTasks(updated);
-    await updateWorkflowStep(taskId, nextStep);
-    refetch();
+
+    await CallAPI(() => updateWorkflowStep(taskId, nextStep), {
+      onCompleted: refetch,
+      onError: (err) => {
+        console.error(err);
+        setTasks(previous);
+      },
+    });
   };
 
   const handleRevertStep = async (taskId: string, currentStep: WorkflowTask['currentStep']) => {
@@ -83,10 +98,17 @@ export default function WorkflowsView() {
     };
 
     const prevStep = prevSteps[currentStep];
+    const previous = tasks;
     const updated = tasks.map(t => t.id === taskId ? { ...t, currentStep: prevStep } : t);
     setTasks(updated);
-    await updateWorkflowStep(taskId, prevStep);
-    refetch();
+
+    await CallAPI(() => updateWorkflowStep(taskId, prevStep), {
+      onCompleted: refetch,
+      onError: (err) => {
+        console.error(err);
+        setTasks(previous);
+      },
+    });
   };
 
   // Group filtered tasks by their current step

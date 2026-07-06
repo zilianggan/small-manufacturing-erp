@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import { UUID } from "crypto";
+
 export interface Attachment {
   name: string;
   type: string;
@@ -15,6 +17,8 @@ export interface InventoryItem {
   name: string;
   sku: string;
   type: 'RAW_MATERIAL' | 'FINISHED_GOOD';
+  materialCategoryId?: string; // RAW_MATERIAL items
+  productCategoryId?: string; // FINISHED_GOOD items
   quantity: number;
   unit: string;
   unitCost: number;
@@ -28,13 +32,11 @@ export interface InventoryItem {
 
 export interface Vendor {
   id: string;
-  name: string;
-  contactName: string;
+  companyName: string;
   email: string;
-  phone: string;
-  materialsSupplied: string[];
+  officeNo: string;
   address: string;
-  rating: number; // 1-5
+  description?: string;
   attachments?: Attachment[];
   createdAt?: string;
   updatedAt?: string;
@@ -42,13 +44,25 @@ export interface Vendor {
 
 export interface Client {
   id: string;
-  name: string;
-  contactName: string;
-  email: string;
-  phone: string;
   companyName: string;
+  email: string;
+  officeNo: string;
   address: string;
-  totalOrdersValue: number;
+  description?: string;
+  attachments?: Attachment[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+// A person belonging to exactly one Vendor or Client company.
+export interface Contact {
+  id: string;
+  fullName: string;
+  contactNo?: string;
+  email?: string;
+  jobPositionId?: string; // FK -> job_positions.id
+  vendorId?: string; // Set for a vendor-side contact (mutually exclusive with clientId)
+  clientId?: string; // Set for a client-side contact (mutually exclusive with vendorId)
   attachments?: Attachment[];
   createdAt?: string;
   updatedAt?: string;
@@ -125,7 +139,6 @@ export interface Employee {
   id: string;
   name: string;
   role: string;
-  department: string;
   status: 'ACTIVE' | 'INACTIVE';
   email?: string;
   phone?: string;
@@ -144,14 +157,103 @@ export interface DashboardStats {
 }
 
 export interface CompanyProfile {
+  id?: UUID,
   name: string;
-  iconType: 'database' | 'factory' | 'cpu' | 'wrench' | 'custom_image';
-  iconDataUrl?: string; // Stored base64 representation if uploaded
+  icon_type: 'database' | 'factory' | 'cpu' | 'wrench' | 'custom_image';
+  icon_data_url?: string; // Stored base64 representation if uploaded
   address?: string;
   phone?: string;
   email?: string;
-  bankName?: string;
-  bankAccount?: string;
-  signatureUrl?: string; // Stored base64 representation of a signature image
-  chopUrl?: string; // Stored base64 representation of a rubber stamp/chop image
+  bank_name?: string;
+  bank_account?: string;
+  signature_url?: string; // Stored base64 representation of a signature image
+  chop_url?: string; // Stored base64 representation of a rubber stamp/chop image
+}
+
+// Minimal parameter shape shared by Job Position and Material/Product Category.
+// All admin parameters carry only these four fields — nothing else.
+export interface NamedParameter {
+  id: string; // UUID
+  name: string;
+  is_active: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export type JobPosition = NamedParameter;
+export type MaterialCategory = NamedParameter;
+export type ProductCategory = NamedParameter;
+
+export type MaterialType = 'RAW_MATERIAL' | 'FINISHED_GOOD' | 'CUSTOMER_STOCK';
+
+export interface Material {
+  id: string;
+  name: string;
+  code?: string;
+  materialType?: MaterialType;
+  dimension?: string;
+  quantity: number; // Read-only: maintained by the update_material_stock() DB trigger
+  description?: string;
+  attachments?: Attachment[];
+  status?: 'ACTIVE' | 'INACTIVE';
+  minimumStock: number;
+  reorderQuantity: number;
+  materialCategoryId?: string; // FK -> material_categories.id
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface Product {
+  id: string;
+  name: string;
+  code?: string;
+  dimension?: string;
+  description?: string;
+  attachments?: Attachment[];
+  status?: 'ACTIVE' | 'INACTIVE';
+  sellingPrice: number;
+  productCategoryId?: string; // FK -> product_categories.id
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+// purchase_detail joined to purchase_header, read-only, for MaterialDetailView's purchase history.
+export interface MaterialPurchaseHistoryItem {
+  detailId: string;
+  headerId: string;
+  materialId: string;
+  quantity: number;
+  unitCost: number;
+  totalPrice: number;
+  receivedQuantity: number;
+  purchaseNo?: string;
+  quotationDate?: string;
+  orderDate?: string;
+  receivedDate?: string;
+  status?: string;
+  vendorId?: string;
+  createdAt?: string;
+}
+
+// sales_detail joined to sales_header, read-only, for ProductDetailView's order history.
+export interface ProductSalesHistoryItem {
+  detailId: string;
+  headerId: string;
+  productId: string;
+  quantity: number;
+  unitPrice: number;
+  totalPrice: number;
+  remark?: string;
+  salesNo?: string;
+  orderDate?: string;
+  deliveryDate?: string;
+  status?: string;
+  clientId?: string;
+  createdAt?: string;
+}
+
+export interface SystemAdminData {
+  job_positions: JobPosition[];
+  material_categories: MaterialCategory[];
+  product_categories: ProductCategory[];
 }

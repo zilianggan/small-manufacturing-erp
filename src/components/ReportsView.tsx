@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useMemo } from 'react';
-import { getInventory, getSalesOrders, getPurchaseOrders, getWorkflowTasks, getDashboardStats, addPurchaseOrder } from '../services/db';
+import { getInventory, getSalesOrders, getPurchaseOrders, getWorkflowTasks, getDashboardStats, getVendors, addPurchaseOrder } from '../services/db';
 import { Sparkles, AlertTriangle, RefreshCw, ChevronRight, FileText, BrainCircuit, Play, ShoppingCart } from 'lucide-react';
 import Markdown from 'react-markdown';
 import LoadingSpinner from './LoadingSpinner';
@@ -28,15 +28,17 @@ export default function ReportsView() {
   // Handle auto-replenish all low stock
   const handleAutoReplenishAll = () => {
     if (lowStockMaterials.length === 0) return;
-    
+
+    const vendors = getVendors();
     let poCreatedCount = 0;
     lowStockMaterials.forEach(item => {
       if (item.supplierId) {
+        const vendor = vendors.find(v => v.id === item.supplierId);
         // Create ordered PO for 2x reorder point or minimum 50 units
         const purchaseQty = Math.max(50, item.reorderPoint * 2);
         addPurchaseOrder({
           vendorId: item.supplierId,
-          vendorName: item.supplierId === 'v-1' ? 'PentaSteel Mills' : item.supplierId === 'v-2' ? 'Nippon Bearing & Fasteners' : 'Apex Fluid & Seals',
+          vendorName: vendor ? vendor.companyName : 'Unknown Supplier',
           itemId: item.id,
           itemName: item.name,
           quantity: purchaseQty,

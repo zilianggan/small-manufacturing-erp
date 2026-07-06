@@ -10,22 +10,22 @@ import {
   Search
 } from 'lucide-react';
 import { Employee } from '../types';
-import { saveEmployees } from '../services/db';
+import { generateId, saveEmployees, getJobPositions } from '../services/EmployeesService';
 import { useTableData } from '../hooks/useTableData';
 import LoadingSpinner from './LoadingSpinner';
 import ComboBox from './ComboBox';
 import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, FormField } from './ui';
+import { CallAPI } from './UIHelper';
 
 const employeeFieldInputClassName = 'w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 font-sans text-xs text-slate-800';
 
 export default function EmployeesView() {
-  const { data: employeesData, loading } = useTableData<Employee>('employees');
+  const { data: employeesData, loading, refetch } = useTableData<Employee>('employees');
   const [employees, setEmployees] = useState<Employee[]>([]);
   useEffect(() => { setEmployees(employeesData); }, [employeesData]);
-  
+
   // Search and Filters
   const [searchTerm, setSearchTerm] = useState('');
-  const [deptFilter, setDeptFilter] = useState('ALL');
   const [statusFilter, setStatusFilter] = useState('ALL');
 
   // Form States
@@ -33,28 +33,35 @@ export default function EmployeesView() {
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
   const [name, setName] = useState('');
   const [role, setRole] = useState('');
-  const [department, setDepartment] = useState('Operations');
   const [status, setStatus] = useState<'ACTIVE' | 'INACTIVE'>('ACTIVE');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
+  const [jobPositions, setJobPositions] = useState([]);
 
-  // Departments list for filter and dropdowns
-  const departments = ['Operations', 'Quality', 'Machining', 'Logistics', 'Administration', 'Engineering'];
+  useEffect(() => {
+    CallAPI(getJobPositions, {
+      onCompleted: setJobPositions,
+      onError: console.error,
+    });
+  }, [])
+
+
+  const activeJobPositionOptions = jobPositions
+    .filter(position => position.is_active || position.name === role)
+    .map(position => ({ value: position.name, label: position.name }));
 
   const filteredEmployees = employees.filter(emp => {
-    const matchesSearch = emp.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                          emp.role.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                          (emp.email && emp.email.toLowerCase().includes(searchTerm.toLowerCase()));
-    const matchesDept = deptFilter === 'ALL' || emp.department === deptFilter;
+    const matchesSearch = emp.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      emp.role.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (emp.email && emp.email.toLowerCase().includes(searchTerm.toLowerCase()));
     const matchesStatus = statusFilter === 'ALL' || emp.status === statusFilter;
-    return matchesSearch && matchesDept && matchesStatus;
+    return matchesSearch && matchesStatus;
   });
 
   const handleOpenAddForm = () => {
     setEditingEmployee(null);
     setName('');
     setRole('');
-    setDepartment('Operations');
     setStatus('ACTIVE');
     setEmail('');
     setPhone('');
@@ -65,22 +72,29 @@ export default function EmployeesView() {
     setEditingEmployee(emp);
     setName(emp.name);
     setRole(emp.role);
-    setDepartment(emp.department);
     setStatus(emp.status);
     setEmail(emp.email || '');
     setPhone(emp.phone || '');
     setIsFormOpen(true);
   };
 
-  const handleDelete = (id: string, empName: string) => {
-    if (confirm(`Are you sure you want to delete ${empName}? This employee will no longer be listed in the team catalog.`)) {
-      const updated = employees.filter(e => e.id !== id);
-      setEmployees(updated);
-      saveEmployees(updated, undefined, id);
-    }
+  const handleDelete = async (id: string, empName: string) => {
+    if (!confirm(`Are you sure you want to delete ${empName}? This employee will no longer be listed in the team catalog.`)) return;
+
+    const previous = employees;
+    const updated = employees.filter(e => e.id !== id);
+    setEmployees(updated);
+
+    await CallAPI(() => saveEmployees(updated, undefined, id), {
+      onCompleted: refetch,
+      onError: (err) => {
+        console.error(err);
+        setEmployees(previous);
+      },
+    });
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim() || !role.trim()) return;
 
@@ -93,7 +107,6 @@ export default function EmployeesView() {
             ...emp,
             name: name.trim(),
             role: role.trim(),
-            department,
             status,
             email: email.trim() || undefined,
             phone: phone.trim() || undefined
@@ -103,10 +116,9 @@ export default function EmployeesView() {
       });
     } else {
       const newEmployee: Employee = {
-        id: `emp-${Date.now()}`,
+        id: generateId(),
         name: name.trim(),
         role: role.trim(),
-        department,
         status,
         email: email.trim() || undefined,
         phone: phone.trim() || undefined
@@ -117,8 +129,18 @@ export default function EmployeesView() {
     const changedEmp = editingEmployee
       ? updatedList.find(e => e.id === editingEmployee.id)
       : updatedList[updatedList.length - 1];
+
+    const previous = employees;
     setEmployees(updatedList);
-    saveEmployees(updatedList, changedEmp);
+
+    await CallAPI(() => saveEmployees(updatedList, changedEmp), {
+      onCompleted: refetch,
+      onError: (err) => {
+        console.error(err);
+        setEmployees(previous);
+      },
+    });
+
     setIsFormOpen(false);
   };
 
@@ -128,7 +150,7 @@ export default function EmployeesView() {
 
   return (
     <div className="space-y-6">
-      
+
       {/* Top action block */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
@@ -140,7 +162,7 @@ export default function EmployeesView() {
           </h2>
           <p className="text-xs text-slate-500 mt-1">Manage personnel records and engineering team availability to assign tasks</p>
         </div>
-        
+
         <div className="flex items-center space-x-2 shrink-0">
           <button
             id="btn-add-employee"
@@ -155,7 +177,7 @@ export default function EmployeesView() {
       </div>
 
       {/* Searching & filters panel */}
-      <Card className="p-4 grid grid-cols-1 md:grid-cols-4 gap-3">
+      <Card className="p-4 grid grid-cols-1 md:grid-cols-3 gap-3">
         <div className="relative md:col-span-2">
           <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
           <input
@@ -165,15 +187,6 @@ export default function EmployeesView() {
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full pl-9 pr-4 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800 focus:outline-none focus:border-blue-500 font-sans"
-          />
-        </div>
-
-        <div>
-          <ComboBox
-            id="select-dept-filter"
-            value={deptFilter}
-            onChange={setDeptFilter}
-            options={[{ value: 'ALL', label: 'All Departments' }, ...departments.map(d => ({ value: d, label: d }))]}
           />
         </div>
 
@@ -220,20 +233,16 @@ export default function EmployeesView() {
                       </p>
                     </div>
                   </div>
-                  
-                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                    emp.status === 'ACTIVE' 
-                      ? 'bg-emerald-50 text-emerald-700' 
-                      : 'bg-slate-100 text-slate-500'
-                  }`}>
+
+                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${emp.status === 'ACTIVE'
+                    ? 'bg-emerald-50 text-emerald-700'
+                    : 'bg-slate-100 text-slate-500'
+                    }`}>
                     {emp.status}
                   </span>
                 </div>
 
                 <div className="pt-3 border-t border-slate-100 space-y-1.5 text-xs text-slate-600">
-                  <div className="flex items-center space-x-2 text-slate-500">
-                    <span className="font-semibold text-[10px] bg-slate-100 px-1.5 py-0.5 rounded text-slate-600 uppercase tracking-tight">{emp.department}</span>
-                  </div>
                   {emp.email && (
                     <div className="flex items-center space-x-2 truncate">
                       <Mail className="w-3.5 h-3.5 text-slate-400 shrink-0" />
@@ -302,36 +311,25 @@ export default function EmployeesView() {
           </FormField>
 
           <FormField label="Designation / Role *" labelClassName="font-semibold block text-slate-700">
-            <input
-              type="text"
+            <ComboBox
               required
               value={role}
-              onChange={(e) => setRole(e.target.value)}
-              placeholder="e.g. Mechanical Engineer, QC Lead"
-              className={employeeFieldInputClassName}
+              onChange={setRole}
+              noneLabel="-- Select Job Position --"
+              options={activeJobPositionOptions}
             />
           </FormField>
 
-          <div className="grid grid-cols-2 gap-3">
-            <FormField label="Department" labelClassName="font-semibold block text-slate-700">
-              <ComboBox
-                value={department}
-                onChange={setDepartment}
-                options={departments.map(d => ({ value: d, label: d }))}
-              />
-            </FormField>
-
-            <FormField label="Availability Status" labelClassName="font-semibold block text-slate-700">
-              <ComboBox
-                value={status}
-                onChange={(v) => setStatus(v as 'ACTIVE' | 'INACTIVE')}
-                options={[
-                  { value: 'ACTIVE', label: 'ACTIVE' },
-                  { value: 'INACTIVE', label: 'INACTIVE' },
-                ]}
-              />
-            </FormField>
-          </div>
+          <FormField label="Availability Status" labelClassName="font-semibold block text-slate-700">
+            <ComboBox
+              value={status}
+              onChange={(v) => setStatus(v as 'ACTIVE' | 'INACTIVE')}
+              options={[
+                { value: 'ACTIVE', label: 'ACTIVE' },
+                { value: 'INACTIVE', label: 'INACTIVE' },
+              ]}
+            />
+          </FormField>
 
           <FormField label="E-mail Address" labelClassName="font-semibold block text-slate-700">
             <input

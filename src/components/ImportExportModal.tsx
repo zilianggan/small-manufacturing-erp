@@ -25,7 +25,8 @@ import {
   getClients, saveClients,
   getSalesOrders, saveSalesOrders,
   getPurchaseOrders, savePurchaseOrders,
-  getEmployees, saveEmployees
+  getEmployees, saveEmployees,
+  generateId
 } from '../services/db';
 
 interface ImportExportModalProps {
@@ -44,6 +45,8 @@ const EXPECTED_COLUMNS: Record<ImportType, { key: string, label: string, require
     { key: 'name', label: 'Item Name', required: true },
     { key: 'sku', label: 'SKU', required: false },
     { key: 'type', label: 'Type', required: false },
+    { key: 'materialCategoryId', label: 'Material Category ID', required: false },
+    { key: 'productCategoryId', label: 'Product Category ID', required: false },
     { key: 'quantity', label: 'Quantity', required: false },
     { key: 'unit', label: 'Unit', required: false },
     { key: 'unitCost', label: 'Unit Cost', required: false },
@@ -52,29 +55,24 @@ const EXPECTED_COLUMNS: Record<ImportType, { key: string, label: string, require
   ],
   VENDORS: [
     { key: 'id', label: 'Vendor ID', required: false },
-    { key: 'name', label: 'Vendor Name', required: true },
-    { key: 'contactName', label: 'Contact Name', required: false },
+    { key: 'companyName', label: 'Company Name', required: true },
     { key: 'email', label: 'Email', required: false },
-    { key: 'phone', label: 'Phone', required: false },
+    { key: 'officeNo', label: 'Office No.', required: false },
     { key: 'address', label: 'Address', required: false },
-    { key: 'rating', label: 'Rating (1-5)', required: false },
-    { key: 'materialsSupplied', label: 'Materials Supplied', required: false },
+    { key: 'description', label: 'Description', required: false },
   ],
   CLIENTS: [
     { key: 'id', label: 'Client ID', required: false },
-    { key: 'name', label: 'Client Name', required: true },
-    { key: 'contactName', label: 'Contact Name', required: false },
     { key: 'companyName', label: 'Company Name', required: true },
     { key: 'email', label: 'Email', required: false },
-    { key: 'phone', label: 'Phone', required: false },
+    { key: 'officeNo', label: 'Office No.', required: false },
     { key: 'address', label: 'Address', required: false },
-    { key: 'totalOrdersValue', label: 'Total Orders Value', required: false },
+    { key: 'description', label: 'Description', required: false },
   ],
   EMPLOYEES: [
     { key: 'id', label: 'Employee ID', required: false },
     { key: 'name', label: 'Name', required: true },
     { key: 'role', label: 'Role', required: true },
-    { key: 'department', label: 'Department', required: false },
     { key: 'status', label: 'Status', required: false },
     { key: 'email', label: 'Email', required: false },
     { key: 'phone', label: 'Phone', required: false },
@@ -114,10 +112,6 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
 
   const dateStamp = new Date().toISOString().split('T')[0];
 
-  const listValue = (value: unknown): string => {
-    return Array.isArray(value) ? value.map(String).join(', ') : '';
-  };
-
   const attachmentNames = (value: { name?: string }[] | undefined): string => {
     return Array.isArray(value) ? value.map((item) => item.name || 'Attachment').join(', ') : '';
   };
@@ -138,24 +132,20 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
       const clients = getClients();
       appendRowsSheet(wb, 'Vendors', vendors.map((vendor) => ({
         id: vendor.id,
-        name: vendor.name,
-        contactName: vendor.contactName,
+        companyName: vendor.companyName,
         email: vendor.email,
-        phone: vendor.phone,
+        officeNo: vendor.officeNo,
         address: vendor.address,
-        rating: vendor.rating,
-        materialsSupplied: listValue(vendor.materialsSupplied),
+        description: vendor.description || '',
         attachments: attachmentNames(vendor.attachments)
       })));
       appendRowsSheet(wb, 'Clients', clients.map((client) => ({
         id: client.id,
-        name: client.name,
-        contactName: client.contactName,
         companyName: client.companyName,
         email: client.email,
-        phone: client.phone,
+        officeNo: client.officeNo,
         address: client.address,
-        totalOrdersValue: client.totalOrdersValue,
+        description: client.description || '',
         attachments: attachmentNames(client.attachments)
       })));
       fileName = `ERP_Vendors_Clients_${dateStamp}.xlsx`;
@@ -167,6 +157,8 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
         name: item.name,
         sku: item.sku,
         type: item.type,
+        materialCategoryId: item.materialCategoryId || '',
+        productCategoryId: item.productCategoryId || '',
         quantity: item.quantity,
         unit: item.unit,
         unitCost: item.unitCost,
@@ -183,7 +175,6 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
         id: employee.id,
         name: employee.name,
         role: employee.role,
-        department: employee.department,
         status: employee.status,
         email: employee.email || '',
         phone: employee.phone || ''
@@ -285,15 +276,15 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
   const getTemplateHeaders = (type: ImportType): string => {
     switch (type) {
       case 'FULL_BACKUP':
-        return `File should contain sheets named:\n- erp_inventory\n- erp_vendors\n- erp_clients\n- erp_employees\n- erp_sales_orders\n- erp_purchase_orders`;
+        return `File should contain sheets named:\n- erp_inventory\n- erp_vendors\n- erp_clients\n- erp_employees\n- erp_sales_orders\n- erp_purchase_orders\n- erp_job_positions\n- erp_material_categories\n- erp_product_categories`;
       case 'INVENTORY':
-        return `Required columns:\nname\tsku\ttype\tquantity\tunit\tunitCost\treorderPoint`;
+        return `Required columns:\nname\tsku\ttype\tmaterialCategoryId\tproductCategoryId\tquantity\tunit\tunitCost\treorderPoint`;
       case 'VENDORS':
-        return `Required columns:\nname\temail\tphone\taddress\trating\nmaterialsSupplied (comma separated)`;
+        return `Required columns:\ncompanyName\temail\tofficeNo\taddress\tdescription`;
       case 'CLIENTS':
-        return `Required columns:\nname\temail\tphone\tcompanyName\taddress`;
+        return `Required columns:\ncompanyName\temail\tofficeNo\taddress\tdescription`;
       case 'EMPLOYEES':
-        return `Required columns:\nname\trole\tdepartment\tstatus\temail\tphone`;
+        return `Required columns:\nname\trole\tstatus\temail\tphone`;
       case 'SALES':
         return `Required columns:\nclientName\titemName\tquantity\tunitPrice\tdeliveryDate\tstatus`;
       case 'PURCHASES':
@@ -310,7 +301,19 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
 
       if (activeImportType === 'FULL_BACKUP') {
         // FULL RESTORE MODE
-        const keys = ['erp_inventory', 'erp_vendors', 'erp_clients', 'erp_employees', 'erp_sales_orders', 'erp_purchase_orders', 'erp_workflow_tasks', 'erp_company_profile'];
+        const keys = [
+          'erp_inventory',
+          'erp_vendors',
+          'erp_clients',
+          'erp_employees',
+          'erp_sales_orders',
+          'erp_purchase_orders',
+          'erp_workflow_tasks',
+          'erp_job_positions',
+          'erp_material_categories',
+          'erp_product_categories',
+          'erp_company_profile'
+        ];
         let keysFound = 0;
 
         keys.forEach(key => {
@@ -331,7 +334,7 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
                     existingArr.forEach((item: any) => { if (item.id) map.set(item.id, item); });
                     parsed[key].forEach((item: any) => {
                       if (!item.id) {
-                        item.id = `${key.replace('erp_', '').substring(0, 2)}-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+                        item.id = generateId();
                       }
                       map.set(item.id, item);
                     });
@@ -389,13 +392,15 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
           if (!raw.name) throw new Error(`Record #${index + 1} is missing a required 'name' field.`);
 
           const itemType = raw.type === 'RAW_MATERIAL' || raw.type === 'FINISHED_GOOD' ? raw.type : 'RAW_MATERIAL';
-          const prefix = itemType === 'RAW_MATERIAL' ? 'rm' : 'fg';
+          const prefix = itemType === 'RAW_MATERIAL' ? 'RM' : 'FG';
 
           return {
-            id: raw.id || `${prefix}-${Date.now()}-${index}-${Math.floor(Math.random() * 100)}`,
+            id: raw.id || generateId(),
             name: String(raw.name),
-            sku: raw.sku || `${prefix.toUpperCase()}-${String(raw.name).replace(/\s+/g, '-').toUpperCase()}-${Math.floor(Math.random() * 1000)}`,
+            sku: raw.sku || `${prefix}-${String(raw.name).replace(/\s+/g, '-').toUpperCase()}-${Math.floor(Math.random() * 1000)}`,
             type: itemType,
+            materialCategoryId: raw.materialCategoryId || undefined,
+            productCategoryId: raw.productCategoryId || undefined,
             quantity: Number(raw.quantity) || 0,
             unit: raw.unit || 'units',
             unitCost: Number(raw.unitCost) || 0,
@@ -419,16 +424,14 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
       else if (activeImportType === 'VENDORS') {
         const current = importMode === 'OVERWRITE' ? [] : getVendors();
         const itemsToImport: Vendor[] = parsed.map((raw: any, index) => {
-          if (!raw.name) throw new Error(`Record #${index + 1} is missing a required supplier 'name' field.`);
+          if (!raw.companyName) throw new Error(`Record #${index + 1} is missing a required vendor 'companyName' field.`);
           return {
-            id: raw.id || `v-${Date.now()}-${index}`,
-            name: String(raw.name),
-            contactName: raw.contactName || String(raw.name),
+            id: raw.id || generateId(),
+            companyName: String(raw.companyName),
             email: raw.email || '',
-            phone: raw.phone || '',
-            materialsSupplied: Array.isArray(raw.materialsSupplied) ? raw.materialsSupplied.map(String) : (typeof raw.materialsSupplied === 'string' ? raw.materialsSupplied.split(',').map((s: string) => s.trim()) : []),
+            officeNo: raw.officeNo || '',
             address: raw.address || '',
-            rating: Math.min(5, Math.max(1, Number(raw.rating) || 5)),
+            description: raw.description || '',
             attachments: Array.isArray(raw.attachments) ? raw.attachments : (raw.attachment ? [raw.attachment] : [])
           };
         });
@@ -446,16 +449,14 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
       else if (activeImportType === 'CLIENTS') {
         const current = importMode === 'OVERWRITE' ? [] : getClients();
         const itemsToImport: Client[] = parsed.map((raw: any, index) => {
-          if (!raw.name) throw new Error(`Record #${index + 1} is missing a client contact 'name' field.`);
+          if (!raw.companyName) throw new Error(`Record #${index + 1} is missing a required client 'companyName' field.`);
           return {
-            id: raw.id || `c-${Date.now()}-${index}`,
-            name: String(raw.name),
-            contactName: raw.contactName || String(raw.name),
+            id: raw.id || generateId(),
+            companyName: String(raw.companyName),
             email: raw.email || '',
-            phone: raw.phone || '',
-            companyName: raw.companyName || 'Private Individual',
+            officeNo: raw.officeNo || '',
             address: raw.address || '',
-            totalOrdersValue: Number(raw.totalOrdersValue) || 0,
+            description: raw.description || '',
             attachments: Array.isArray(raw.attachments) ? raw.attachments : (raw.attachment ? [raw.attachment] : [])
           };
         });
@@ -476,10 +477,9 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
           if (!raw.name) throw new Error(`Record #${index + 1} is missing an employee 'name' field.`);
           if (!raw.role) throw new Error(`Record #${index + 1} ('${raw.name}') is missing an employee 'role' field.`);
           return {
-            id: raw.id || `emp-${Date.now()}-${index}`,
+            id: raw.id || generateId(),
             name: String(raw.name),
             role: String(raw.role),
-            department: raw.department || 'Operations',
             status: raw.status === 'INACTIVE' ? 'INACTIVE' : 'ACTIVE',
             email: raw.email || undefined,
             phone: raw.phone || undefined
@@ -507,15 +507,15 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
           const clientName = raw.clientName || 'Walk-in Client';
           let clientId = raw.clientId;
           if (!clientId) {
-            const foundClient = clientsList.find(c => c.name.toLowerCase() === clientName.toLowerCase() || c.companyName.toLowerCase() === clientName.toLowerCase());
-            clientId = foundClient ? foundClient.id : 'c-walk-in';
+            const foundClient = clientsList.find(c => c.companyName.toLowerCase() === clientName.toLowerCase());
+            clientId = foundClient ? foundClient.id : undefined;
           }
 
           const itemName = raw.itemName || 'Custom Parts';
           let itemId = raw.itemId;
           if (!itemId) {
             const foundItem = inventoryList.find(i => i.name.toLowerCase() === itemName.toLowerCase());
-            itemId = foundItem ? foundItem.id : 'fg-custom';
+            itemId = foundItem ? foundItem.id : undefined;
           }
 
           const status = ['PENDING', 'IN_PRODUCTION', 'SHIPPED', 'DELIVERED', 'CANCELLED'].includes(raw.status)
@@ -526,7 +526,7 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
           const unitPrice = Number(raw.unitPrice) || 0.0;
 
           return {
-            id: raw.id || `so-${Date.now()}-${index}`,
+            id: raw.id || generateId(),
             clientId,
             clientName,
             itemId,
@@ -561,15 +561,15 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
           const vendorName = raw.vendorName || 'Generic Supplier';
           let vendorId = raw.vendorId;
           if (!vendorId) {
-            const foundVendor = vendorsList.find(v => v.name.toLowerCase() === vendorName.toLowerCase());
-            vendorId = foundVendor ? foundVendor.id : 'v-1';
+            const foundVendor = vendorsList.find(v => v.companyName.toLowerCase() === vendorName.toLowerCase());
+            vendorId = foundVendor ? foundVendor.id : undefined;
           }
 
           const itemName = raw.itemName || 'Raw Material';
           let itemId = raw.itemId;
           if (!itemId) {
             const foundItem = inventoryList.find(i => i.name.toLowerCase() === itemName.toLowerCase());
-            itemId = foundItem ? foundItem.id : 'rm-1';
+            itemId = foundItem ? foundItem.id : undefined;
           }
 
           const status = ['DRAFT', 'ORDERED', 'RECEIVED', 'CANCELLED'].includes(raw.status)
@@ -577,7 +577,7 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
             : 'ORDERED';
 
           return {
-            id: raw.id || `po-${Date.now()}-${index}`,
+            id: raw.id || generateId(),
             vendorId,
             vendorName,
             itemId,

@@ -1,7 +1,8 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { X, Printer, FileText, Mail, Phone, MapPin, Database, Factory, Cpu, Wrench } from 'lucide-react';
 import { SalesOrder, Client, CompanyProfile } from '../types';
-import { getCompanyProfile, getClients } from '../services/db';
+import { getClients } from '../services/ContactsService';
+import { getCompanyProfile } from '../services/CompanyProfileService';
 
 interface InvoiceModalProps {
   order: SalesOrder | null;
@@ -11,13 +12,31 @@ interface InvoiceModalProps {
 
 export default function InvoiceModal({ order, isOpen, onClose }: InvoiceModalProps) {
   // Read and maintain fresh company profile state
-  const [companyProfile, setCompanyProfile] = useState<CompanyProfile>(() => getCompanyProfile());
-  const clients = useMemo(() => getClients(), []);
+  const [companyProfile, setCompanyProfile] = useState<CompanyProfile>(null);
+  const [clients, setClients] = useState<Client[]>([]);
+
+  // Fetch the client directory once per open (used to enrich the "Bill To" block)
+  useEffect(() => {
+    if (!isOpen) return;
+    getClients().then(setClients).catch(console.error);
+  }, [isOpen]);
 
   // Sync profile when modal is opened to capture latest changes
   useEffect(() => {
+    const load = async () => {
+      const cachedProfile = JSON.parse(localStorage.getItem('erp_company_profile'));
+      if (cachedProfile && cachedProfile.id) {
+        setCompanyProfile(cachedProfile);
+        return;
+      }
+      const profile = await getCompanyProfile();
+
+      if (profile) {
+        setCompanyProfile(profile);
+      }
+    };
     if (isOpen) {
-      setCompanyProfile(getCompanyProfile());
+      load();
     }
   }, [isOpen]);
 
@@ -32,8 +51,8 @@ export default function InvoiceModal({ order, isOpen, onClose }: InvoiceModalPro
   if (!isOpen || !order) return null;
 
   // Let's compute some realistic invoice numbers and dates
-  const invoiceNo = `INV-2026-${order.id.split('-')[1] || order.id.slice(-5).toUpperCase()}`;
-  
+  const invoiceNo = `INV-2026-${order.id.slice(0, 8).toUpperCase()}`;
+
   // Compute tax (Malaysia Sales & Service Tax @ 6%)
   const subtotal = order.totalPrice;
   const sstTax = subtotal * 0.06;
@@ -51,12 +70,12 @@ export default function InvoiceModal({ order, isOpen, onClose }: InvoiceModalPro
       const printWindow = window.open('', '_blank');
       if (printWindow) {
         // Prepare base64 images so they are fully loaded in print document
-        const logoHtml = companyProfile.iconType === 'custom_image' && companyProfile.iconDataUrl 
-          ? `<img src="${companyProfile.iconDataUrl}" style="max-height: 50px; width: auto; object-fit: contain; border-radius: 4px;" />`
+        const logoHtml = companyProfile.icon_type === 'custom_image' && companyProfile.icon_data_url
+          ? `<img src="${companyProfile.icon_data_url}" style="max-height: 50px; width: auto; object-fit: contain; border-radius: 4px;" />`
           : `<div style="font-size: 24px; font-weight: 800; color: #1e3a8a;">${companyProfile.name}</div>`;
 
-        const signatureHtml = showSignature && companyProfile.signatureUrl
-          ? `<img src="${companyProfile.signatureUrl}" style="max-height: 70px; max-width: 150px; object-fit: contain;" />`
+        const signatureHtml = showSignature && companyProfile.signature_url
+          ? `<img src="${companyProfile.signature_url}" style="max-height: 70px; max-width: 150px; object-fit: contain;" />`
           : (showSignature ? `<div style="font-family: serif; font-style: italic; font-size: 18px; color: #1e3a8a; font-weight: bold;">${companyProfile.name.split(' ').map(n => n[0]).join('') || 'SJE'}</div>` : '');
 
         printWindow.document.write(`
@@ -325,9 +344,8 @@ export default function InvoiceModal({ order, isOpen, onClose }: InvoiceModalPro
                   <h3 class="client-name">${order.clientName}</h3>
                   ${clientDetails ? `
                     <div class="client-info">
-                      <p style="margin: 2px 0; font-weight: 500;">Attn: ${clientDetails.contactName}</p>
                       <p style="margin: 2px 0; max-width: 250px;">${clientDetails.address}</p>
-                      <p style="margin: 2px 0;">📞 ${clientDetails.phone}</p>
+                      <p style="margin: 2px 0;">📞 ${clientDetails.officeNo}</p>
                       <p style="margin: 2px 0;">✉️ ${clientDetails.email}</p>
                     </div>
                   ` : `<div class="client-info">Client details not available</div>`}
@@ -339,8 +357,8 @@ export default function InvoiceModal({ order, isOpen, onClose }: InvoiceModalPro
                     Payment is requested within 14 business days from issuance. Payments must be wired to the bank coordinates below:
                   </p>
                   <div class="payment-bank-details">
-                    <p style="margin: 2px 0;"><span style="font-weight: bold;">Bank:</span> ${companyProfile.bankName || 'Maybank Berhad (Kuala Lumpur)'}</p>
-                    <p style="margin: 2px 0;"><span style="font-weight: bold;">A/C:</span> ${companyProfile.bankAccount || '5142-8821-3956'}</p>
+                    <p style="margin: 2px 0;"><span style="font-weight: bold;">Bank:</span> ${companyProfile.bank_name || 'Maybank Berhad (Kuala Lumpur)'}</p>
+                    <p style="margin: 2px 0;"><span style="font-weight: bold;">A/C:</span> ${companyProfile.bank_account || '5142-8821-3956'}</p>
                     <p style="margin: 2px 0;"><span style="font-weight: bold;">SWIFT:</span> MBBBMYKLXXX</p>
                   </div>
                 </div>
@@ -359,12 +377,12 @@ export default function InvoiceModal({ order, isOpen, onClose }: InvoiceModalPro
                 </thead>
                 <tbody>
                   ${(order.items && order.items.length > 0 ? order.items : [{
-                    itemId: order.itemId,
-                    itemName: order.itemName,
-                    quantity: order.quantity,
-                    unitPrice: order.unitPrice,
-                    totalPrice: order.totalPrice
-                  }]).map((item, idx) => `
+            itemId: order.itemId,
+            itemName: order.itemName,
+            quantity: order.quantity,
+            unitPrice: order.unitPrice,
+            totalPrice: order.totalPrice
+          }]).map((item, idx) => `
                     <tr>
                       <td class="text-mono" style="color: #94a3b8;">${String(idx + 1).padStart(2, '0')}</td>
                       <td>
@@ -439,11 +457,11 @@ export default function InvoiceModal({ order, isOpen, onClose }: InvoiceModalPro
 
 
   const renderLogo = () => {
-    if (companyProfile.iconType === 'custom_image' && companyProfile.iconDataUrl) {
+    if (companyProfile.icon_type === 'custom_image' && companyProfile.icon_data_url) {
       return (
-        <img 
-          src={companyProfile.iconDataUrl} 
-          alt="Logo" 
+        <img
+          src={companyProfile.icon_data_url}
+          alt="Logo"
           className="w-9 h-9 object-contain rounded border border-slate-150 bg-white"
           referrerPolicy="no-referrer"
         />
@@ -451,7 +469,7 @@ export default function InvoiceModal({ order, isOpen, onClose }: InvoiceModalPro
     }
 
     const iconSize = "w-5 h-5 text-white";
-    switch (companyProfile.iconType) {
+    switch (companyProfile.icon_type) {
       case 'factory':
         return <div className="w-9 h-9 rounded bg-blue-600 flex items-center justify-center shrink-0"><Factory className={iconSize} /></div>;
       case 'cpu':
@@ -466,9 +484,10 @@ export default function InvoiceModal({ order, isOpen, onClose }: InvoiceModalPro
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm overflow-y-auto print:p-0 print:bg-white print:static">
-      
+
       {/* Dynamic CSS Injection to handle clean single-page printing fallback */}
-      <style dangerouslySetInnerHTML={{ __html: `
+      <style dangerouslySetInnerHTML={{
+        __html: `
         @media print {
           /* Hide all page backgrounds and standard wrappers */
           html, body {
@@ -511,11 +530,11 @@ export default function InvoiceModal({ order, isOpen, onClose }: InvoiceModalPro
       `}} />
 
       {/* Modal Container */}
-      <div 
+      <div
         id="printable-invoice-container"
         className="w-full max-w-3xl bg-white border border-slate-200 rounded-xl shadow-2xl overflow-hidden flex flex-col my-8 animate-in fade-in zoom-in-95 duration-200 print:shadow-none print:border-none print:my-0 print:rounded-none"
       >
-        
+
         {/* Modal Top Command Bar (Hidden on print) */}
         <div className="p-4 border-b border-slate-100 bg-slate-50 flex flex-col md:flex-row md:items-center md:justify-between gap-4 print:hidden">
           <div className="flex items-center space-x-2">
@@ -525,7 +544,7 @@ export default function InvoiceModal({ order, isOpen, onClose }: InvoiceModalPro
               <span className="text-[10px] text-slate-400 mt-0.5 block">Configure print options and finalize document</span>
             </div>
           </div>
-          
+
           {/* Controls to toggle Signature */}
           <div className="flex flex-wrap items-center gap-3">
             <label className="flex items-center space-x-2 bg-white px-2.5 py-1.5 rounded-lg border border-slate-200 shadow-sm cursor-pointer hover:bg-slate-50 transition-all text-[11px] font-sans font-medium text-slate-600 select-none">
@@ -563,7 +582,7 @@ export default function InvoiceModal({ order, isOpen, onClose }: InvoiceModalPro
 
         {/* Printable Sheet Area */}
         <div className="p-8 space-y-8 text-xs text-slate-600 print:p-0 font-sans bg-white" id="printable-invoice-sheet">
-          
+
           {/* Invoice Header */}
           <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-6 border-b border-slate-100 pb-6">
             <div className="space-y-2">
@@ -611,9 +630,8 @@ export default function InvoiceModal({ order, isOpen, onClose }: InvoiceModalPro
               <h3 className="font-sans font-bold text-slate-900 text-xs">{order.clientName}</h3>
               {clientDetails ? (
                 <div className="text-[10px] text-slate-500 space-y-0.5 mt-1 leading-relaxed">
-                  <p className="font-medium text-slate-700">Attn: {clientDetails.contactName}</p>
                   <p className="max-w-[250px]">{clientDetails.address}</p>
-                  <p className="font-mono">{clientDetails.phone}</p>
+                  <p className="font-mono">{clientDetails.officeNo}</p>
                   <p className="font-mono">{clientDetails.email}</p>
                 </div>
               ) : (
@@ -629,8 +647,8 @@ export default function InvoiceModal({ order, isOpen, onClose }: InvoiceModalPro
                 </p>
               </div>
               <div className="text-[9px] font-mono text-slate-450 mt-2 space-y-0.5">
-                <p><span className="font-bold text-slate-600">Bank:</span> {companyProfile.bankName || 'Maybank Berhad (Kuala Lumpur)'}</p>
-                <p><span className="font-bold text-slate-600">A/C:</span> {companyProfile.bankAccount || '5142-8821-3956'}</p>
+                <p><span className="font-bold text-slate-600">Bank:</span> {companyProfile.bank_name || 'Maybank Berhad (Kuala Lumpur)'}</p>
+                <p><span className="font-bold text-slate-600">A/C:</span> {companyProfile.bank_account || '5142-8821-3956'}</p>
                 <p><span className="font-bold text-slate-600">SWIFT:</span> MBBBMYKLXXX</p>
               </div>
             </div>
@@ -701,14 +719,14 @@ export default function InvoiceModal({ order, isOpen, onClose }: InvoiceModalPro
 
           {/* Dynamic Signatures section (Cleaned according to requirements) */}
           <div className="flex justify-start pt-8 border-t border-slate-100 items-end">
-            
+
             {/* Signature Area */}
             <div className="flex flex-col items-center justify-end text-center min-h-[110px] w-48">
               {showSignature ? (
-                companyProfile.signatureUrl ? (
-                  <img 
-                    src={companyProfile.signatureUrl} 
-                    alt="Authorized Signature" 
+                companyProfile.signature_url ? (
+                  <img
+                    src={companyProfile.signature_url}
+                    alt="Authorized Signature"
                     className="h-14 max-w-[140px] object-contain mb-2 print:max-h-14"
                     referrerPolicy="no-referrer"
                   />

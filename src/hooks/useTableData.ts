@@ -19,19 +19,29 @@ interface UseTableDataResult<T> {
 const ROW_MAPPERS: Record<string, (row: any) => any> = {
   inventory_items: (i) => ({
     id: i.id, name: i.name, sku: i.sku, type: i.type,
+    materialCategoryId: i.material_category_id,
+    productCategoryId: i.product_category_id,
     quantity: Number(i.quantity), unit: i.unit, unitCost: Number(i.unit_cost),
     reorderPoint: Number(i.reorder_point), supplierId: i.supplier_id,
     description: i.description, attachments: i.attachments || []
   }),
   vendors: (v) => ({
-    id: v.id, name: v.name, contactName: v.contact_name, email: v.email, phone: v.phone,
-    materialsSupplied: v.materials_supplied || [], address: v.address,
-    rating: Number(v.rating), attachments: v.attachments || []
+    id: v.id, companyName: v.company_name, email: v.email, officeNo: v.office_no,
+    address: v.address, description: v.description || '',
+    attachments: v.attachments || [],
+    createdAt: v.created_at, updatedAt: v.updated_at
   }),
   clients: (c) => ({
-    id: c.id, name: c.name, contactName: c.contact_name, email: c.email, phone: c.phone,
-    companyName: c.company_name, address: c.address,
-    totalOrdersValue: Number(c.total_orders_value), attachments: c.attachments || []
+    id: c.id, companyName: c.company_name, email: c.email, officeNo: c.office_no,
+    address: c.address, description: c.description || '',
+    attachments: c.attachments || [],
+    createdAt: c.created_at, updatedAt: c.updated_at
+  }),
+  contacts: (p) => ({
+    id: p.id, fullName: p.full_name, contactNo: p.contact_no, email: p.email,
+    jobPositionId: p.job_position, vendorId: p.vendor_id, clientId: p.client_id,
+    attachments: p.attachments || [],
+    createdAt: p.created_at, updatedAt: p.updated_at
   }),
   sales_orders: (o) => ({
     id: o.id, clientId: o.client_id, clientName: o.client_name, itemId: o.item_id,
@@ -52,6 +62,18 @@ const ROW_MAPPERS: Record<string, (row: any) => any> = {
     endDate: t.end_date, notes: t.notes
   }),
   employees: (e) => e,
+  job_positions: (p) => ({
+    id: p.id, name: p.name, isActive: p.is_active ?? true,
+    createdAt: p.created_at, updatedAt: p.updated_at
+  }),
+  material_categories: (c) => ({
+    id: c.id, name: c.name, isActive: c.is_active ?? true,
+    createdAt: c.created_at, updatedAt: c.updated_at
+  }),
+  product_categories: (c) => ({
+    id: c.id, name: c.name, isActive: c.is_active ?? true,
+    createdAt: c.created_at, updatedAt: c.updated_at
+  }),
   company_profile: (c) => ({
     name: c.name,
     iconType: c.icon_type,

@@ -17,7 +17,7 @@ export default function DashboardView() {
   const { data: workflows, loading: wfLoading } = useTableData<WorkflowTask>('workflow_tasks');
   const loading = invLoading || soLoading || poLoading || wfLoading;
 
-  console.log(inventory, salesOrders, purchaseOrders, workflows)
+  const trackableInventory = inventory;
 
   const stats = useMemo<DashboardStats>(() => {
     const totalSales = salesOrders.filter(s => s.status !== 'CANCELLED').reduce((sum, s) => sum + s.totalPrice, 0);
@@ -26,12 +26,12 @@ export default function DashboardView() {
       totalSales,
       totalPurchaseCosts,
       totalProfit: totalSales - totalPurchaseCosts,
-      inventoryValuation: inventory.reduce((sum, i) => sum + i.quantity * i.unitCost, 0),
-      lowStockCount: inventory.filter(i => i.quantity <= i.reorderPoint).length,
+      inventoryValuation: trackableInventory.reduce((sum, i) => sum + i.quantity * i.unitCost, 0),
+      lowStockCount: trackableInventory.filter(i => i.quantity <= i.reorderPoint).length,
       pendingOrdersCount: salesOrders.filter(s => s.status === 'PENDING').length,
       activeWorkflowsCount: workflows.filter(w => w.currentStep !== 'COMPLETED').length,
     };
-  }, [inventory, salesOrders, purchaseOrders, workflows]);
+  }, [trackableInventory, salesOrders, purchaseOrders, workflows]);
 
   // Format currencies
   const formatCurrency = (val: number) => {
@@ -53,11 +53,11 @@ export default function DashboardView() {
 
   // Inventory distribution chart data
   const inventoryChartData = useMemo(() => {
-    const rawMaterialsVal = inventory
+    const rawMaterialsVal = trackableInventory
       .filter(item => item.type === 'RAW_MATERIAL')
       .reduce((sum, item) => sum + (item.quantity * item.unitCost), 0);
 
-    const finishedGoodsVal = inventory
+    const finishedGoodsVal = trackableInventory
       .filter(item => item.type === 'FINISHED_GOOD')
       .reduce((sum, item) => sum + (item.quantity * item.unitCost), 0);
 
@@ -65,12 +65,12 @@ export default function DashboardView() {
       { name: 'Raw Materials', value: rawMaterialsVal, color: '#3b82f6' },
       { name: 'Finished Goods', value: finishedGoodsVal, color: '#10b981' }
     ];
-  }, [inventory]);
+  }, [trackableInventory]);
 
   // Low stock list
   const lowStockItems = useMemo(() => {
-    return inventory.filter(item => item.quantity <= item.reorderPoint).slice(0, 5);
-  }, [inventory]);
+    return trackableInventory.filter(item => item.quantity <= item.reorderPoint).slice(0, 5);
+  }, [trackableInventory]);
 
   // Recent workflow steps
   const activeWorkflows = useMemo(() => {

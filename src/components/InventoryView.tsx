@@ -4,9 +4,14 @@
  */
 
 import React, { useState, useMemo, useEffect } from 'react';
-import { saveInventory } from '../services/db';
+import {
+  generateId,
+  getMaterialCategories,
+  getProductCategories,
+  saveInventory
+} from '../services/InventoryService';
 import { useTableData } from '../hooks/useTableData';
-import { InventoryItem, Vendor, Attachment } from '../types';
+import { InventoryItem, MaterialCategory, ProductCategory, Vendor, Attachment } from '../types';
 import { Plus, AlertTriangle, ShoppingCart, Paperclip, Trash2 } from 'lucide-react';
 import AttachmentSection from './AttachmentSection';
 import SegmentedControl from './SegmentedControl';
@@ -14,6 +19,7 @@ import LoadingSpinner from './LoadingSpinner';
 import ComboBox from './ComboBox';
 import InfiniteScrollSentinel from './InfiniteScrollSentinel';
 import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, FormField, fieldInputClassName, SearchInput } from './ui';
+import { CallAPI } from './UIHelper';
 
 interface InventoryViewProps {
   onQuickProcure?: (itemId: string, itemName: string, vendorId: string) => void;
@@ -22,7 +28,7 @@ interface InventoryViewProps {
 export default function InventoryView({ onQuickProcure }: InventoryViewProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState<'ALL' | 'RAW_MATERIAL' | 'FINISHED_GOOD'>('ALL');
-  const { data: inventoryData, loading, loadMore, hasMore, loadingMore } = useTableData<InventoryItem>('inventory_items', {
+  const { data: inventoryData, loading, loadMore, hasMore, loadingMore, refetch } = useTableData<InventoryItem>('inventory_items', {
     search: searchQuery,
     filters: activeFilter === 'ALL' ? undefined : { type: activeFilter }
   });
@@ -41,6 +47,8 @@ export default function InventoryView({ onQuickProcure }: InventoryViewProps) {
   const [formName, setFormName] = useState('');
   const [formSku, setFormSku] = useState('');
   const [formType, setFormType] = useState<InventoryItem['type']>('RAW_MATERIAL');
+  const [formMaterialCategoryId, setFormMaterialCategoryId] = useState('');
+  const [formProductCategoryId, setFormProductCategoryId] = useState('');
   const [formQuantity, setFormQuantity] = useState(0);
   const [formUnit, setFormUnit] = useState('pcs');
   const [formUnitCost, setFormUnitCost] = useState(0);
@@ -48,17 +56,36 @@ export default function InventoryView({ onQuickProcure }: InventoryViewProps) {
   const [formSupplierId, setFormSupplierId] = useState('');
   const [formDescription, setFormDescription] = useState('');
   const [formAttachment, setFormAttachment] = useState<Attachment | undefined>(undefined);
+  const [materialCategories, setMaterialCategories] = useState<MaterialCategory[]>([]);
+  const [productCategories, setProductCategories] = useState<ProductCategory[]>([]);
+
+  const loadCategories = async () => {
+    await CallAPI(getMaterialCategories, {
+      onCompleted: setMaterialCategories,
+      onError: console.error,
+    });
+    await CallAPI(getProductCategories, {
+      onCompleted: setProductCategories,
+      onError: console.error,
+    });
+  };
+
+  useEffect(() => {
+    loadCategories();
+  }, []);
 
   // Handle addition
-  const handleAddItem = (e: React.FormEvent) => {
+  const handleAddItem = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formName || !formSku) return;
 
     const newItem: InventoryItem = {
-      id: `${formType === 'RAW_MATERIAL' ? 'rm' : 'fg'}-${Date.now()}`,
+      id: generateId(),
       name: formName,
       sku: formSku,
       type: formType,
+      materialCategoryId: formType === 'RAW_MATERIAL' ? formMaterialCategoryId || undefined : undefined,
+      productCategoryId: formType === 'FINISHED_GOOD' ? formProductCategoryId || undefined : undefined,
       quantity: formQuantity,
       unit: formUnit,
       unitCost: formUnitCost,
@@ -68,13 +95,23 @@ export default function InventoryView({ onQuickProcure }: InventoryViewProps) {
       attachments: formAttachment ? [formAttachment] : []
     };
 
+    const previous = inventory;
     const updated = [...inventory, newItem];
     setInventory(updated);
-    saveInventory(updated, newItem);
+
+    await CallAPI(() => saveInventory(updated, newItem), {
+      onCompleted: refetch,
+      onError: (err) => {
+        console.error(err);
+        setInventory(previous);
+      },
+    });
 
     // Reset fields
     setFormName('');
     setFormSku('');
+    setFormMaterialCategoryId('');
+    setFormProductCategoryId('');
     setFormQuantity(0);
     setFormUnit('pcs');
     setFormUnitCost(0);
@@ -85,12 +122,20 @@ export default function InventoryView({ onQuickProcure }: InventoryViewProps) {
     setShowAddForm(false);
   };
 
-  const handleDeleteItem = (id: string) => {
-    if (confirm('Are you sure you want to delete this item?')) {
-      const updated = inventory.filter(item => item.id !== id);
-      setInventory(updated);
-      saveInventory(updated, undefined, id);
-    }
+  const handleDeleteItem = async (id: string) => {
+    if (!confirm('Are you sure you want to delete this item?')) return;
+
+    const previous = inventory;
+    const updated = inventory.filter(item => item.id !== id);
+    setInventory(updated);
+
+    await CallAPI(() => saveInventory(updated, undefined, id), {
+      onCompleted: refetch,
+      onError: (err) => {
+        console.error(err);
+        setInventory(previous);
+      },
+    });
   };
 
   // Server already applied search + type filter; use the loaded rows as-is.
@@ -98,8 +143,19 @@ export default function InventoryView({ onQuickProcure }: InventoryViewProps) {
 
   // Vendor Lookup Map
   const vendorMap = useMemo(() => {
-    return new Map(vendors.map(v => [v.id, v.name]));
+    return new Map(vendors.map(v => [v.id, v.companyName]));
   }, [vendors]);
+
+  const materialCategoryMap = useMemo(() => {
+    return new Map(materialCategories.map(category => [category.id, category.name]));
+  }, [materialCategories]);
+
+  const productCategoryMap = useMemo(() => {
+    return new Map(productCategories.map(category => [category.id, category.name]));
+  }, [productCategories]);
+
+  const activeMaterialCategories = materialCategories.filter(category => category.is_active);
+  const activeProductCategories = productCategories.filter(category => category.is_active);
 
   if (loading) {
     return <LoadingSpinner message="Auditing inventory levels..." subtitle="STOCK_METRICS" />;
@@ -172,13 +228,41 @@ export default function InventoryView({ onQuickProcure }: InventoryViewProps) {
             <FormField label="Item Type">
               <ComboBox
                 value={formType}
-                onChange={(v) => setFormType(v as InventoryItem['type'])}
+                onChange={(v) => {
+                  setFormType(v as InventoryItem['type']);
+                }}
                 options={[
                   { value: 'RAW_MATERIAL', label: 'Raw Material (Ingredient)' },
                   { value: 'FINISHED_GOOD', label: 'Finished Good (End Product)' },
                 ]}
               />
             </FormField>
+
+            {formType === 'RAW_MATERIAL' ? (
+              <FormField label="Material Category">
+                <ComboBox
+                  value={formMaterialCategoryId}
+                  onChange={setFormMaterialCategoryId}
+                  noneLabel="-- Select Material Category --"
+                  options={activeMaterialCategories.map(category => ({
+                    value: category.id,
+                    label: category.name
+                  }))}
+                />
+              </FormField>
+            ) : (
+              <FormField label="Product Category">
+                <ComboBox
+                  value={formProductCategoryId}
+                  onChange={setFormProductCategoryId}
+                  noneLabel="-- Select Product Category --"
+                  options={activeProductCategories.map(category => ({
+                    value: category.id,
+                    label: category.name
+                  }))}
+                />
+              </FormField>
+            )}
 
             <FormField label="Initial Stock Quantity">
               <input
@@ -227,7 +311,7 @@ export default function InventoryView({ onQuickProcure }: InventoryViewProps) {
                   value={formSupplierId}
                   onChange={setFormSupplierId}
                   noneLabel="-- Select Preferred Supplier --"
-                  options={vendors.map(v => ({ value: v.id, label: v.name }))}
+                  options={vendors.map(v => ({ value: v.id, label: v.companyName }))}
                   onSearch={setSupplierQuery}
                   searchLoading={vendorsSearchLoading}
                 />
@@ -310,6 +394,16 @@ export default function InventoryView({ onQuickProcure }: InventoryViewProps) {
                             <div className="text-[10px] text-slate-500 flex items-center space-x-1">
                               <span className="font-mono text-slate-400">Supplier:</span>
                               <span>{supplierName}</span>
+                            </div>
+                          )}
+                          {(item.materialCategoryId || item.productCategoryId) && (
+                            <div className="text-[10px] text-slate-500 flex items-center space-x-1">
+                              <span className="font-mono text-slate-400">Category:</span>
+                              <span>
+                                {item.type === 'RAW_MATERIAL'
+                                  ? materialCategoryMap.get(item.materialCategoryId || '') || 'Unassigned'
+                                  : productCategoryMap.get(item.productCategoryId || '') || 'Unassigned'}
+                              </span>
                             </div>
                           )}
                           {item.attachments?.[0] && (

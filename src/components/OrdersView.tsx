@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useMemo, useEffect } from 'react';
-import { addSalesOrder, getSalesOrders, saveSalesOrders, updateSalesOrderStatus } from '../services/db';
+import { addSalesOrder, saveSalesOrders, updateSalesOrderStatus } from '../services/OrdersService';
 import { useTableData } from '../hooks/useTableData';
 import { SalesOrder, Client, InventoryItem, Attachment } from '../types';
 import { Plus, Calendar, Check, Play, FileText, Paperclip, Trash2, Edit } from 'lucide-react';
@@ -14,10 +14,11 @@ import LoadingSpinner from './LoadingSpinner';
 import ComboBox from './ComboBox';
 import InfiniteScrollSentinel from './InfiniteScrollSentinel';
 import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, FormField, SearchInput } from './ui';
+import { CallAPI } from './UIHelper';
 
 export default function OrdersView() {
   const [searchQuery, setSearchQuery] = useState('');
-  const { data: ordersData, loading, loadMore, hasMore, loadingMore } = useTableData<SalesOrder>('sales_orders', { search: searchQuery });
+  const { data: ordersData, loading, loadMore, hasMore, loadingMore, refetch } = useTableData<SalesOrder>('sales_orders', { search: searchQuery });
 
   // Client picker — search-as-you-type
   const [clientQuery, setClientQuery] = useState('');
@@ -86,12 +87,20 @@ export default function OrdersView() {
     setShowAddForm(true);
   };
 
-  const handleDeleteOrder = (id: string) => {
-    if (confirm("Are you sure you want to delete this order?")) {
-      const updated = getSalesOrders().filter(o => o.id !== id);
-      saveSalesOrders(updated, undefined, id);
-      setOrders(updated);
-    }
+  const handleDeleteOrder = async (id: string) => {
+    if (!confirm("Are you sure you want to delete this order?")) return;
+
+    const previous = orders;
+    const updated = orders.filter(o => o.id !== id);
+    setOrders(updated);
+
+    await CallAPI(() => saveSalesOrders(updated, undefined, id), {
+      onCompleted: refetch,
+      onError: (err) => {
+        console.error(err);
+        setOrders(previous);
+      },
+    });
   };
 
   // Handle item selection to prefill pricing
@@ -135,7 +144,7 @@ export default function OrdersView() {
     setFormItems(formItems.filter((_, idx) => idx !== index));
   };
 
-  const handleCreateOrder = (e: React.FormEvent) => {
+  const handleCreateOrder = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formClientId) return;
 
@@ -187,27 +196,51 @@ export default function OrdersView() {
       items: finalItems
     };
 
+    const previous = orders;
+
     if (editOrderId) {
-      const allOrders = getSalesOrders();
-      const orderIndex = allOrders.findIndex(o => o.id === editOrderId);
+      const orderIndex = orders.findIndex(o => o.id === editOrderId);
       if (orderIndex !== -1) {
-        allOrders[orderIndex] = { ...allOrders[orderIndex], ...newOrderPayload };
-        saveSalesOrders(allOrders, allOrders[orderIndex]);
+        const updatedOrder = { ...orders[orderIndex], ...newOrderPayload };
+        const updatedOrders = orders.map((o, idx) => idx === orderIndex ? updatedOrder : o);
+        setOrders(updatedOrders);
+
+        await CallAPI(() => saveSalesOrders(updatedOrders, updatedOrder), {
+          onCompleted: refetch,
+          onError: (err) => {
+            console.error(err);
+            setOrders(previous);
+          },
+        });
       }
     } else {
-      addSalesOrder(newOrderPayload);
+      await CallAPI(async () => addSalesOrder(newOrderPayload), {
+        onCompleted: refetch,
+        onError: (err) => {
+          console.error(err);
+          setOrders(previous);
+        },
+      });
     }
 
-    setOrders(getSalesOrders()); // refresh list
     setShowAddForm(false);
 
     // Reset
     resetForm();
   };
 
-  const handleUpdateStatus = (id: string, status: SalesOrder['status']) => {
-    updateSalesOrderStatus(id, status);
-    setOrders(getSalesOrders()); // refresh list
+  const handleUpdateStatus = async (id: string, status: SalesOrder['status']) => {
+    const previous = orders;
+    const updated = orders.map(o => o.id === id ? { ...o, status } : o);
+    setOrders(updated);
+
+    await CallAPI(async () => updateSalesOrderStatus(id, status), {
+      onCompleted: refetch,
+      onError: (err) => {
+        console.error(err);
+        setOrders(previous);
+      },
+    });
   };
 
   // Server already applied search; use loaded rows as-is.
@@ -252,7 +285,7 @@ export default function OrdersView() {
                 value={formClientId}
                 onChange={setFormClientId}
                 noneLabel="-- Select Client --"
-                options={clients.map(c => ({ value: c.id, label: c.companyName, sublabel: `Rep: ${c.name}` }))}
+                options={clients.map(c => ({ value: c.id, label: c.companyName, sublabel: c.officeNo || c.email }))}
                 onSearch={setClientQuery}
                 searchLoading={clientsSearchLoading}
               />
@@ -426,7 +459,7 @@ export default function OrdersView() {
 
                     {/* Contract ID */}
                     <td className="p-4 font-mono font-semibold text-slate-900">
-                      #{order.id.split('-')[1] || order.id}
+                      #{order.id.slice(0, 8).toUpperCase()}
                     </td>
 
                     {/* Client Company */}

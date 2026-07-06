@@ -40,17 +40,21 @@ Use **only these tools** on Windows filesystem:
 - Where persists? (always Supabase via `useTableData`)
 
 ### File Structure Shortcuts
-- Components: `src/components/{ViewName}.tsx`
-- Services: `src/services/db.ts` (Zustand), `supabase.ts` (client)
-- Backend: `server.ts` (Express endpoints)
+- Components: `src/components/{ViewName}.tsx` (list/index view), `src/components/{ViewName}Detail.tsx` for drill-down pages (e.g. `ContactDetailView.tsx`) — split out once a view does both list and detail
+- Services: `src/services/{Module}Service.ts` (preferred, direct-to-Supabase) — e.g. `ContactsService.ts`, `SystemAdminService.ts`, `CompanyProfileService.ts`; `db.ts` (legacy Zustand + per-table helpers), `supabase.ts` (client)
+- Backend: `server.ts` (Express `/api/data/:table` — legacy path only, see Data Flow Checklist)
 - Types: `src/types.ts` (all interfaces)
 
 ## Data Flow Checklist
-- ✅ Need to fetch? → `useTableData<Type>('table_name')` hook
-- ✅ Need to save? → Call Supabase client directly or via API endpoint
-- ✅ Company profile exception? → localStorage-first with `/api/profile` fallback
-- ❌ localStorage for other tables? → No. Supabase only.
-- ❌ `company_profile` in `useTableData`? → Error. Use API endpoint.
+- ✅ **Preferred (new/refactored modules)**: module owns a `services/<Module>Service.ts` that talks to Supabase directly via `helper.ts` primitives (`getRecords`/`upsertRecord`/`deleteRecord`/`getStorageItem`/`setStorageItem`) or the `supabase` client for search/filtered reads. No `db.ts`, no `server.ts` REST hop, no `useTableData` hook. Reference implementations: `CompanyProfileService.ts`, `SystemAdminService.ts`, `ContactsService.ts`.
+- ⚠️ **Legacy path (older views not yet migrated)**: `useTableData<Type>('table_name')` hook → hits `server.ts`'s `/api/data/:table`. Still used by Inventory/Orders/Purchases/Employees/Reports — don't add new dependents; migrate to a dedicated service when touching those views.
+- ✅ Company profile exception? → localStorage-first with direct Supabase read/write in `CompanyProfileService.ts`.
+- ❌ localStorage as the source of truth? → No. It's only an optional cache-aside layer (see `SystemAdminService.ts`), always invalidated on write.
+
+### When adding a feature or module
+1. Does a `services/<Module>Service.ts` exist? Extend it. If not, create one following `ContactsService.ts` (reads: `supabase.from(table)...`; writes: `helper.ts`'s `upsertRecord`/`deleteRecord`).
+2. View owns its own `useState` + `useEffect` + `CallAPI` loading (see `SystemAdminView.tsx`/`ContactsView.tsx`) — no shared data-fetching hook needed.
+3. Keep detail/drill-down pages in their own component file (e.g. `ContactDetailView.tsx`) instead of growing the list view — split when a view starts doing two jobs (list vs. detail).
 
 ## API Endpoints (server.ts)
 ```
@@ -62,8 +66,9 @@ POST /api/:table             → Insert (if added)
 
 ## Reference Files
 - `knowledge.md` — Updated after each arch change, current codebase state
-- `types.ts` — All 15+ interfaces (CompanyProfile, InventoryItem, Order, etc.)
-- `db.ts` — Zustand store `useSyncStore` + helpers
+- `types.ts` — All 15+ interfaces (CompanyProfile, InventoryItem, Order, Vendor, Client, Contact, etc.)
+- `helper.ts` — Shared Supabase primitives (`getRecords`/`upsertRecord`/`deleteRecord`/`getStorageItem`/`setStorageItem`) used directly by module services
+- `db.ts` — Legacy Zustand store `useSyncStore` + per-table helpers; still backs older views (Inventory/Orders/Purchases/Employees/Reports) and `ImportExportModal.tsx`'s bulk backup — don't extend it for new work
 
 ## Micro-Optimizations
 - **Reading a file?** Use `head: 50` to grab top lines first

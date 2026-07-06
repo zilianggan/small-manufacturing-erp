@@ -30,7 +30,7 @@ export default function OrderAccordion({ orderId, tasks, colKey, onAssignTask, e
         className="flex items-center justify-between p-2 cursor-pointer hover:bg-slate-50"
         onClick={onToggle}
       >
-        <span className="text-[10px] font-mono font-bold text-slate-700">Order #{orderId.split('-')[1] || orderId}</span>
+        <span className="text-[10px] font-mono font-bold text-slate-700">Order #{orderId.slice(0, 8).toUpperCase()}</span>
         {isOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
       </div>
       

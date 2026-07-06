@@ -50,18 +50,26 @@ const ALLOWED_TABLES = [
   'sales_orders',
   'purchase_orders',
   'workflow_tasks',
-  'employees'
+  'employees',
+  'job_positions',
+  'material_categories',
+  'product_categories',
+  'contacts'
 ];
 
 // Columns searched (OR'd with ilike) when a `q` param is supplied.
 const SEARCH_COLUMNS: Record<string, string[]> = {
   inventory_items: ['name', 'sku'],
-  vendors: ['name', 'contact_name', 'email'],
-  clients: ['name', 'company_name', 'contact_name'],
+  vendors: ['company_name', 'email'],
+  clients: ['company_name', 'email'],
+  contacts: ['full_name', 'email'],
   sales_orders: ['client_name', 'item_name'],
   purchase_orders: ['vendor_name', 'item_name'],
   workflow_tasks: ['product_name'],
   employees: ['name', 'role', 'email'],
+  job_positions: ['name'],
+  material_categories: ['name'],
+  product_categories: ['name'],
 };
 
 // Columns allowed as simple equality filters, e.g. ?type=RAW_MATERIAL
@@ -69,10 +77,14 @@ const FILTERABLE_COLUMNS: Record<string, string[]> = {
   inventory_items: ['type'],
   vendors: [],
   clients: [],
+  contacts: ['vendor_id', 'client_id'],
   sales_orders: ['status'],
   purchase_orders: ['status'],
   workflow_tasks: ['current_step'],
-  employees: ['status', 'department'],
+  employees: ['status'],
+  job_positions: ['is_active'],
+  material_categories: ['is_active'],
+  product_categories: ['is_active'],
 };
 
 // 1. Health check API endpoint
@@ -131,7 +143,7 @@ app.get('/api/data/:table', async (req, res) => {
 app.get('/api/stats', async (req, res) => {
   try {
     const [invRes, soRes, poRes, wfRes] = await Promise.all([
-      supabaseServer.from('inventory_items').select('quantity, unit_cost, reorder_point, name, sku, unit, type'),
+      supabaseServer.from('inventory_items').select('*'),
       supabaseServer.from('sales_orders').select('status, total_price'),
       supabaseServer.from('purchase_orders').select('status, total_cost'),
       supabaseServer.from('workflow_tasks').select('current_step, product_name, quantity, assigned_to')
@@ -181,33 +193,6 @@ app.get('/api/stats', async (req, res) => {
   } catch (error: any) {
     console.error('Stats fetch error:', error);
     res.status(500).json({ error: 'Failed to fetch stats', details: error.message });
-  }
-});
-
-// 1c. Company profile endpoint
-app.get('/api/profile', async (req, res) => {
-  try {
-    const { data, error } = await supabaseServer
-      .from('company_profile')
-      .select('*')
-      .eq('id', 'default')
-      .single();
-    if (error) { res.status(500).json({ error: error.message }); return; }
-    if (!data) { res.json(null); return; }
-    res.json({
-      name: data.name,
-      iconType: data.icon_type,
-      iconDataUrl: data.icon_data_url,
-      address: data.address,
-      phone: data.phone,
-      email: data.email,
-      bankName: data.bank_name,
-      bankAccount: data.bank_account,
-      signatureUrl: data.signature_url,
-      chopUrl: data.chop_url
-    });
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
   }
 });
 

@@ -25,15 +25,20 @@ import {
   Wrench,
   Camera,
   Briefcase,
+  Settings,
   Sun,
-  Moon
+  Moon,
+  Boxes,
+  Tag
 } from 'lucide-react';
-import { saveCompanyProfile, useSyncStore } from './services/db';
+import { useSyncStore } from './services/db';
 import { CompanyProfile } from './types';
 import SignaturePad from './components/SignaturePad';
 
 import DashboardView from './components/DashboardView';
 import InventoryView from './components/InventoryView';
+import MaterialView from './components/MaterialView';
+import ProductView from './components/ProductView';
 import ContactsView from './components/ContactsView';
 import OrdersView from './components/OrdersView';
 import PurchasesView from './components/PurchasesView';
@@ -42,8 +47,11 @@ import ReportsView from './components/ReportsView';
 import ExportGuide from './components/ExportGuide';
 import ImportExportModal from './components/ImportExportModal';
 import EmployeesView from './components/EmployeesView';
+import SystemAdminView from './components/SystemAdminView';
+import { getCompanyProfile, saveCompanyProfile } from './services/CompanyProfileService';
+import { CallAPI } from './components/UIHelper';
 
-type TabType = 'DASHBOARD' | 'INVENTORY' | 'CONTACTS' | 'EMPLOYEES' | 'ORDERS' | 'PURCHASES' | 'WORKFLOWS' | 'REPORTS' | 'EXPORT_GUIDE';
+type TabType = 'DASHBOARD' | 'INVENTORY' | 'MATERIAL' | 'PRODUCT' | 'CONTACTS' | 'EMPLOYEES' | 'ORDERS' | 'PURCHASES' | 'WORKFLOWS' | 'SYSTEM_ADMIN' | 'REPORTS' | 'EXPORT_GUIDE';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabType>('DASHBOARD');
@@ -71,7 +79,7 @@ export default function App() {
   const [quickProcureItem, setQuickProcureItem] = useState<{ itemId: string; itemName: string; vendorId: string } | null>(null);
 
   // Company Profile states
-  const EMPTY_PROFILE: CompanyProfile = { name: '', iconType: 'database' };
+  const EMPTY_PROFILE: CompanyProfile = { name: '', icon_type: 'database' };
   const [companyProfile, setCompanyProfile] = useState<CompanyProfile>(EMPTY_PROFILE);
   const [showBrandingModal, setShowBrandingModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
@@ -80,42 +88,68 @@ export default function App() {
   const isSyncing = useSyncStore((state: any) => state.isSyncing);
 
   // Fetch company profile — localStorage first, fallback to API
-  useEffect(() => {
-    setIsAppLoaded(true);
-    const cached = localStorage.getItem('erp_company_profile');
-    if (JSON.parse(cached)?.name) {
-      try { setCompanyProfile(JSON.parse(cached)); return; } catch { }
+  const loadData = async () => {
+    const cachedProfile = JSON.parse(localStorage.getItem('erp_company_profile') || '{}');
+    if (cachedProfile && cachedProfile.id) {
+      setCompanyProfile(cachedProfile);
+      return;
     }
-    fetch('/api/profile')
-      .then(r => r.json())
-      .then(data => {
-        if (data) {
-          setCompanyProfile(data);
-          localStorage.setItem('erp_company_profile', JSON.stringify(data));
-        }
-      })
-      .catch(err => console.error('Failed to load company profile:', err));
-  }, []);
+    await CallAPI(getCompanyProfile, {
+      onCompleted: setCompanyProfile,
+      onError: console.error,
+    });
+  }
+  useEffect(() => {
+    loadData();
+  }, [])
 
+  const submitData = async (e) => {
+    e.preventDefault();
+    if (!brandingName.trim()) {
+      setBrandingError('Company name is required');
+      return;
+    }
+    const updatedProfile: CompanyProfile = {
+      id: brandingID,
+      name: brandingName.trim(),
+      icon_type: brandingIconType,
+      icon_data_url: brandingIconDataUrl,
+      address: brandingAddress.trim(),
+      phone: brandingPhone.trim(),
+      email: brandingEmail.trim(),
+      bank_name: brandingBankName.trim(),
+      bank_account: brandingBankAccount.trim(),
+      signature_url: brandingSignatureUrl || undefined,
+    };
+    // await saveCompanyProfile(updatedProfile);
+    await CallAPI(() => saveCompanyProfile(updatedProfile), {
+      onCompleted: () => {
+        loadData();
+        setRefreshKey(prev => prev + 1);
+        setShowBrandingModal(false);
+      },
+      onError: (error) => setBrandingError(error.message),
+    })
+  }
 
   // For the form inside the branding settings modal:
+  const [brandingID, setBrandingID] = useState(companyProfile.id);
   const [brandingName, setBrandingName] = useState(companyProfile.name);
-  const [brandingIconType, setBrandingIconType] = useState(companyProfile.iconType);
-  const [brandingIconDataUrl, setBrandingIconDataUrl] = useState(companyProfile.iconDataUrl);
+  const [brandingIconType, setBrandingIconType] = useState(companyProfile.icon_type);
+  const [brandingIconDataUrl, setBrandingIconDataUrl] = useState(companyProfile.icon_data_url);
   const [brandingAddress, setBrandingAddress] = useState(companyProfile.address || '');
   const [brandingPhone, setBrandingPhone] = useState(companyProfile.phone || '');
   const [brandingEmail, setBrandingEmail] = useState(companyProfile.email || '');
-  const [brandingBankName, setBrandingBankName] = useState(companyProfile.bankName || '');
-  const [brandingBankAccount, setBrandingBankAccount] = useState(companyProfile.bankAccount || '');
-  const [brandingSignatureUrl, setBrandingSignatureUrl] = useState(companyProfile.signatureUrl || '');
-  const [brandingChopUrl, setBrandingChopUrl] = useState(companyProfile.chopUrl || '');
+  const [brandingBankName, setBrandingBankName] = useState(companyProfile.bank_name || '');
+  const [brandingBankAccount, setBrandingBankAccount] = useState(companyProfile.bank_account || '');
+  const [brandingSignatureUrl, setBrandingSignatureUrl] = useState(companyProfile.signature_url || '');
   const [brandingError, setBrandingError] = useState('');
 
   const renderCompanyIcon = (sizeClass = "w-5 h-5") => {
-    if (companyProfile.iconType === 'custom_image' && companyProfile.iconDataUrl) {
+    if (companyProfile.icon_type === 'custom_image' && companyProfile.icon_data_url) {
       return (
         <img
-          src={companyProfile.iconDataUrl}
+          src={companyProfile.icon_data_url}
           alt="Company logo"
           className={`${sizeClass} object-contain rounded`}
           referrerPolicy="no-referrer"
@@ -123,7 +157,7 @@ export default function App() {
       );
     }
 
-    switch (companyProfile.iconType) {
+    switch (companyProfile.icon_type) {
       case 'factory':
         return <Factory className={sizeClass} />;
       case 'cpu':
@@ -147,7 +181,18 @@ export default function App() {
 
   // Automated Excel data backup helper
   const downloadBackup = () => {
-    const keys = ['erp_inventory', 'erp_vendors', 'erp_clients', 'erp_employees', 'erp_sales_orders', 'erp_purchase_orders', 'erp_workflow_tasks'];
+    const keys = [
+      'erp_inventory',
+      'erp_vendors',
+      'erp_clients',
+      'erp_employees',
+      'erp_sales_orders',
+      'erp_purchase_orders',
+      'erp_workflow_tasks',
+      'erp_job_positions',
+      'erp_material_categories',
+      'erp_product_categories'
+    ];
     const wb = XLSX.utils.book_new();
     let hasData = false;
 
@@ -185,7 +230,10 @@ export default function App() {
   // Define Navigation Items
   const navItems = [
     { id: 'DASHBOARD' as TabType, label: 'Operations Board', icon: LayoutDashboard },
+    { id: 'SYSTEM_ADMIN' as TabType, label: 'System Admin', icon: Settings },
     { id: 'CONTACTS' as TabType, label: 'Vendors & Clients', icon: Users },
+    { id: 'MATERIAL' as TabType, label: 'Material Catalog', icon: Boxes },
+    { id: 'PRODUCT' as TabType, label: 'Product Catalog', icon: Tag },
     { id: 'INVENTORY' as TabType, label: 'Inventory Stock', icon: Package },
     { id: 'EMPLOYEES' as TabType, label: 'Employee Directory', icon: Briefcase },
     { id: 'PURCHASES' as TabType, label: 'Material purchases', icon: ShoppingBag },
@@ -204,16 +252,16 @@ export default function App() {
         {/* Sidebar Header Brand */}
         <div
           onClick={() => {
+            setBrandingID(companyProfile.id);
             setBrandingName(companyProfile.name);
-            setBrandingIconType(companyProfile.iconType);
-            setBrandingIconDataUrl(companyProfile.iconDataUrl);
+            setBrandingIconType(companyProfile.icon_type);
+            setBrandingIconDataUrl(companyProfile.icon_data_url);
             setBrandingAddress(companyProfile.address || '');
             setBrandingPhone(companyProfile.phone || '');
             setBrandingEmail(companyProfile.email || '');
-            setBrandingBankName(companyProfile.bankName || '');
-            setBrandingBankAccount(companyProfile.bankAccount || '');
-            setBrandingSignatureUrl(companyProfile.signatureUrl || '');
-            setBrandingChopUrl(companyProfile.chopUrl || '');
+            setBrandingBankName(companyProfile.bank_name || '');
+            setBrandingBankAccount(companyProfile.bank_account || '');
+            setBrandingSignatureUrl(companyProfile.signature_url || '');
             setBrandingError('');
             setShowBrandingModal(true);
           }}
@@ -292,16 +340,16 @@ export default function App() {
       <header className="md:hidden bg-slate-900 text-slate-300 p-4 border-b border-slate-800 flex items-center justify-between select-none shrink-0">
         <div
           onClick={() => {
+            setBrandingID(companyProfile.id);
             setBrandingName(companyProfile.name);
-            setBrandingIconType(companyProfile.iconType);
-            setBrandingIconDataUrl(companyProfile.iconDataUrl);
+            setBrandingIconType(companyProfile.icon_type);
+            setBrandingIconDataUrl(companyProfile.icon_data_url);
             setBrandingAddress(companyProfile.address || '');
             setBrandingPhone(companyProfile.phone || '');
             setBrandingEmail(companyProfile.email || '');
-            setBrandingBankName(companyProfile.bankName || '');
-            setBrandingBankAccount(companyProfile.bankAccount || '');
-            setBrandingSignatureUrl(companyProfile.signatureUrl || '');
-            setBrandingChopUrl(companyProfile.chopUrl || '');
+            setBrandingBankName(companyProfile.bank_name || '');
+            setBrandingBankAccount(companyProfile.bank_account || '');
+            setBrandingSignatureUrl(companyProfile.signature_url || '');
             setBrandingError('');
             setShowBrandingModal(true);
           }}
@@ -442,6 +490,8 @@ export default function App() {
         <div className="p-6 flex-1 min-h-0 min-w-0 overflow-y-auto overscroll-contain">
           {activeTab === 'DASHBOARD' && <DashboardView key={refreshKey} />}
           {activeTab === 'INVENTORY' && <InventoryView key={refreshKey} onQuickProcure={handleQuickProcure} />}
+          {activeTab === 'MATERIAL' && <MaterialView key={refreshKey} />}
+          {activeTab === 'PRODUCT' && <ProductView key={refreshKey} />}
           {activeTab === 'CONTACTS' && <ContactsView key={refreshKey} />}
           {activeTab === 'EMPLOYEES' && <EmployeesView key={refreshKey} />}
           {activeTab === 'ORDERS' && <OrdersView key={refreshKey} />}
@@ -453,6 +503,7 @@ export default function App() {
             />
           )}
           {activeTab === 'WORKFLOWS' && <WorkflowsView key={refreshKey} />}
+          {activeTab === 'SYSTEM_ADMIN' && <SystemAdminView key={refreshKey} />}
           {activeTab === 'REPORTS' && <ReportsView key={refreshKey} />}
           {activeTab === 'EXPORT_GUIDE' && <ExportGuide key={refreshKey} />}
         </div>
@@ -473,16 +524,16 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => {
+                  setBrandingID(companyProfile.id);
                   setBrandingName(companyProfile.name);
-                  setBrandingIconType(companyProfile.iconType);
-                  setBrandingIconDataUrl(companyProfile.iconDataUrl);
+                  setBrandingIconType(companyProfile.icon_type);
+                  setBrandingIconDataUrl(companyProfile.icon_data_url);
                   setBrandingAddress(companyProfile.address || '');
                   setBrandingPhone(companyProfile.phone || '');
                   setBrandingEmail(companyProfile.email || '');
-                  setBrandingBankName(companyProfile.bankName || '');
-                  setBrandingBankAccount(companyProfile.bankAccount || '');
-                  setBrandingSignatureUrl(companyProfile.signatureUrl || '');
-                  setBrandingChopUrl(companyProfile.chopUrl || '');
+                  setBrandingBankName(companyProfile.bank_name || '');
+                  setBrandingBankAccount(companyProfile.bank_account || '');
+                  setBrandingSignatureUrl(companyProfile.signature_url || '');
                   setBrandingError('');
                   setShowBrandingModal(false);
                 }}
@@ -492,29 +543,7 @@ export default function App() {
               </button>
             </div>
 
-            <form onSubmit={(e) => {
-              e.preventDefault();
-              if (!brandingName.trim()) {
-                setBrandingError('Company name is required');
-                return;
-              }
-              const updatedProfile: CompanyProfile = {
-                name: brandingName.trim(),
-                iconType: brandingIconType,
-                iconDataUrl: brandingIconDataUrl,
-                address: brandingAddress.trim(),
-                phone: brandingPhone.trim(),
-                email: brandingEmail.trim(),
-                bankName: brandingBankName.trim(),
-                bankAccount: brandingBankAccount.trim(),
-                signatureUrl: brandingSignatureUrl || undefined,
-                chopUrl: brandingChopUrl || undefined
-              };
-              setCompanyProfile(updatedProfile);
-              saveCompanyProfile(updatedProfile);
-              setRefreshKey(prev => prev + 1); // Refresh views that rely on company profile
-              setShowBrandingModal(false);
-            }} className="p-5 space-y-4 text-xs text-slate-600 max-h-[85vh] overflow-y-auto">
+            <form onSubmit={async (e) => { submitData(e) }} className="p-5 space-y-4 text-xs text-slate-600 max-h-[85vh] overflow-y-auto">
 
               {brandingError && (
                 <div className="p-3 bg-red-50 text-red-700 rounded-lg border border-red-100 font-medium">
@@ -718,16 +747,16 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => {
+                    setBrandingID(companyProfile.id);
                     setBrandingName(companyProfile.name);
-                    setBrandingIconType(companyProfile.iconType);
-                    setBrandingIconDataUrl(companyProfile.iconDataUrl);
+                    setBrandingIconType(companyProfile.icon_type);
+                    setBrandingIconDataUrl(companyProfile.icon_data_url);
                     setBrandingAddress(companyProfile.address || '');
                     setBrandingPhone(companyProfile.phone || '');
                     setBrandingEmail(companyProfile.email || '');
-                    setBrandingBankName(companyProfile.bankName || '');
-                    setBrandingBankAccount(companyProfile.bankAccount || '');
-                    setBrandingSignatureUrl(companyProfile.signatureUrl || '');
-                    setBrandingChopUrl(companyProfile.chopUrl || '');
+                    setBrandingBankName(companyProfile.bank_name || '');
+                    setBrandingBankAccount(companyProfile.bank_account || '');
+                    setBrandingSignatureUrl(companyProfile.signature_url || '');
                     setBrandingError('');
                     setShowBrandingModal(false);
                   }}

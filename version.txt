@@ -1,7 +1,12 @@
-Version 1.0.1
+Version 1.0.2
 --------------------
-- Add loading
-- For select field all change to autocomplete field which is searchable
-- Add created dt and modified dt
-- Make those repeated html into component for easy maintained like controller field, card, card content, dialog.
-- Fix if click next or previous, all data disappear.
+- Database schema overhaul: all tables moved from TEXT to UUID primary keys; auto created_at/updated_at triggers added for every table (function_trigger.sql replaces add_timestamps.sql)
+- Inventory split into dedicated Material and Product entities, each with its own category lookup (material_categories/product_categories) and detail/list views (MaterialView, MaterialDetailView, ProductView, ProductDetailView)
+- Purchases and Sales normalized into header/detail tables (purchase_header/purchase_detail, sales_header/sales_detail) instead of JSON item blobs
+- Added inventory_transaction and production_material_usage tables; material stock quantity now auto-updates via DB trigger (update_material_stock) instead of app-side math
+- Vendors and Clients simplified to companyName/email/officeNo/address; contact persons unified into a single Contacts entity/table linked to exactly one vendor or client, with its own detail view (ContactDetailView)
+- New System Admin tab/view for managing lookup parameters: Job Positions, Material Categories, Product Categories
+- Employees: removed department field, added job position link
+- Company profile moved to UUID id and snake_case fields (icon_type, bank_name, signature_url, etc.), read via new CompanyProfileService
+- New per-module services (ContactsService, EmployeesService, InventoryService, MaterialService, OrdersService, ProductService, PurchasesService, SystemAdminService, WorkflowsService) built on shared helper.ts Supabase primitives and CallAPI (UIHelper.ts) loading pattern, replacing legacy db.ts/server.ts REST hop
+- Form fields for Company, Material and Product extracted into shared components (CompanyFormFields, MaterialFormFields, ProductFormFields)

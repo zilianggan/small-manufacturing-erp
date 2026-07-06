@@ -4,14 +4,15 @@
  */
 
 import React, { useState, useMemo, useEffect } from 'react';
-import { addPurchaseOrder, getPurchaseOrders, savePurchaseOrders, updatePurchaseOrderStatus } from '../services/db';
+import { addPurchaseOrder, savePurchaseOrders, updatePurchaseOrderStatus, getMaterialCategories } from '../services/PurchasesService';
 import { useTableData } from '../hooks/useTableData';
-import { PurchaseOrder, Vendor, InventoryItem, Attachment } from '../types';
+import { PurchaseOrder, Vendor, InventoryItem, Attachment, MaterialCategory } from '../types';
 import { Plus, Calendar, Check, Paperclip, Trash2, Edit } from 'lucide-react';
 import AttachmentSection from './AttachmentSection';
 import LoadingSpinner from './LoadingSpinner';
 import ComboBox from './ComboBox';
 import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, FormField, SearchInput } from './ui';
+import { CallAPI } from './UIHelper';
 
 interface PurchasesViewProps {
   quickProcureState?: { itemId: string; itemName: string; vendorId: string } | null;
@@ -19,15 +20,27 @@ interface PurchasesViewProps {
 }
 
 export default function PurchasesView({ quickProcureState, clearQuickProcure }: PurchasesViewProps) {
-  const { data: purchaseOrdersData, loading } = useTableData<PurchaseOrder>('purchase_orders');
+  const { data: purchaseOrdersData, loading, refetch } = useTableData<PurchaseOrder>('purchase_orders');
   const { data: vendors } = useTableData<Vendor>('vendors');
   const { data: inventory } = useTableData<InventoryItem>('inventory_items');
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
   useEffect(() => { setPurchaseOrders(purchaseOrdersData); }, [purchaseOrdersData]);
+  const [materialCategories, setMaterialCategories] = useState<MaterialCategory[]>([]);
+
+  useEffect(() => {
+    CallAPI(getMaterialCategories, {
+      onCompleted: setMaterialCategories,
+      onError: console.error,
+    });
+  }, []);
 
   const rawMaterials = useMemo(() => {
     return inventory.filter(item => item.type === 'RAW_MATERIAL');
   }, [inventory]);
+
+  const materialCategoryMap = useMemo(() => {
+    return new Map(materialCategories.map(category => [category.id, category]));
+  }, [materialCategories]);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [showAddForm, setShowAddForm] = useState(false);
@@ -101,7 +114,7 @@ export default function PurchasesView({ quickProcureState, clearQuickProcure }: 
     if (!formVendorId) return rawMaterials;
     const vendor = vendors.find(v => v.id === formVendorId);
     if (!vendor) return rawMaterials;
-    return rawMaterials.filter(m => vendor.materialsSupplied.includes(m.id) || m.supplierId === vendor.id);
+    return rawMaterials.filter(m => m.supplierId === vendor.id);
   }, [formVendorId, rawMaterials, vendors]);
 
   const handleVendorSelect = (vendorId: string) => {
@@ -149,7 +162,7 @@ export default function PurchasesView({ quickProcureState, clearQuickProcure }: 
     setFormItems(formItems.filter((_, idx) => idx !== index));
   };
 
-  const handleCreatePO = (e: React.FormEvent) => {
+  const handleCreatePO = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formVendorId) return;
 
@@ -186,7 +199,7 @@ export default function PurchasesView({ quickProcureState, clearQuickProcure }: 
 
     const newPOPayload = {
       vendorId: vendor.id,
-      vendorName: vendor.name,
+      vendorName: vendor.companyName,
       itemId: finalItems[0].itemId,
       itemName: finalItems[0].itemName,
       quantity: overallQty,
@@ -196,42 +209,83 @@ export default function PurchasesView({ quickProcureState, clearQuickProcure }: 
       items: finalItems
     };
 
+    const previous = purchaseOrders;
+
     if (editPOId) {
-      const allPOs = getPurchaseOrders();
-      const poIndex = allPOs.findIndex(po => po.id === editPOId);
+      const poIndex = purchaseOrders.findIndex(po => po.id === editPOId);
       if (poIndex !== -1) {
-        allPOs[poIndex] = { ...allPOs[poIndex], ...newPOPayload };
-        savePurchaseOrders(allPOs, allPOs[poIndex]);
+        const updatedPO = { ...purchaseOrders[poIndex], ...newPOPayload };
+        const updatedPOs = purchaseOrders.map((po, idx) => idx === poIndex ? updatedPO : po);
+        setPurchaseOrders(updatedPOs);
+
+        await CallAPI(() => savePurchaseOrders(updatedPOs, updatedPO), {
+          onCompleted: refetch,
+          onError: (err) => {
+            console.error(err);
+            setPurchaseOrders(previous);
+          },
+        });
       }
     } else {
-      addPurchaseOrder(newPOPayload);
+      await CallAPI(async () => addPurchaseOrder(newPOPayload), {
+        onCompleted: refetch,
+        onError: (err) => {
+          console.error(err);
+          setPurchaseOrders(previous);
+        },
+      });
     }
 
-    setPurchaseOrders(getPurchaseOrders()); // refresh list
     setShowAddForm(false);
 
     // Reset
     resetForm();
   };
 
-  const handleReceiveStock = (id: string) => {
-    updatePurchaseOrderStatus(id, 'RECEIVED');
-    setPurchaseOrders(getPurchaseOrders()); // refresh list
+  const handleReceiveStock = async (id: string) => {
+    const previous = purchaseOrders;
+    const updated = purchaseOrders.map(po => po.id === id ? { ...po, status: 'RECEIVED' as PurchaseOrder['status'] } : po);
+    setPurchaseOrders(updated);
+
+    await CallAPI(async () => updatePurchaseOrderStatus(id, 'RECEIVED'), {
+      onCompleted: refetch,
+      onError: (err) => {
+        console.error(err);
+        setPurchaseOrders(previous);
+      },
+    });
   };
 
-  const handleCancelPO = (id: string) => {
-    if (confirm('Cancel this Purchase Order?')) {
-      updatePurchaseOrderStatus(id, 'CANCELLED');
-      setPurchaseOrders(getPurchaseOrders()); // refresh list
-    }
+  const handleCancelPO = async (id: string) => {
+    if (!confirm('Cancel this Purchase Order?')) return;
+
+    const previous = purchaseOrders;
+    const updated = purchaseOrders.map(po => po.id === id ? { ...po, status: 'CANCELLED' as PurchaseOrder['status'] } : po);
+    setPurchaseOrders(updated);
+
+    await CallAPI(async () => updatePurchaseOrderStatus(id, 'CANCELLED'), {
+      onCompleted: refetch,
+      onError: (err) => {
+        console.error(err);
+        setPurchaseOrders(previous);
+      },
+    });
   };
 
-  const handleDeletePO = (id: string) => {
-    if (confirm('Are you sure you want to delete this Purchase Order?')) {
-      const updated = getPurchaseOrders().filter(po => po.id !== id);
-      savePurchaseOrders(updated, undefined, id);
-      setPurchaseOrders(updated);
-    }
+  const handleDeletePO = async (id: string) => {
+    if (!confirm('Are you sure you want to delete this Purchase Order?')) return;
+
+    const previous = purchaseOrders;
+    const updated = purchaseOrders.filter(po => po.id !== id);
+    setPurchaseOrders(updated);
+
+    await CallAPI(() => savePurchaseOrders(updated, undefined, id), {
+      onCompleted: refetch,
+      onError: (err) => {
+        console.error(err);
+        setPurchaseOrders(previous);
+      },
+    });
   };
 
   const filteredPOs = useMemo(() => {
@@ -281,7 +335,7 @@ export default function PurchasesView({ quickProcureState, clearQuickProcure }: 
                 value={formVendorId}
                 onChange={(v) => handleVendorSelect(v)}
                 noneLabel="-- Select Vendor --"
-                options={vendors.map(v => ({ value: v.id, label: v.name, sublabel: `Rating: ${v.rating}` }))}
+                options={vendors.map(v => ({ value: v.id, label: v.companyName, sublabel: v.officeNo || v.email }))}
               />
             </FormField>
 
@@ -341,7 +395,14 @@ export default function PurchasesView({ quickProcureState, clearQuickProcure }: 
                   onChange={(v) => handleMaterialSelect(v)}
                   disabled={!formVendorId}
                   noneLabel="-- Choose Material --"
-                  options={filteredMaterialsForVendor.map(m => ({ value: m.id, label: m.name, sublabel: `Stock: ${m.quantity}` }))}
+                  options={filteredMaterialsForVendor.map(m => {
+                    const category = materialCategoryMap.get(m.materialCategoryId || '');
+                    return {
+                      value: m.id,
+                      label: m.name,
+                      sublabel: category ? category.name : `Stock: ${m.quantity}`
+                    };
+                  })}
                 />
               </FormField>
 
@@ -444,7 +505,7 @@ export default function PurchasesView({ quickProcureState, clearQuickProcure }: 
 
                     {/* PO Code */}
                     <td className="p-4 font-mono font-semibold text-slate-900">
-                      PO-#{po.id.split('-')[1] || po.id}
+                      PO-#{po.id.slice(0, 8).toUpperCase()}
                     </td>
 
                     {/* Vendor Name */}
@@ -504,9 +565,9 @@ export default function PurchasesView({ quickProcureState, clearQuickProcure }: 
                     {/* Status Badge */}
                     <td className="p-4">
                       <span className={`px-2.5 py-1 rounded-full font-mono text-[10px] font-medium border ${po.status === 'DRAFT' ? 'bg-slate-50 text-slate-800 border-slate-200' :
-                          po.status === 'ORDERED' ? 'bg-amber-50 text-amber-800 border-amber-200' :
-                            po.status === 'RECEIVED' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' :
-                              'bg-red-50 text-red-800 border-red-200'
+                        po.status === 'ORDERED' ? 'bg-amber-50 text-amber-800 border-amber-200' :
+                          po.status === 'RECEIVED' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' :
+                            'bg-red-50 text-red-800 border-red-200'
                         }`}>
                         {po.status === 'ORDERED' ? 'Pending Stock' : po.status}
                       </span>
