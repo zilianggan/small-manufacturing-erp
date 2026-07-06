@@ -221,6 +221,16 @@ CREATE TABLE workflow_tasks (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+ALTER TABLE purchase_header
+ADD COLUMN sales_header_id UUID
+REFERENCES sales_header(id)
+ON DELETE SET NULL;
+
+ALTER TABLE purchase_detail
+ADD COLUMN sales_detail_id UUID
+REFERENCES sales_detail(detail_id)
+ON DELETE SET NULL;
+
 ALTER TABLE contacts
 ADD CONSTRAINT chk_contact_owner
 CHECK
@@ -228,3 +238,36 @@ CHECK
   (vendor_id IS NOT NULL)::int +
   (client_id IS NOT NULL)::int = 1
 );
+
+DO $$
+DECLARE
+    tbl text;
+BEGIN
+    FOREACH tbl IN ARRAY ARRAY[
+        'vendors',
+        'clients',
+        'employees',
+        'job_positions',
+        'material_categories',
+        'product_categories',
+        'contacts',
+        'material',
+        'product',
+        'purchase_header',
+        'purchase_detail',
+        'sales_header',
+        'sales_detail',
+        'production_material_usage',
+        'inventory_transaction',
+        'workflow_tasks'
+    ]
+    LOOP
+        EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY;', tbl);
+        EXECUTE format('DROP POLICY IF EXISTS %I ON %I;', tbl || '_all', tbl);
+        EXECUTE format(
+            'CREATE POLICY %I ON %I FOR ALL TO public USING (true) WITH CHECK (true);',
+            tbl || '_all',
+            tbl
+        );
+    END LOOP;
+END $$;
