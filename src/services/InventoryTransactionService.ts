@@ -24,7 +24,7 @@ const mapTransactionRow = (row: any): InventoryTransaction => ({
   materialName: row.material?.name,
   productId: row.product_id || undefined,
   productName: row.product?.name,
-  transactionDate: row.transaction_date,
+  transactionDate: row.transaction_date?.slice(0, 10),
   createdAt: row.created_at,
 });
 
@@ -39,7 +39,8 @@ export const getInventoryTransactions = async (params: {
   let query = supabase
     .from('inventory_transaction')
     .select('*, material(name), product(name)', { count: 'exact' })
-    .order('transaction_date', { ascending: false });
+    .order('transaction_date', { ascending: false })
+    .order('created_at', { ascending: false });
 
   if (typeFilter !== 'ALL') {
     query = query.eq('transaction_type', typeFilter);
