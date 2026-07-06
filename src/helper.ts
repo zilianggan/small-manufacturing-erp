@@ -14,6 +14,7 @@ const LS_TO_TABLE: Record<string, string> = {
     erp_contacts: 'contacts',
     erp_material: 'material',
     erp_product: 'product',
+    erp_inventory_transaction: 'inventory_transaction',
 };
 
 const ROW_MAPPERS: Record<string, (row: any) => any> = {
@@ -60,6 +61,16 @@ const ROW_MAPPERS: Record<string, (row: any) => any> = {
         description: p.description || '', attachments: p.attachments || [],
         status: p.status || null, selling_price: p.sellingPrice ?? 0,
         product_category_id: p.productCategoryId || null
+    }),
+    erp_inventory_transaction: (t) => ({
+        id: t.id,
+        transaction_type: t.transactionType,
+        quantity: t.quantity,
+        unit_cost: t.unitCost ?? null,
+        remark: t.remark || null,
+        material_id: t.materialId || null,
+        product_id: t.productId || null,
+        transaction_date: t.transactionDate
     }),
     erp_sales_orders: (o) => ({
         id: o.id, clientId: o.client_id, clientName: o.client_name, itemId: o.item_id,
