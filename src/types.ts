@@ -144,7 +144,46 @@ export interface PurchaseHeader {
   vendorName: string; // joined, display only
   totalPrice: number;
   attachments?: Attachment[];
+  salesHeaderId?: string; // FK -> sales_header.id, optional link to the sales order this purchase serves
   details: PurchaseDetail[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface ProductionMaterialUsage {
+  id: string;
+  salesDetailId?: string;
+  materialId: string;
+  materialName: string; // joined, display only
+  materialCode?: string; // joined, display only
+  plannedQuantity: number;
+}
+
+export interface SalesDetail {
+  detailId: string;
+  headerId?: string;
+  productId: string;
+  productName: string; // snapshot
+  productCode?: string; // snapshot
+  quantity: number;
+  unitPrice: number;
+  totalPrice: number;
+  remark?: string;
+  materials: ProductionMaterialUsage[];
+}
+
+export interface SalesHeader {
+  id: string;
+  salesNo: string;
+  orderDate: string;
+  deliveryDate?: string;
+  status: 'QUOTATION' | 'ORDERED' | 'DELIVERED' | 'CANCELLED';
+  clientId: string;
+  clientName: string; // joined, display only
+  totalAmount: number;
+  remark?: string;
+  attachments?: Attachment[];
+  details: SalesDetail[];
   createdAt?: string;
   updatedAt?: string;
 }
