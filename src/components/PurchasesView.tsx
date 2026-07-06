@@ -11,6 +11,7 @@ import {
 } from '../services/PurchasesService';
 import { getMaterials } from '../services/MaterialService';
 import { getVendors } from '../services/ContactsService';
+import { getSalesOrdersForLinking, SalesOrderLinkOption } from '../services/OrdersService';
 import { PurchaseHeader, Vendor, Material, Attachment, MaterialCategory } from '../types';
 import { Plus, Calendar, Check, Paperclip, Trash2, Edit, FileText, ArrowRightCircle } from 'lucide-react';
 import AttachmentSection from './AttachmentSection';
@@ -32,12 +33,14 @@ export default function PurchasesView() {
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
   const [materialCategories, setMaterialCategories] = useState<MaterialCategory[]>([]);
+  const [salesLinkOptions, setSalesLinkOptions] = useState<SalesOrderLinkOption[]>([]);
   const [receivingId, setReceivingId] = useState<string | null>(null);
 
   useEffect(() => {
     getVendors().then(setVendors).catch(console.error);
     getMaterials().then(setMaterials).catch(console.error);
     CallAPI(getMaterialCategories, { onCompleted: setMaterialCategories, onError: console.error });
+    getSalesOrdersForLinking().then(setSalesLinkOptions).catch(console.error);
   }, []);
 
   const rawMaterials = useMemo(
@@ -76,6 +79,7 @@ export default function PurchasesView() {
   const [editHeaderId, setEditHeaderId] = useState<string | null>(null);
   const [formVendorId, setFormVendorId] = useState('');
   const [formOrderDate, setFormOrderDate] = useState('');
+  const [formSalesHeaderId, setFormSalesHeaderId] = useState('');
   const [formDetails, setFormDetails] = useState<PurchaseDetailInput[]>([]);
   const [tempMaterialId, setTempMaterialId] = useState('');
   const [tempQuantity, setTempQuantity] = useState(10);
@@ -86,6 +90,7 @@ export default function PurchasesView() {
     setEditHeaderId(null);
     setFormVendorId('');
     setFormOrderDate('');
+    setFormSalesHeaderId('');
     setFormDetails([]);
     setTempMaterialId('');
     setTempQuantity(10);
@@ -122,6 +127,7 @@ export default function PurchasesView() {
     setFormMode('EDIT');
     setEditHeaderId(purchase.id);
     setFormVendorId(purchase.vendorId);
+    setFormSalesHeaderId(purchase.salesHeaderId || '');
     setFormAttachment(purchase.attachments?.[0]);
     setFormDetails(detailsFromHeader(purchase));
     setShowFormDialog(true);
@@ -132,6 +138,7 @@ export default function PurchasesView() {
     setFormMode('CONVERT');
     setEditHeaderId(purchase.id);
     setFormVendorId(purchase.vendorId);
+    setFormSalesHeaderId(purchase.salesHeaderId || '');
     setFormAttachment(purchase.attachments?.[0]);
     setFormDetails(detailsFromHeader(purchase));
     setFormOrderDate(todayStr());
@@ -203,7 +210,12 @@ export default function PurchasesView() {
       return;
     }
 
-    const input = { vendorId: formVendorId, attachments: formAttachment ? [formAttachment] : [], details: finalDetails };
+    const input = {
+      vendorId: formVendorId,
+      salesHeaderId: formSalesHeaderId || undefined,
+      attachments: formAttachment ? [formAttachment] : [],
+      details: finalDetails,
+    };
 
     if (formMode === 'CREATE') {
       await CallAPI(() => createPurchaseQuotation(input), {
@@ -328,6 +340,15 @@ export default function PurchasesView() {
                 onChange={setFormVendorId}
                 noneLabel="-- Select Vendor --"
                 options={vendors.map(v => ({ value: v.id, label: v.companyName, sublabel: v.officeNo || v.email }))}
+              />
+            </FormField>
+
+            <FormField label="Linked Sales Order (Optional)" labelClassName="font-semibold block text-slate-700" colSpan="sm:col-span-2">
+              <ComboBox
+                value={formSalesHeaderId}
+                onChange={setFormSalesHeaderId}
+                noneLabel="-- No Linked Sales Order --"
+                options={salesLinkOptions.map(s => ({ value: s.id, label: s.salesNo, sublabel: s.clientName }))}
               />
             </FormField>
 
