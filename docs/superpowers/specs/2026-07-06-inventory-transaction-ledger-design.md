@@ -64,7 +64,7 @@ The trigger name (`trg_inventory_update_stock`) and firing condition (`AFTER INS
 Mirrors `MaterialService.ts` / `ProductService.ts`: direct Supabase reads, `helper.ts`'s `upsertRecord` for the (insert-only) write path. Needs a new `helper.ts` entry: `erp_inventory_transaction` → table `inventory_transaction`, with a serializer mapping camelCase → snake_case (`materialId`→`material_id`, `productId`→`product_id`, `transactionType`→`transaction_type`, `unitCost`→`unit_cost`, `transactionDate`→`transaction_date`, `remark`, `quantity`).
 
 Exports:
-- `generateId()` — same pattern as other services.
+- `generateId()` — `crypto.randomUUID()` directly (no manual regex fallback like `MaterialService`/`ProductService` carry — Electron 43's renderer and the Node backend both guarantee `crypto.randomUUID()`, so the fallback path is dead code; no need to add an external `uuid` package for this).
 - `getInventoryTransactions(params: { search?: string; typeFilter?: string; offset: number; limit: number }): Promise<{ rows: InventoryTransaction[]; hasMore: boolean }>` — reads `inventory_transaction` joined to `material(name, code)` and `product(name, code)` for display, ordered by `transaction_date desc`. `search` filters on the joined material/product name. `typeFilter` filters `transaction_type` when not `'ALL'`.
 - `saveInventoryTransaction(tx: InventoryTransaction): Promise<void>` — inserts one row via `upsertRecord('erp_inventory_transaction', tx)`. No update/delete export — insert-only per the design decision.
 
