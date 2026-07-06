@@ -92,6 +92,12 @@ export default function PurchasesView() {
     setFormAttachment(undefined);
   };
 
+  const clearTempMaterials = () => {
+    setTempMaterialId('');
+    setTempQuantity(10);
+    setTempUnitCost(0);
+  };
+
   const todayStr = () => new Date().toISOString().split('T')[0];
 
   const openCreateForm = () => {
@@ -111,6 +117,7 @@ export default function PurchasesView() {
     }));
 
   const openEditForm = (purchase: PurchaseHeader) => {
+    clearTempMaterials();
     setFormMode('EDIT');
     setEditHeaderId(purchase.id);
     setFormVendorId(purchase.vendorId);
@@ -120,6 +127,7 @@ export default function PurchasesView() {
   };
 
   const openConvertForm = (purchase: PurchaseHeader) => {
+    clearTempMaterials();
     setFormMode('CONVERT');
     setEditHeaderId(purchase.id);
     setFormVendorId(purchase.vendorId);
@@ -298,7 +306,7 @@ export default function PurchasesView() {
       {/* Creation/Edit/Convert form as Dialog Modal */}
       <Dialog
         open={showFormDialog}
-        onClose={() => setShowFormDialog(false)}
+        onClose={() => { clearTempMaterials(); setShowFormDialog(false); }}
         title={dialogTitle}
       >
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
@@ -433,7 +441,7 @@ export default function PurchasesView() {
 
           </div>
           <DialogFooter>
-            <DialogCancelButton onClick={() => setShowFormDialog(false)} />
+            <DialogCancelButton onClick={() => { clearTempMaterials(); setShowFormDialog(false); }} />
             <DialogSubmitButton>{submitLabel}</DialogSubmitButton>
           </DialogFooter>
         </form>
