@@ -114,6 +114,7 @@ CREATE TABLE product (
   name TEXT NOT NULL,
   code TEXT,
   dimension TEXT,
+  quantity NUMERIC DEFAULT 0,
   description TEXT,
   attachments JSONB DEFAULT '[]'::jsonb,
   status TEXT,
@@ -195,7 +196,8 @@ CREATE TABLE production_material_usage (
 CREATE TABLE inventory_transaction (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   material_id UUID REFERENCES material(id) ON DELETE SET NULL,
-  transaction_type TEXT, -- PURCAHSE, SALES_ORDER, ADJUSTMENT, RETURN
+  product_id UUID REFERENCES product(id) ON DELETE SET NULL,
+  transaction_type TEXT, -- PURCHASE, SALES, PURCHASE_RETURN, SALES_RETURN, ADJUSTMENT
   quantity NUMERIC NOT NULL,
   unit_cost NUMERIC,
   remark TEXT,
@@ -203,7 +205,8 @@ CREATE TABLE inventory_transaction (
   production_material_usage_id UUID REFERENCES production_material_usage(id),
   transaction_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT chk_inventory_transaction_target CHECK ((material_id IS NOT NULL) <> (product_id IS NOT NULL))
 );
 
 CREATE TABLE workflow_tasks (

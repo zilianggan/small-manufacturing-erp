@@ -15,6 +15,9 @@ ON sales_header(client_id);
 CREATE INDEX idx_inventory_material
 ON inventory_transaction(material_id);
 
+CREATE INDEX idx_inventory_product
+ON inventory_transaction(product_id);
+
 CREATE INDEX idx_production_material_usage
 ON production_material_usage(material_id);
 
@@ -133,6 +136,12 @@ BEGIN
         UPDATE material
         SET quantity = quantity + NEW.quantity
         WHERE id = NEW.material_id;
+    END IF;
+
+    IF NEW.product_id IS NOT NULL THEN
+        UPDATE product
+        SET quantity = quantity + NEW.quantity
+        WHERE id = NEW.product_id;
     END IF;
 
     RETURN NEW;
