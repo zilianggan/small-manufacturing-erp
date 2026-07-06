@@ -185,6 +185,13 @@ export const receivePurchaseOrder = async (purchase: PurchaseHeader): Promise<vo
   const today = new Date().toISOString().split('T')[0];
 
   for (const detail of purchase.details) {
+    // Idempotency guard: skip lines already fully received so a retry after a
+    // partial failure (or a double-click before the button disables) doesn't
+    // insert a second inventory_transaction and double-count material.quantity.
+    if (detail.receivedQuantity >= detail.quantity) {
+      continue;
+    }
+
     await saveInventoryTransaction({
       id: generateId(),
       transactionType: 'PURCHASE',

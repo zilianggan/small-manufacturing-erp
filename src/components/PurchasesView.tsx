@@ -32,6 +32,7 @@ export default function PurchasesView() {
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
   const [materialCategories, setMaterialCategories] = useState<MaterialCategory[]>([]);
+  const [receivingId, setReceivingId] = useState<string | null>(null);
 
   useEffect(() => {
     getVendors().then(setVendors).catch(console.error);
@@ -234,9 +235,17 @@ export default function PurchasesView() {
   };
 
   const handleReceive = async (purchase: PurchaseHeader) => {
+    if (receivingId === purchase.id) return;
+    setReceivingId(purchase.id);
     await CallAPI(() => receivePurchaseOrder(purchase), {
-      onCompleted: () => loadPurchases(activeTab),
-      onError: console.error,
+      onCompleted: () => {
+        setReceivingId(null);
+        loadPurchases(activeTab);
+      },
+      onError: (err) => {
+        setReceivingId(null);
+        console.error(err);
+      },
     });
   };
 
@@ -551,7 +560,12 @@ export default function PurchasesView() {
                             <button onClick={() => openEditForm(p)} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-slate-50 rounded transition-colors" title="Edit">
                               <Edit className="w-3.5 h-3.5" />
                             </button>
-                            <button onClick={() => handleReceive(p)} title="Mark material package as received" className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors">
+                            <button
+                              onClick={() => handleReceive(p)}
+                              disabled={receivingId === p.id}
+                              title="Mark material package as received"
+                              className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
                               <Check className="w-3.5 h-3.5" />
                             </button>
                             <button onClick={() => handleCancel(p.id)} className="p-1 text-slate-400 hover:text-red-600 rounded transition-colors text-[10px] font-medium">
