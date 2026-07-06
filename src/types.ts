@@ -121,6 +121,34 @@ export interface PurchaseOrder {
   updatedAt?: string;
 }
 
+export interface PurchaseDetail {
+  detailId: string;
+  headerId?: string;
+  materialId: string;
+  materialName: string; // snapshot
+  materialCode?: string; // snapshot
+  quantity: number;
+  unitCost: number;
+  totalPrice: number;
+  receivedQuantity: number;
+}
+
+export interface PurchaseHeader {
+  id: string;
+  purchaseNo: string;
+  quotationDate: string;
+  orderDate?: string;
+  receivedDate?: string;
+  status: 'QUOTATION' | 'ORDERED' | 'RECEIVED' | 'CANCELLED';
+  vendorId: string;
+  vendorName: string; // joined, display only
+  totalPrice: number;
+  attachments?: Attachment[];
+  details: PurchaseDetail[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export interface WorkflowTask {
   id: string;
   orderId: string;
@@ -268,6 +296,7 @@ export interface InventoryTransaction {
   materialName?: string; // joined, display only
   productId?: string;
   productName?: string; // joined, display only
+  purchaseDetailId?: string; // FK -> purchase_detail.detail_id, set when a PO receipt generated this row
   transactionDate: string;
   createdAt?: string;
 }

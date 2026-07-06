@@ -70,6 +70,7 @@ const ROW_MAPPERS: Record<string, (row: any) => any> = {
         remark: t.remark || null,
         material_id: t.materialId || null,
         product_id: t.productId || null,
+        purchase_detail_id: t.purchaseDetailId || null,
         transaction_date: t.transactionDate
     }),
     erp_sales_orders: (o) => ({
