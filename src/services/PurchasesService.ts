@@ -28,6 +28,7 @@ export interface PurchaseDetailInput {
 
 export interface PurchaseFormInput {
   vendorId: string;
+  salesHeaderId?: string;
   attachments?: Attachment[];
   details: PurchaseDetailInput[];
 }
@@ -55,6 +56,7 @@ const mapPurchaseHeaderRow = (row: any): PurchaseHeader => ({
   vendorName: row.vendors?.company_name || '',
   totalPrice: Number(row.total_price) || 0,
   attachments: row.attachments || [],
+  salesHeaderId: row.sales_header_id || undefined,
   details: (row.purchase_detail || []).map(mapPurchaseDetailRow),
   createdAt: row.created_at,
   updatedAt: row.updated_at,
@@ -126,6 +128,7 @@ export const createPurchaseQuotation = async (input: PurchaseFormInput): Promise
     quotation_date: today,
     status: 'QUOTATION',
     vendor_id: input.vendorId,
+    sales_header_id: input.salesHeaderId || null,
     total_price: totalPrice,
     attachments: input.attachments || [],
   });
@@ -148,6 +151,7 @@ export const updatePurchase = async (headerId: string, input: PurchaseFormInput)
     .from('purchase_header')
     .update({
       vendor_id: input.vendorId,
+      sales_header_id: input.salesHeaderId || null,
       total_price: totalPrice,
       attachments: input.attachments || [],
     })
@@ -167,6 +171,7 @@ export const convertToPurchaseOrder = async (headerId: string, input: PurchaseFo
     .from('purchase_header')
     .update({
       vendor_id: input.vendorId,
+      sales_header_id: input.salesHeaderId || null,
       total_price: totalPrice,
       attachments: input.attachments || [],
       order_date: orderDate,
