@@ -4,297 +4,254 @@
  */
 
 import React, { useState, useMemo, useEffect } from 'react';
-import { addPurchaseOrder, savePurchaseOrders, updatePurchaseOrderStatus, getMaterialCategories } from '../services/PurchasesService';
-import { useTableData } from '../hooks/useTableData';
-import { PurchaseOrder, Vendor, InventoryItem, Attachment, MaterialCategory } from '../types';
-import { Plus, Calendar, Check, Paperclip, Trash2, Edit } from 'lucide-react';
+import {
+  getPurchases, createPurchaseQuotation, updatePurchase, convertToPurchaseOrder,
+  receivePurchaseOrder, cancelPurchaseOrder, deletePurchase, getMaterialCategories,
+  PurchaseDetailInput,
+} from '../services/PurchasesService';
+import { getMaterials } from '../services/MaterialService';
+import { getVendors } from '../services/ContactsService';
+import { PurchaseHeader, Vendor, Material, Attachment, MaterialCategory } from '../types';
+import { Plus, Calendar, Check, Paperclip, Trash2, Edit, FileText, ArrowRightCircle } from 'lucide-react';
 import AttachmentSection from './AttachmentSection';
+import QuotationModal from './QuotationModal';
 import LoadingSpinner from './LoadingSpinner';
 import ComboBox from './ComboBox';
 import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, FormField, SearchInput } from './ui';
 import { CallAPI } from './UIHelper';
 
-interface PurchasesViewProps {
-  quickProcureState?: { itemId: string; itemName: string; vendorId: string } | null;
-  clearQuickProcure?: () => void;
-}
+type PurchaseTab = 'QUOTATION' | 'PO';
+type FormMode = 'CREATE' | 'EDIT' | 'CONVERT';
 
-export default function PurchasesView({ quickProcureState, clearQuickProcure }: PurchasesViewProps) {
-  const { data: purchaseOrdersData, loading, refetch } = useTableData<PurchaseOrder>('purchase_orders');
-  const { data: vendors } = useTableData<Vendor>('vendors');
-  const { data: inventory } = useTableData<InventoryItem>('inventory_items');
-  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
-  useEffect(() => { setPurchaseOrders(purchaseOrdersData); }, [purchaseOrdersData]);
+export default function PurchasesView() {
+  const [activeTab, setActiveTab] = useState<PurchaseTab>('QUOTATION');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [purchases, setPurchases] = useState<PurchaseHeader[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const [vendors, setVendors] = useState<Vendor[]>([]);
+  const [materials, setMaterials] = useState<Material[]>([]);
   const [materialCategories, setMaterialCategories] = useState<MaterialCategory[]>([]);
 
   useEffect(() => {
-    CallAPI(getMaterialCategories, {
-      onCompleted: setMaterialCategories,
-      onError: console.error,
-    });
+    getVendors().then(setVendors).catch(console.error);
+    getMaterials().then(setMaterials).catch(console.error);
+    CallAPI(getMaterialCategories, { onCompleted: setMaterialCategories, onError: console.error });
   }, []);
 
-  const rawMaterials = useMemo(() => {
-    return inventory.filter(item => item.type === 'RAW_MATERIAL');
-  }, [inventory]);
+  const rawMaterials = useMemo(
+    () => materials.filter(m => m.materialType === 'RAW_MATERIAL' && m.status !== 'INACTIVE'),
+    [materials]
+  );
 
-  const materialCategoryMap = useMemo(() => {
-    return new Map(materialCategories.map(category => [category.id, category]));
-  }, [materialCategories]);
+  const materialCategoryMap = useMemo(
+    () => new Map(materialCategories.map(c => [c.id, c])),
+    [materialCategories]
+  );
 
-  const [searchQuery, setSearchQuery] = useState('');
-  const [showAddForm, setShowAddForm] = useState(false);
-  const [editPOId, setEditPOId] = useState<string | null>(null);
+  const loadPurchases = (tab: PurchaseTab, search = searchQuery) => {
+    setLoading(true);
+    CallAPI(() => getPurchases(tab === 'QUOTATION' ? 'QUOTATION' : 'PO', search), {
+      onCompleted: (data) => { setPurchases(data); setLoading(false); },
+      onError: (err) => { console.error(err); setLoading(false); },
+    });
+  };
 
-  // Form states
+  useEffect(() => { setSearchQuery(''); loadPurchases(activeTab, ''); }, [activeTab]);
+
+  useEffect(() => {
+    const t = setTimeout(() => loadPurchases(activeTab, searchQuery), 300);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchQuery]);
+
+  // Quotation print modal
+  const [selectedQuotation, setSelectedQuotation] = useState<PurchaseHeader | null>(null);
+  const [isQuotationModalOpen, setIsQuotationModalOpen] = useState(false);
+
+  // Form dialog state
+  const [showFormDialog, setShowFormDialog] = useState(false);
+  const [formMode, setFormMode] = useState<FormMode>('CREATE');
+  const [editHeaderId, setEditHeaderId] = useState<string | null>(null);
   const [formVendorId, setFormVendorId] = useState('');
-  const [formItems, setFormItems] = useState<{ itemId: string; itemName: string; quantity: number; unitCost: number; totalCost: number }[]>([]);
-  const [tempItemId, setTempItemId] = useState('');
+  const [formOrderDate, setFormOrderDate] = useState('');
+  const [formDetails, setFormDetails] = useState<PurchaseDetailInput[]>([]);
+  const [tempMaterialId, setTempMaterialId] = useState('');
   const [tempQuantity, setTempQuantity] = useState(10);
   const [tempUnitCost, setTempUnitCost] = useState(0);
   const [formAttachment, setFormAttachment] = useState<Attachment | undefined>(undefined);
 
   const resetForm = () => {
-    setEditPOId(null);
+    setEditHeaderId(null);
     setFormVendorId('');
-    setFormItems([]);
-    setTempItemId('');
+    setFormOrderDate('');
+    setFormDetails([]);
+    setTempMaterialId('');
     setTempQuantity(10);
     setTempUnitCost(0);
     setFormAttachment(undefined);
   };
 
-  const handleEditPO = (po: PurchaseOrder) => {
-    setEditPOId(po.id);
-    setFormVendorId(po.vendorId);
-    setFormAttachment(po.attachments?.[0]);
+  const todayStr = () => new Date().toISOString().split('T')[0];
 
-    if (po.items && po.items.length > 0) {
-      setFormItems(po.items);
-    } else {
-      setFormItems([{
-        itemId: po.itemId,
-        itemName: po.itemName,
-        quantity: po.quantity,
-        unitCost: po.unitCost,
-        totalCost: po.totalCost
-      }]);
-    }
-
-    setShowAddForm(true);
+  const openCreateForm = () => {
+    resetForm();
+    setFormMode('CREATE');
+    setShowFormDialog(true);
   };
 
-  // Intercept quick procure trigger from InventoryView
-  useEffect(() => {
-    if (quickProcureState) {
-      setFormVendorId(quickProcureState.vendorId);
-      setShowAddForm(true);
+  const detailsFromHeader = (purchase: PurchaseHeader): PurchaseDetailInput[] =>
+    purchase.details.map(d => ({
+      materialId: d.materialId,
+      materialName: d.materialName,
+      materialCode: d.materialCode,
+      quantity: d.quantity,
+      unitCost: d.unitCost,
+      totalPrice: d.totalPrice,
+    }));
 
-      const material = rawMaterials.find(m => m.id === quickProcureState.itemId);
-      if (material) {
-        const suggestQty = material.reorderPoint * 2 || 20;
-        setFormItems([{
-          itemId: material.id,
-          itemName: material.name,
-          quantity: suggestQty,
-          unitCost: material.unitCost,
-          totalCost: suggestQty * material.unitCost
-        }]);
-      }
-
-      // Clear parent trigger state
-      if (clearQuickProcure) {
-        clearQuickProcure();
-      }
-    }
-  }, [quickProcureState]);
-
-  // Vendor raw material lists
-  const filteredMaterialsForVendor = useMemo(() => {
-    if (!formVendorId) return rawMaterials;
-    const vendor = vendors.find(v => v.id === formVendorId);
-    if (!vendor) return rawMaterials;
-    return rawMaterials.filter(m => m.supplierId === vendor.id);
-  }, [formVendorId, rawMaterials, vendors]);
-
-  const handleVendorSelect = (vendorId: string) => {
-    setFormVendorId(vendorId);
-    setFormItems([]);
-    setTempItemId('');
-    setTempUnitCost(0);
+  const openEditForm = (purchase: PurchaseHeader) => {
+    setFormMode('EDIT');
+    setEditHeaderId(purchase.id);
+    setFormVendorId(purchase.vendorId);
+    setFormAttachment(purchase.attachments?.[0]);
+    setFormDetails(detailsFromHeader(purchase));
+    setShowFormDialog(true);
   };
 
-  const handleMaterialSelect = (itemId: string) => {
-    setTempItemId(itemId);
-    const material = rawMaterials.find(m => m.id === itemId);
-    if (material) {
-      setTempUnitCost(material.unitCost);
-    }
+  const openConvertForm = (purchase: PurchaseHeader) => {
+    setFormMode('CONVERT');
+    setEditHeaderId(purchase.id);
+    setFormVendorId(purchase.vendorId);
+    setFormAttachment(purchase.attachments?.[0]);
+    setFormDetails(detailsFromHeader(purchase));
+    setFormOrderDate(todayStr());
+    setShowFormDialog(true);
   };
+
+  // Material catalog rows carry no per-vendor unit cost, so selecting a
+  // material doesn't prefill a price — the buyer types the quoted cost.
+  const handleMaterialSelect = (materialId: string) => setTempMaterialId(materialId);
 
   const handleAddTempItem = () => {
-    if (!tempItemId || tempQuantity <= 0) return;
-    const material = rawMaterials.find(m => m.id === tempItemId);
+    if (!tempMaterialId || tempQuantity <= 0) return;
+    const material = rawMaterials.find(m => m.id === tempMaterialId);
     if (!material) return;
 
-    const existingIdx = formItems.findIndex(i => i.itemId === tempItemId);
+    const existingIdx = formDetails.findIndex(d => d.materialId === tempMaterialId);
     if (existingIdx !== -1) {
-      const updated = [...formItems];
+      const updated = [...formDetails];
       updated[existingIdx].quantity += tempQuantity;
-      updated[existingIdx].totalCost = updated[existingIdx].quantity * updated[existingIdx].unitCost;
-      setFormItems(updated);
+      updated[existingIdx].totalPrice = updated[existingIdx].quantity * updated[existingIdx].unitCost;
+      setFormDetails(updated);
     } else {
-      setFormItems([...formItems, {
-        itemId: tempItemId,
-        itemName: material.name,
+      setFormDetails([...formDetails, {
+        materialId: tempMaterialId,
+        materialName: material.name,
+        materialCode: material.code,
         quantity: tempQuantity,
         unitCost: tempUnitCost,
-        totalCost: tempQuantity * tempUnitCost
+        totalPrice: tempQuantity * tempUnitCost,
       }]);
     }
 
-    setTempItemId('');
+    setTempMaterialId('');
     setTempQuantity(10);
     setTempUnitCost(0);
   };
 
   const handleRemoveFormItem = (index: number) => {
-    setFormItems(formItems.filter((_, idx) => idx !== index));
+    setFormDetails(formDetails.filter((_, idx) => idx !== index));
   };
 
-  const handleCreatePO = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formVendorId) return;
 
-    // Check if there's a temp item selected but not added yet, and automatically add it
-    let finalItems = [...formItems];
-    if (tempItemId && tempQuantity > 0) {
-      const material = rawMaterials.find(m => m.id === tempItemId);
+    let finalDetails = [...formDetails];
+    if (tempMaterialId && tempQuantity > 0) {
+      const material = rawMaterials.find(m => m.id === tempMaterialId);
       if (material) {
-        const existingIdx = finalItems.findIndex(i => i.itemId === tempItemId);
+        const existingIdx = finalDetails.findIndex(d => d.materialId === tempMaterialId);
         if (existingIdx !== -1) {
-          finalItems[existingIdx].quantity += tempQuantity;
-          finalItems[existingIdx].totalCost = finalItems[existingIdx].quantity * finalItems[existingIdx].unitCost;
+          finalDetails[existingIdx].quantity += tempQuantity;
+          finalDetails[existingIdx].totalPrice = finalDetails[existingIdx].quantity * finalDetails[existingIdx].unitCost;
         } else {
-          finalItems.push({
-            itemId: tempItemId,
-            itemName: material.name,
+          finalDetails.push({
+            materialId: tempMaterialId,
+            materialName: material.name,
+            materialCode: material.code,
             quantity: tempQuantity,
             unitCost: tempUnitCost,
-            totalCost: tempQuantity * tempUnitCost
+            totalPrice: tempQuantity * tempUnitCost,
           });
         }
       }
     }
 
-    if (finalItems.length === 0) {
-      alert('Please add at least one material item to this purchase order.');
+    if (finalDetails.length === 0) {
+      alert('Please add at least one material item to this purchase.');
       return;
     }
 
-    const vendor = vendors.find(v => v.id === formVendorId);
-    if (!vendor) return;
+    const input = { vendorId: formVendorId, attachments: formAttachment ? [formAttachment] : [], details: finalDetails };
 
-    const overallQty = finalItems.reduce((sum, item) => sum + item.quantity, 0);
-
-    const newPOPayload = {
-      vendorId: vendor.id,
-      vendorName: vendor.companyName,
-      itemId: finalItems[0].itemId,
-      itemName: finalItems[0].itemName,
-      quantity: overallQty,
-      unitCost: finalItems[0].unitCost,
-      status: 'ORDERED' as PurchaseOrder['status'],
-      attachments: formAttachment ? [formAttachment] : [],
-      items: finalItems
-    };
-
-    const previous = purchaseOrders;
-
-    if (editPOId) {
-      const poIndex = purchaseOrders.findIndex(po => po.id === editPOId);
-      if (poIndex !== -1) {
-        const updatedPO = { ...purchaseOrders[poIndex], ...newPOPayload };
-        const updatedPOs = purchaseOrders.map((po, idx) => idx === poIndex ? updatedPO : po);
-        setPurchaseOrders(updatedPOs);
-
-        await CallAPI(() => savePurchaseOrders(updatedPOs, updatedPO), {
-          onCompleted: refetch,
-          onError: (err) => {
-            console.error(err);
-            setPurchaseOrders(previous);
-          },
-        });
-      }
-    } else {
-      await CallAPI(async () => addPurchaseOrder(newPOPayload), {
-        onCompleted: refetch,
-        onError: (err) => {
-          console.error(err);
-          setPurchaseOrders(previous);
-        },
+    if (formMode === 'CREATE') {
+      await CallAPI(() => createPurchaseQuotation(input), {
+        onCompleted: () => loadPurchases(activeTab),
+        onError: console.error,
+      });
+    } else if (formMode === 'EDIT' && editHeaderId) {
+      await CallAPI(() => updatePurchase(editHeaderId, input), {
+        onCompleted: () => loadPurchases(activeTab),
+        onError: console.error,
+      });
+    } else if (formMode === 'CONVERT' && editHeaderId) {
+      await CallAPI(() => convertToPurchaseOrder(editHeaderId, input, formOrderDate || todayStr()), {
+        onCompleted: () => loadPurchases(activeTab),
+        onError: console.error,
       });
     }
 
-    setShowAddForm(false);
-
-    // Reset
+    setShowFormDialog(false);
     resetForm();
   };
 
-  const handleReceiveStock = async (id: string) => {
-    const previous = purchaseOrders;
-    const updated = purchaseOrders.map(po => po.id === id ? { ...po, status: 'RECEIVED' as PurchaseOrder['status'] } : po);
-    setPurchaseOrders(updated);
-
-    await CallAPI(async () => updatePurchaseOrderStatus(id, 'RECEIVED'), {
-      onCompleted: refetch,
-      onError: (err) => {
-        console.error(err);
-        setPurchaseOrders(previous);
-      },
+  const handleDelete = async (id: string) => {
+    if (!confirm('Are you sure you want to delete this purchase?')) return;
+    await CallAPI(() => deletePurchase(id), {
+      onCompleted: () => loadPurchases(activeTab),
+      onError: console.error,
     });
   };
 
-  const handleCancelPO = async (id: string) => {
+  const handleReceive = async (purchase: PurchaseHeader) => {
+    await CallAPI(() => receivePurchaseOrder(purchase), {
+      onCompleted: () => loadPurchases(activeTab),
+      onError: console.error,
+    });
+  };
+
+  const handleCancel = async (id: string) => {
     if (!confirm('Cancel this Purchase Order?')) return;
-
-    const previous = purchaseOrders;
-    const updated = purchaseOrders.map(po => po.id === id ? { ...po, status: 'CANCELLED' as PurchaseOrder['status'] } : po);
-    setPurchaseOrders(updated);
-
-    await CallAPI(async () => updatePurchaseOrderStatus(id, 'CANCELLED'), {
-      onCompleted: refetch,
-      onError: (err) => {
-        console.error(err);
-        setPurchaseOrders(previous);
-      },
+    await CallAPI(() => cancelPurchaseOrder(id), {
+      onCompleted: () => loadPurchases(activeTab),
+      onError: console.error,
     });
   };
 
-  const handleDeletePO = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this Purchase Order?')) return;
-
-    const previous = purchaseOrders;
-    const updated = purchaseOrders.filter(po => po.id !== id);
-    setPurchaseOrders(updated);
-
-    await CallAPI(() => savePurchaseOrders(updated, undefined, id), {
-      onCompleted: refetch,
-      onError: (err) => {
-        console.error(err);
-        setPurchaseOrders(previous);
-      },
-    });
+  const openQuotationDoc = (purchase: PurchaseHeader) => {
+    setSelectedQuotation(purchase);
+    setIsQuotationModalOpen(true);
   };
 
-  const filteredPOs = useMemo(() => {
-    return purchaseOrders.filter(po =>
-      po.vendorName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      po.itemName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      po.id.toLowerCase().includes(searchQuery.toLowerCase())
-    );
-  }, [purchaseOrders, searchQuery]);
+  const dialogTitle = formMode === 'CREATE' ? 'Create Material Purchase Quotation'
+    : formMode === 'EDIT' ? 'Edit Material Purchase Quotation'
+    : 'Confirm Purchase Order';
+
+  const submitLabel = formMode === 'CREATE' ? 'Save Quotation'
+    : formMode === 'EDIT' ? 'Update Quotation'
+    : 'Confirm Purchase Order';
 
   if (loading) {
     return <LoadingSpinner message="Verifying supply orders..." subtitle="PURCHASE_ORDERS" />;
@@ -303,48 +260,77 @@ export default function PurchasesView({ quickProcureState, clearQuickProcure }: 
   return (
     <div className="space-y-6" id="purchases-view">
 
-      {/* Top filter/search actions */}
+      {/* Tab toggle + search + actions */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <SearchInput
-          value={searchQuery}
-          onChange={setSearchQuery}
-          placeholder="Search POs by supplier or material..."
-        />
+        <div className="flex space-x-1 p-1 bg-slate-100 rounded-lg border border-slate-200/50 self-start">
+          <button
+            onClick={() => setActiveTab('QUOTATION')}
+            className={`px-4 py-1.5 text-xs font-medium rounded-md font-sans transition-all ${activeTab === 'QUOTATION' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+          >
+            Quotation
+          </button>
+          <button
+            onClick={() => setActiveTab('PO')}
+            className={`px-4 py-1.5 text-xs font-medium rounded-md font-sans transition-all ${activeTab === 'PO' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+          >
+            Purchase Order
+          </button>
+        </div>
 
-        <button
-          onClick={() => setShowAddForm(!showAddForm)}
-          className="flex items-center space-x-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium transition-colors font-sans shadow-sm"
-        >
-          <Plus className="w-4 h-4" />
-          <span>Procure Raw Materials</span>
-        </button>
+        <div className="flex items-center space-x-2">
+          <SearchInput
+            value={searchQuery}
+            onChange={setSearchQuery}
+            placeholder="Search by supplier or reference no..."
+          />
+          {activeTab === 'QUOTATION' && (
+            <button
+              onClick={openCreateForm}
+              className="flex items-center space-x-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium transition-colors font-sans shadow-sm"
+            >
+              <Plus className="w-4 h-4" />
+              <span>New Quotation</span>
+            </button>
+          )}
+        </div>
       </div>
 
-      {/* Creation PO form as Dialog Modal */}
+      {/* Creation/Edit/Convert form as Dialog Modal */}
       <Dialog
-        open={showAddForm}
-        onClose={() => { setShowAddForm(false); if (clearQuickProcure) clearQuickProcure(); }}
-        title={editPOId ? 'Edit Material Purchase Order (PO)' : 'Issue Material Purchase Order (PO)'}
+        open={showFormDialog}
+        onClose={() => setShowFormDialog(false)}
+        title={dialogTitle}
       >
-        <form onSubmit={handleCreatePO} className="p-5 space-y-4">
+        <form onSubmit={handleSubmit} className="p-5 space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs text-slate-600">
 
             <FormField label="Select Vendor *" labelClassName="font-semibold block text-slate-700" colSpan="sm:col-span-2">
               <ComboBox
                 required
                 value={formVendorId}
-                onChange={(v) => handleVendorSelect(v)}
+                onChange={setFormVendorId}
                 noneLabel="-- Select Vendor --"
                 options={vendors.map(v => ({ value: v.id, label: v.companyName, sublabel: v.officeNo || v.email }))}
               />
             </FormField>
 
-            {/* List of Added Purchase Items */}
+            {formMode === 'CONVERT' && (
+              <FormField label="Order Date *" labelClassName="font-semibold block text-slate-700" colSpan="sm:col-span-2">
+                <input
+                  type="date"
+                  required
+                  value={formOrderDate}
+                  onChange={(e) => setFormOrderDate(e.target.value)}
+                  className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 text-slate-800"
+                />
+              </FormField>
+            )}
+
             <div className="sm:col-span-2 border border-slate-150 rounded-lg p-3 bg-slate-50/50 space-y-2">
-              <span className="font-semibold block text-slate-700 text-xs">Materials to Procure ({formItems.length})</span>
-              {formItems.length === 0 ? (
+              <span className="font-semibold block text-slate-700 text-xs">Materials to Procure ({formDetails.length})</span>
+              {formDetails.length === 0 ? (
                 <div className="text-center py-4 text-slate-400 border border-dashed border-slate-200 rounded-lg bg-white text-[11px]">
-                  No materials added yet. Specify material details below to add items to this PO.
+                  No materials added yet. Specify material details below to add items.
                 </div>
               ) : (
                 <div className="overflow-x-auto border border-slate-200 rounded-lg bg-white">
@@ -359,19 +345,14 @@ export default function PurchasesView({ quickProcureState, clearQuickProcure }: 
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-150 text-slate-700">
-                      {formItems.map((item, idx) => (
+                      {formDetails.map((item, idx) => (
                         <tr key={idx} className="hover:bg-slate-50">
-                          <td className="p-2 font-semibold text-slate-800">{item.itemName}</td>
+                          <td className="p-2 font-semibold text-slate-800">{item.materialName}</td>
                           <td className="p-2 text-right font-mono">{item.quantity}</td>
                           <td className="p-2 text-right font-mono">RM {item.unitCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                          <td className="p-2 text-right font-mono font-semibold">RM {item.totalCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                          <td className="p-2 text-right font-mono font-semibold">RM {item.totalPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                           <td className="p-2 text-center">
-                            <button
-                              type="button"
-                              onClick={() => handleRemoveFormItem(idx)}
-                              className="text-red-500 hover:text-red-700 p-1"
-                              title="Remove item"
-                            >
+                            <button type="button" onClick={() => handleRemoveFormItem(idx)} className="text-red-500 hover:text-red-700 p-1" title="Remove item">
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
                           </td>
@@ -383,34 +364,20 @@ export default function PurchasesView({ quickProcureState, clearQuickProcure }: 
               )}
             </div>
 
-            {/* Inline Add Material Panel */}
             <div className="sm:col-span-2 border border-blue-100 rounded-lg p-4 bg-blue-50/20 grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
-              <FormField
-                label="Material Selection"
-                labelClassName="font-semibold block text-slate-700 text-[10px] uppercase tracking-wider"
-                colSpan="sm:col-span-6"
-              >
+              <FormField label="Material Selection" labelClassName="font-semibold block text-slate-700 text-[10px] uppercase tracking-wider" colSpan="sm:col-span-6">
                 <ComboBox
-                  value={tempItemId}
-                  onChange={(v) => handleMaterialSelect(v)}
-                  disabled={!formVendorId}
+                  value={tempMaterialId}
+                  onChange={handleMaterialSelect}
                   noneLabel="-- Choose Material --"
-                  options={filteredMaterialsForVendor.map(m => {
+                  options={rawMaterials.map(m => {
                     const category = materialCategoryMap.get(m.materialCategoryId || '');
-                    return {
-                      value: m.id,
-                      label: m.name,
-                      sublabel: category ? category.name : `Stock: ${m.quantity}`
-                    };
+                    return { value: m.id, label: m.name, sublabel: category ? category.name : `Stock: ${m.quantity}` };
                   })}
                 />
               </FormField>
 
-              <FormField
-                label="Quantity"
-                labelClassName="font-semibold block text-slate-700 text-[10px] uppercase tracking-wider"
-                colSpan="sm:col-span-2"
-              >
+              <FormField label="Quantity" labelClassName="font-semibold block text-slate-700 text-[10px] uppercase tracking-wider" colSpan="sm:col-span-2">
                 <input
                   type="number"
                   min="1"
@@ -421,11 +388,7 @@ export default function PurchasesView({ quickProcureState, clearQuickProcure }: 
                 />
               </FormField>
 
-              <FormField
-                label="Unit Cost (RM)"
-                labelClassName="font-semibold block text-slate-700 text-[10px] uppercase tracking-wider"
-                colSpan="sm:col-span-2"
-              >
+              <FormField label="Unit Cost (RM)" labelClassName="font-semibold block text-slate-700 text-[10px] uppercase tracking-wider" colSpan="sm:col-span-2">
                 <input
                   type="number"
                   min="0"
@@ -441,7 +404,7 @@ export default function PurchasesView({ quickProcureState, clearQuickProcure }: 
                 <button
                   type="button"
                   onClick={handleAddTempItem}
-                  disabled={!formVendorId || !tempItemId || tempQuantity <= 0}
+                  disabled={!formVendorId || !tempMaterialId || tempQuantity <= 0}
                   className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[10px] font-semibold transition-colors shadow-sm disabled:bg-slate-200 disabled:text-slate-400 disabled:shadow-none"
                 >
                   + Add Item
@@ -449,14 +412,13 @@ export default function PurchasesView({ quickProcureState, clearQuickProcure }: 
               </div>
             </div>
 
-            {/* Subtotals Block */}
             <div className="bg-amber-50 rounded-lg p-3 sm:col-span-2 flex items-center justify-between border border-amber-100">
               <div>
                 <span className="font-semibold block text-[11px] text-amber-900">Total Purchase Cost:</span>
                 <span className="text-[10px] text-amber-700 font-sans">Payment will be logged under company material costs.</span>
               </div>
               <div className="font-mono text-base font-bold text-amber-950">
-                RM {Math.max(0, formItems.reduce((sum, item) => sum + item.totalCost, 0) + (tempItemId && tempQuantity > 0 ? tempQuantity * tempUnitCost : 0)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                RM {Math.max(0, formDetails.reduce((sum, item) => sum + item.totalPrice, 0) + (tempMaterialId && tempQuantity > 0 ? tempQuantity * tempUnitCost : 0)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
             </div>
 
@@ -471,151 +433,138 @@ export default function PurchasesView({ quickProcureState, clearQuickProcure }: 
 
           </div>
           <DialogFooter>
-            <DialogCancelButton onClick={() => { setShowAddForm(false); if (clearQuickProcure) clearQuickProcure(); }} />
-            <DialogSubmitButton>{editPOId ? 'Update Purchase Order' : 'Issue Purchase Order'}</DialogSubmitButton>
+            <DialogCancelButton onClick={() => setShowFormDialog(false)} />
+            <DialogSubmitButton>{submitLabel}</DialogSubmitButton>
           </DialogFooter>
         </form>
       </Dialog>
 
-      {/* PO Listing Table */}
+      {/* Listing table */}
       <Card className="overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs border-collapse">
             <thead>
               <tr className="bg-slate-50/75 border-b border-slate-200 text-slate-500 uppercase font-mono tracking-wider dark:bg-slate-800/80 dark:border-slate-700 dark:text-slate-400">
-                <th className="p-4">PO Code</th>
+                <th className="p-4">Reference</th>
                 <th className="p-4">Supplier</th>
                 <th className="p-4">Material Details</th>
-                <th className="p-4">Order Date</th>
+                <th className="p-4">{activeTab === 'QUOTATION' ? 'Quotation Date' : 'Order Date'}</th>
                 <th className="p-4">Total Cost</th>
-                <th className="p-4">Status</th>
+                {activeTab === 'PO' && <th className="p-4">Status</th>}
                 <th className="p-4 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-slate-700">
-              {filteredPOs.length === 0 ? (
+              {purchases.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="text-center py-12 text-xs text-slate-400 font-sans">
-                    No purchase orders logged yet.
+                  <td colSpan={activeTab === 'PO' ? 7 : 6} className="text-center py-12 text-xs text-slate-400 font-sans">
+                    No {activeTab === 'QUOTATION' ? 'quotations' : 'purchase orders'} logged yet.
                   </td>
                 </tr>
               ) : (
-                filteredPOs.map((po) => (
-                  <tr key={po.id} className="group hover:bg-slate-50/50 transition-colors">
+                purchases.map((p) => (
+                  <tr key={p.id} className="group hover:bg-slate-50/50 transition-colors">
 
-                    {/* PO Code */}
-                    <td className="p-4 font-mono font-semibold text-slate-900">
-                      PO-#{po.id.slice(0, 8).toUpperCase()}
-                    </td>
+                    <td className="p-4 font-mono font-semibold text-slate-900">{p.purchaseNo}</td>
+                    <td className="p-4 font-semibold text-slate-900">{p.vendorName}</td>
 
-                    {/* Vendor Name */}
-                    <td className="p-4 font-semibold text-slate-900">
-                      {po.vendorName}
-                    </td>
-
-                    {/* Material Details */}
                     <td className="p-4">
                       <div className="space-y-1">
-                        {po.items && po.items.length > 0 ? (
-                          <div className="space-y-1 max-w-xs">
-                            {po.items.map((item, idx) => (
-                              <div key={idx} className="flex flex-col border-b border-slate-100 last:border-none pb-1 last:pb-0">
-                                <span className="font-semibold text-slate-800">{item.itemName}</span>
-                                <span className="text-[10px] text-slate-400 font-mono text-slate-500">
-                                  Qty: {item.quantity} @ RM {item.unitCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                </span>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <div className="space-y-0.5">
-                            <div className="font-semibold text-slate-800">{po.itemName}</div>
-                            <div className="text-[10px] text-slate-400 font-mono">Qty: {po.quantity} units</div>
-                          </div>
-                        )}
-                        {po.attachments?.[0] && (
+                        <div className="space-y-1 max-w-xs">
+                          {p.details.map((item, idx) => (
+                            <div key={item.detailId || idx} className="flex flex-col border-b border-slate-100 last:border-none pb-1 last:pb-0">
+                              <span className="font-semibold text-slate-800">{item.materialName}</span>
+                              <span className="text-[10px] text-slate-400 font-mono">
+                                Qty: {item.quantity} @ RM {item.unitCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                        {p.attachments?.[0] && (
                           <div className="pt-1.5 flex items-center">
                             <a
-                              href={po.attachments[0].dataUrl}
-                              download={po.attachments[0].name}
+                              href={p.attachments[0].dataUrl}
+                              download={p.attachments[0].name}
                               className="inline-flex items-center space-x-1 px-1.5 py-0.5 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded text-[10px] font-mono transition-colors"
                               title="Download attachment"
                             >
                               <Paperclip className="w-2.5 h-2.5 text-blue-500 shrink-0" />
-                              <span className="truncate max-w-[120px]">{po.attachments[0].name}</span>
+                              <span className="truncate max-w-[120px]">{p.attachments[0].name}</span>
                             </a>
                           </div>
                         )}
                       </div>
                     </td>
 
-                    {/* Order Date */}
                     <td className="p-4">
                       <div className="flex items-center space-x-1.5 text-slate-600 font-mono text-[11px]">
                         <Calendar className="w-3.5 h-3.5 text-slate-400" />
-                        <span>{po.orderDate}</span>
+                        <span>{activeTab === 'QUOTATION' ? p.quotationDate : p.orderDate}</span>
                       </div>
                     </td>
 
-                    {/* Total Cost */}
                     <td className="p-4 font-mono font-semibold text-slate-900">
-                      RM {po.totalCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      RM {p.totalPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </td>
 
-                    {/* Status Badge */}
-                    <td className="p-4">
-                      <span className={`px-2.5 py-1 rounded-full font-mono text-[10px] font-medium border ${po.status === 'DRAFT' ? 'bg-slate-50 text-slate-800 border-slate-200' :
-                        po.status === 'ORDERED' ? 'bg-amber-50 text-amber-800 border-amber-200' :
-                          po.status === 'RECEIVED' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' :
-                            'bg-red-50 text-red-800 border-red-200'
+                    {activeTab === 'PO' && (
+                      <td className="p-4">
+                        <span className={`px-2.5 py-1 rounded-full font-mono text-[10px] font-medium border ${
+                          p.status === 'ORDERED' ? 'bg-amber-50 text-amber-800 border-amber-200'
+                          : p.status === 'RECEIVED' ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                          : 'bg-red-50 text-red-800 border-red-200'
                         }`}>
-                        {po.status === 'ORDERED' ? 'Pending Stock' : po.status}
-                      </span>
-                    </td>
+                          {p.status === 'ORDERED' ? 'Pending Stock' : p.status}
+                        </span>
+                      </td>
+                    )}
 
-                    {/* Receive Actions */}
                     <td className="p-4 text-right">
                       <div className="flex items-center justify-end space-x-1.5">
-                        <button
-                          onClick={() => handleEditPO(po)}
-                          className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-slate-50 rounded transition-colors"
-                          title="Edit"
-                        >
-                          <Edit className="w-3.5 h-3.5" />
-                        </button>
-
-                        <button
-                          onClick={() => handleDeletePO(po.id)}
-                          className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-slate-50 rounded transition-colors"
-                          title="Delete"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-
-                        {po.status === 'ORDERED' && (
+                        {p.status === 'QUOTATION' && (
                           <>
-                            <button
-                              onClick={() => handleReceiveStock(po.id)}
-                              title="Mark material package as received"
-                              className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
-                            >
+                            <button onClick={() => openEditForm(p)} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-slate-50 rounded transition-colors" title="Edit">
+                              <Edit className="w-3.5 h-3.5" />
+                            </button>
+                            <button onClick={() => handleDelete(p.id)} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-slate-50 rounded transition-colors" title="Delete">
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                            <button onClick={() => openQuotationDoc(p)} className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-50 rounded transition-colors" title="Generate Quotation">
+                              <FileText className="w-3.5 h-3.5" />
+                            </button>
+                            <button onClick={() => openConvertForm(p)} className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded transition-colors" title="Proceed to Purchase Order">
+                              <ArrowRightCircle className="w-3.5 h-3.5" />
+                            </button>
+                          </>
+                        )}
+
+                        {p.status === 'ORDERED' && (
+                          <>
+                            <button onClick={() => openEditForm(p)} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-slate-50 rounded transition-colors" title="Edit">
+                              <Edit className="w-3.5 h-3.5" />
+                            </button>
+                            <button onClick={() => handleReceive(p)} title="Mark material package as received" className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors">
                               <Check className="w-3.5 h-3.5" />
                             </button>
-                            <button
-                              onClick={() => handleCancelPO(po.id)}
-                              className="p-1 text-slate-400 hover:text-red-600 rounded transition-colors text-[10px] font-medium"
-                            >
+                            <button onClick={() => handleCancel(p.id)} className="p-1 text-slate-400 hover:text-red-600 rounded transition-colors text-[10px] font-medium">
                               Cancel
                             </button>
                           </>
                         )}
-                        {po.status === 'RECEIVED' && (
+
+                        {p.status === 'RECEIVED' && (
                           <div className="text-[10px] text-emerald-600 font-semibold flex items-center space-x-0.5 font-mono px-1.5">
                             <span className="px-2 py-0.5 bg-emerald-50 rounded">Replenished ✓</span>
                           </div>
                         )}
-                        {po.status === 'CANCELLED' && (
-                          <span className="text-[10px] text-slate-400 font-mono italic px-1.5">Cancelled</span>
+
+                        {p.status === 'CANCELLED' && (
+                          <>
+                            <span className="text-[10px] text-slate-400 font-mono italic px-1.5">Cancelled</span>
+                            <button onClick={() => handleDelete(p.id)} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-slate-50 rounded transition-colors" title="Delete">
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </>
                         )}
                       </div>
                     </td>
@@ -627,6 +576,13 @@ export default function PurchasesView({ quickProcureState, clearQuickProcure }: 
           </table>
         </div>
       </Card>
+
+      <QuotationModal
+        purchase={selectedQuotation}
+        isOpen={isQuotationModalOpen}
+        onClose={() => { setIsQuotationModalOpen(false); setSelectedQuotation(null); }}
+      />
+
     </div>
   );
 }
