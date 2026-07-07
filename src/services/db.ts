@@ -17,7 +17,6 @@ import {
   Contact,
   SalesOrder,
   PurchaseOrder,
-  WorkflowTask,
   DashboardStats,
   Employee,
   SalesOrderItem,
@@ -47,44 +46,6 @@ export const getClients = (): Client[] => getStorageItem('erp_clients', []);
 export const getContacts = (): Contact[] => getStorageItem('erp_contacts', []);
 export const getSalesOrders = (): SalesOrder[] => getStorageItem('erp_sales_orders', []);
 export const getPurchaseOrders = (): PurchaseOrder[] => getStorageItem('erp_purchase_orders', []);
-export const getWorkflowTasks = (): WorkflowTask[] => {
-  const tasks = getStorageItem<WorkflowTask[]>('erp_workflow_tasks', []);
-
-  // Migration to split concatenated tasks
-  let migrated = false;
-  const newTasks: WorkflowTask[] = [];
-  tasks.forEach(task => {
-    if (task.productName && task.productName.includes(',')) {
-      migrated = true;
-      const parts = task.productName.split(',').map(p => p.trim());
-      parts.forEach((part, index) => {
-        const match = part.match(/^(\d+)x\s+(.*)$/);
-        let qty = task.quantity;
-        let name = part;
-        if (match) {
-          qty = parseInt(match[1], 10) || task.quantity;
-          name = match[2];
-        }
-        newTasks.push({
-          ...task,
-          id: `${task.id}-${index}`,
-          productName: name,
-          quantity: qty,
-        });
-      });
-    } else {
-      newTasks.push(task);
-    }
-  });
-
-  if (migrated) {
-    setStorageItem('erp_workflow_tasks', newTasks);
-    return newTasks;
-  }
-
-  return tasks;
-};
-
 // ─── Base mutations: write localStorage + fire targeted Supabase ops ─────────
 // Each saver accepts the full in-memory array (for localStorage) plus the
 // specific changed/deleted record so Supabase only touches that one row.
@@ -118,11 +79,6 @@ export const savePurchaseOrders = async (items: PurchaseOrder[], changed?: Purch
   setStorageItem('erp_purchase_orders', items);
   if (changed) await upsertRecord('erp_purchase_orders', changed);
   if (deletedId) await deleteRecord('erp_purchase_orders', deletedId);
-};
-export const saveWorkflowTasks = async (items: WorkflowTask[], changed?: WorkflowTask, deletedId?: string) => {
-  setStorageItem('erp_workflow_tasks', items);
-  if (changed) await upsertRecord('erp_workflow_tasks', changed);
-  if (deletedId) await deleteRecord('erp_workflow_tasks', deletedId);
 };
 
 // Trackability (non-trackable/cost-only categories) was removed along with
@@ -213,7 +169,6 @@ export const updatePurchaseOrderStatus = (poId: string, status: PurchaseOrder['s
 
 /**
  * Creates a Sales Order.
- * If transitioned to IN_PRODUCTION, creates a WorkflowTask automatically.
  */
 export const addSalesOrder = (so: Omit<SalesOrder, 'id' | 'orderDate' | 'totalPrice'> & { items?: SalesOrderItem[] }): SalesOrder => {
   const sos = getSalesOrders();
@@ -240,12 +195,6 @@ export const addSalesOrder = (so: Omit<SalesOrder, 'id' | 'orderDate' | 'totalPr
     items
   };
 
-  if (newSo.status === 'IN_PRODUCTION') {
-    items.forEach((item, index) => {
-      createWorkflowTaskForOrder(newSo.id, item.itemName, item.quantity);
-    });
-  }
-
   sos.push(newSo);
   saveSalesOrders(sos, newSo);
 
@@ -261,125 +210,12 @@ export const updateSalesOrderStatus = (soId: string, status: SalesOrder['status'
   const index = sos.findIndex(s => s.id === soId);
   if (index === -1) return null;
 
-  const previousStatus = sos[index].status;
   sos[index].status = status;
   const currentSo = sos[index];
-
-  // Trigger workflow task creation if moving to IN_PRODUCTION and doesn't exist
-  if (status === 'IN_PRODUCTION' && previousStatus !== 'IN_PRODUCTION' && !currentSo.workflowTaskId) {
-    const items = currentSo.items && currentSo.items.length > 0 ? currentSo.items : [{
-      itemId: currentSo.itemId,
-      itemName: currentSo.itemName,
-      quantity: currentSo.quantity,
-      unitPrice: currentSo.unitPrice,
-      totalPrice: currentSo.totalPrice
-    }];
-
-    items.forEach((item, index) => {
-      createWorkflowTaskForOrder(currentSo.id, item.itemName, item.quantity);
-    });
-    // Just flag that it has tasks created
-    currentSo.workflowTaskId = 'created';
-  }
 
   saveSalesOrders(sos, currentSo);
   return currentSo;
 };
-
-/**
- * Helper to update workflow step.
- * If step becomes COMPLETED, we:
- * 1. Increment the finished goods inventory level.
- * 2. Subtract required raw materials (based on RECIPES).
- * 3. Transition Sales Order status to SHIPPED.
- */
-export const updateWorkflowStep = async (taskId: string, step: WorkflowTask['currentStep'], notes?: string): Promise<WorkflowTask | null> => {
-  const tasks = getWorkflowTasks();
-  const index = tasks.findIndex(t => t.id === taskId);
-  if (index === -1) return null;
-
-  const previousStep = tasks[index].currentStep;
-  tasks[index].currentStep = step;
-  if (notes !== undefined) {
-    tasks[index].notes = notes;
-  }
-
-  if (step === 'COMPLETED' && previousStep !== 'COMPLETED') {
-    tasks[index].endDate = new Date().toISOString().split('T')[0];
-
-    // Find the associated Sales Order
-    const sos = getSalesOrders();
-    const soIdx = sos.findIndex(s => s.id === tasks[index].orderId);
-    if (soIdx !== -1) {
-      sos[soIdx].status = 'SHIPPED'; // Automatically ready to ship or shipped
-      saveSalesOrders(sos, sos[soIdx]);
-
-      // Perform manufacturing inventory transformations!
-      const items = sos[soIdx].items && sos[soIdx].items.length > 0 ? sos[soIdx].items : [{
-        itemId: sos[soIdx].itemId,
-        itemName: sos[soIdx].itemName,
-        quantity: sos[soIdx].quantity,
-        unitPrice: sos[soIdx].unitPrice,
-        totalPrice: sos[soIdx].totalPrice
-      }];
-
-      items.forEach(item => {
-        // 1. Increment Finished Good Stock
-        adjustFinishedGoodStock(item.itemId, item.quantity);
-
-        // 2. Decrement Raw Materials Stock based on Recipes
-        consumeRawMaterials(item.itemId, item.quantity);
-      });
-    }
-  } else if (previousStep === 'COMPLETED' && step !== 'COMPLETED') {
-    // Revert inventory transformations if completed by mistake
-    const sos = getSalesOrders();
-    const soIdx = sos.findIndex(s => s.id === tasks[index].orderId);
-    if (soIdx !== -1) {
-      sos[soIdx].status = 'IN_PRODUCTION';
-      saveSalesOrders(sos, sos[soIdx]);
-
-      const items = sos[soIdx].items && sos[soIdx].items.length > 0 ? sos[soIdx].items : [{
-        itemId: sos[soIdx].itemId,
-        itemName: sos[soIdx].itemName,
-        quantity: sos[soIdx].quantity,
-        unitPrice: sos[soIdx].unitPrice,
-        totalPrice: sos[soIdx].totalPrice
-      }];
-
-      items.forEach(item => {
-        adjustFinishedGoodStock(item.itemId, -item.quantity);
-        consumeRawMaterials(item.itemId, -item.quantity); // Reverse decrement (i.e. put back raw materials)
-      });
-    }
-    tasks[index].endDate = undefined;
-  }
-
-  await saveWorkflowTasks(tasks, tasks[index]);
-  return tasks[index];
-};
-
-// Raw Material consumption
-const consumeRawMaterials = (finishedGoodId: string, quantityProduced: number) => {
-  const recipe = RECIPES[finishedGoodGoodMapping(finishedGoodId)];
-  if (!recipe) return;
-
-  const inventory = getInventory();
-  const changedItems: InventoryItem[] = [];
-  recipe.forEach(requirement => {
-    const itemIdx = inventory.findIndex(i => i.id === requirement.materialId);
-    if (itemIdx !== -1) {
-      inventory[itemIdx].quantity = Math.max(0, inventory[itemIdx].quantity - (requirement.quantityNeeded * quantityProduced));
-      changedItems.push(inventory[itemIdx]);
-    }
-  });
-  // upsert each affected raw material individually
-  setStorageItem('erp_inventory', inventory);
-  changedItems.forEach(item => upsertRecord('erp_inventory', item));
-};
-
-// Map item id to recipe key (id is already the key in RECIPES)
-const finishedGoodGoodMapping = (id: string): string => id;
 
 const adjustRawMaterialStock = (materialId: string, quantityChange: number) => {
   const inventory = getInventory();
@@ -390,37 +226,11 @@ const adjustRawMaterialStock = (materialId: string, quantityChange: number) => {
   }
 };
 
-const adjustFinishedGoodStock = (fgId: string, quantityChange: number) => {
-  const inventory = getInventory();
-  const idx = inventory.findIndex(i => i.id === fgId || i.sku === fgId);
-  if (idx !== -1) {
-    inventory[idx].quantity = Math.max(0, inventory[idx].quantity + quantityChange);
-    saveInventory(inventory, inventory[idx]);
-  }
-};
-
-const createWorkflowTaskForOrder = (orderId: string, productName: string, quantity: number): WorkflowTask => {
-  const tasks = getWorkflowTasks();
-  const newTask: WorkflowTask = {
-    id: generateId(),
-    orderId,
-    productName,
-    quantity,
-    currentStep: 'PREPARATION',
-    startDate: new Date().toISOString().split('T')[0],
-    notes: 'Auto-initiated workflow task from sales order.'
-  };
-  tasks.push(newTask);
-  saveWorkflowTasks(tasks, newTask);
-  return newTask;
-};
-
 // Basic metrics and stats
 export const getDashboardStats = (): DashboardStats => {
   const inventory = getTrackableInventory();
   const sos = getSalesOrders();
   const pos = getPurchaseOrders();
-  const workflows = getWorkflowTasks();
 
   const totalSales = sos
     .filter(s => s.status !== 'CANCELLED')
@@ -433,7 +243,6 @@ export const getDashboardStats = (): DashboardStats => {
   const inventoryValuation = inventory.reduce((sum, item) => sum + (item.quantity * item.unitCost), 0);
   const lowStockCount = inventory.filter(item => item.quantity <= item.reorderPoint).length;
   const pendingOrdersCount = sos.filter(s => s.status === 'PENDING').length;
-  const activeWorkflowsCount = workflows.filter(w => w.currentStep !== 'COMPLETED').length;
 
   return {
     totalSales,
@@ -442,7 +251,9 @@ export const getDashboardStats = (): DashboardStats => {
     inventoryValuation,
     lowStockCount,
     pendingOrdersCount,
-    activeWorkflowsCount
+    // Recomputed by the caller from WorkflowsService.getWorkflowTasks() —
+    // the old workflow_tasks shape this used to read no longer exists.
+    activeWorkflowsCount: 0
   };
 };
 
@@ -474,7 +285,6 @@ export const loadClientsData = () => loadTable('erp_clients', 'clients');
 export const loadEmployeesData = () => loadTable('erp_employees', 'employees');
 export const loadSalesOrdersData = () => loadTable('erp_sales_orders', 'sales_orders');
 export const loadPurchaseOrdersData = () => loadTable('erp_purchase_orders', 'purchase_orders');
-export const loadWorkflowsData = () => loadTable('erp_workflow_tasks', 'workflow_tasks');
 
 // Contacts tab = vendors + clients
 export const loadContactsData = () => Promise.all([
@@ -486,8 +296,7 @@ export const loadContactsData = () => Promise.all([
 export const loadDashboardData = () => Promise.all([
   loadTable('erp_inventory', 'inventory_items'),
   loadTable('erp_sales_orders', 'sales_orders'),
-  loadTable('erp_purchase_orders', 'purchase_orders'),
-  loadTable('erp_workflow_tasks', 'workflow_tasks')
+  loadTable('erp_purchase_orders', 'purchase_orders')
 ]);
 
 // Row-shape mappers, keyed by localStorage key (same table set as before)
@@ -539,12 +348,6 @@ const ROW_MAPPERS: Record<string, (row: any) => any> = {
     receivedDate: o.received_date, attachments: o.attachments || [], items: o.items || [],
     createdAt: o.created_at, updatedAt: o.updated_at
   }),
-  erp_workflow_tasks: (t) => ({
-    id: t.id, orderId: t.order_id, productName: t.product_name, quantity: Number(t.quantity),
-    currentStep: t.current_step, assignedTo: t.assigned_to, startDate: t.start_date,
-    endDate: t.end_date, notes: t.notes,
-    createdAt: t.created_at, updatedAt: t.updated_at
-  }),
   erp_employees: (e) => ({
     id: e.id, name: e.name, role: e.role, status: e.status,
     email: e.email, phone: e.phone,
@@ -571,7 +374,6 @@ const TABLE_MAP: Record<string, string> = {
   'erp_contacts': 'contacts',
   'erp_sales_orders': 'sales_orders',
   'erp_purchase_orders': 'purchase_orders',
-  'erp_workflow_tasks': 'workflow_tasks',
   'erp_employees': 'employees'
 };
 

@@ -3,8 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useMemo } from 'react';
-import { getInventory, getSalesOrders, getPurchaseOrders, getWorkflowTasks, getDashboardStats, getVendors, addPurchaseOrder } from '../services/db';
+import React, { useState, useMemo, useEffect } from 'react';
+import { getInventory, getSalesOrders, getPurchaseOrders, getDashboardStats, getVendors, addPurchaseOrder } from '../services/db';
+import { getWorkflowTasks } from '../services/WorkflowsService';
+import { WorkflowTask } from '../types';
 import { Sparkles, AlertTriangle, RefreshCw, ChevronRight, FileText, BrainCircuit, Play, ShoppingCart } from 'lucide-react';
 import Markdown from 'react-markdown';
 import LoadingSpinner from './LoadingSpinner';
@@ -14,7 +16,11 @@ export default function ReportsView() {
   const [inventory, setInventory] = useState(() => getInventory());
   const [salesOrders, setSalesOrders] = useState(() => getSalesOrders());
   const [purchaseOrders, setPurchaseOrders] = useState(() => getPurchaseOrders());
-  const [workflowTasks, setWorkflowTasks] = useState(() => getWorkflowTasks());
+  const [workflowTasks, setWorkflowTasks] = useState<WorkflowTask[]>([]);
+
+  useEffect(() => {
+    getWorkflowTasks().then(setWorkflowTasks).catch(console.error);
+  }, []);
 
   const [aiReport, setAiReport] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -92,7 +98,7 @@ export default function ReportsView() {
           salesOrders,
           purchaseOrders,
           workflowTasks,
-          stats
+          stats: { ...stats, activeWorkflowsCount: workflowTasks.filter(t => t.stage !== 'COMPLETED').length }
         })
       });
 

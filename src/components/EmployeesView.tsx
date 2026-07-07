@@ -144,13 +144,9 @@ export default function EmployeesView() {
     setIsFormOpen(false);
   };
 
-  if (loading) {
-    return <LoadingSpinner message="Accessing workforce roster..." subtitle="TEAM_CATALOG" />;
-  }
-
   return (
     <div className="space-y-6">
-
+      {loading && <LoadingSpinner message="Accessing workforce roster..." subtitle="TEAM_CATALOG" />}
       {/* Top action block */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>

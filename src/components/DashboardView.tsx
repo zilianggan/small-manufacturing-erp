@@ -3,9 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { DollarSign, Package, TrendingUp, AlertTriangle, Play, ClipboardList, ShoppingCart } from 'lucide-react';
 import { useTableData } from '../hooks/useTableData';
+import { getWorkflowTasks } from '../services/WorkflowsService';
 import { InventoryItem, SalesOrder, PurchaseOrder, WorkflowTask, DashboardStats } from '../types';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell, PieChart, Pie } from 'recharts';
 import LoadingSpinner from './LoadingSpinner';
@@ -14,7 +15,14 @@ export default function DashboardView() {
   const { data: inventory, loading: invLoading } = useTableData<InventoryItem>('inventory_items');
   const { data: salesOrders, loading: soLoading } = useTableData<SalesOrder>('sales_orders');
   const { data: purchaseOrders, loading: poLoading } = useTableData<PurchaseOrder>('purchase_orders');
-  const { data: workflows, loading: wfLoading } = useTableData<WorkflowTask>('workflow_tasks');
+  const [workflows, setWorkflows] = useState<WorkflowTask[]>([]);
+  const [wfLoading, setWfLoading] = useState(true);
+  useEffect(() => {
+    getWorkflowTasks()
+      .then(setWorkflows)
+      .catch(console.error)
+      .finally(() => setWfLoading(false));
+  }, []);
   const loading = invLoading || soLoading || poLoading || wfLoading;
 
   const trackableInventory = inventory;
@@ -29,7 +37,7 @@ export default function DashboardView() {
       inventoryValuation: trackableInventory.reduce((sum, i) => sum + i.quantity * i.unitCost, 0),
       lowStockCount: trackableInventory.filter(i => i.quantity <= i.reorderPoint).length,
       pendingOrdersCount: salesOrders.filter(s => s.status === 'PENDING').length,
-      activeWorkflowsCount: workflows.filter(w => w.currentStep !== 'COMPLETED').length,
+      activeWorkflowsCount: workflows.filter(w => w.stage !== 'COMPLETED').length,
     };
   }, [trackableInventory, salesOrders, purchaseOrders, workflows]);
 
@@ -74,15 +82,12 @@ export default function DashboardView() {
 
   // Recent workflow steps
   const activeWorkflows = useMemo(() => {
-    return workflows.filter(w => w.currentStep !== 'COMPLETED').slice(0, 5);
+    return workflows.filter(w => w.stage !== 'COMPLETED').slice(0, 5);
   }, [workflows]);
-
-  if (loading) {
-    return <LoadingSpinner message="Assembling metrics..." subtitle="DASHBOARD_LOAD" />;
-  }
 
   return (
     <div className="space-y-6" id="dashboard-view">
+      {loading && <LoadingSpinner message="Assembling metrics..." subtitle="DASHBOARD_LOAD" />}
       {/* KPI Cards Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
 
@@ -271,11 +276,11 @@ export default function DashboardView() {
                 <div key={idx} className="py-2.5 flex items-center justify-between text-xs">
                   <div>
                     <div className="font-semibold text-slate-800">{task.productName}</div>
-                    <div className="text-[10px] text-slate-400 font-mono">Qty: {task.quantity} • Assg: {task.assignedTo || 'Unassigned'}</div>
+                    <div className="text-[10px] text-slate-400 font-mono">Qty: {task.quantity} • Assg: {task.employeeName || 'Unassigned'}</div>
                   </div>
                   <div className="text-right">
                     <span className="px-2.5 py-0.5 rounded-full font-mono text-[10px] font-medium bg-blue-100 text-blue-800">
-                      {task.currentStep}
+                      {task.stage}
                     </span>
                   </div>
                 </div>

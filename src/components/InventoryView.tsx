@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   generateId, getInventoryTransactions, saveInventoryTransaction
 } from '../services/InventoryTransactionService';
@@ -17,6 +17,7 @@ import SegmentedControl from './SegmentedControl';
 import InfiniteScrollSentinel from './InfiniteScrollSentinel';
 import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, FormField, fieldInputClassName, SearchInput } from './ui';
 import { CallAPI } from './UIHelper';
+import { debounce } from 'lodash'
 
 const PAGE_SIZE = 20;
 
@@ -48,32 +49,56 @@ export default function InventoryView() {
   const [hasMore, setHasMore] = useState(false);
   const [offset, setOffset] = useState(0);
 
-  const loadTransactions = (nextOffset: number, append: boolean) => {
+  const loadTransactions = useCallback((
+    nextOffset: number,
+    append: boolean,
+    search: string,
+  ) => {
     const setBusy = append ? setLoadingMore : setLoading;
-    setBusy(true);
-    CallAPI(() => getInventoryTransactions({ search: searchQuery, typeFilter, offset: nextOffset, limit: PAGE_SIZE }), {
-      onCompleted: ({ rows, hasMore: more }) => {
-        setTransactions(prev => append ? [...prev, ...rows] : rows);
-        setHasMore(more);
-        setOffset(nextOffset + rows.length);
-        setBusy(false);
-      },
-      onError: (err) => { console.error(err); setBusy(false); },
-    });
-  };
 
-  useEffect(() => { loadTransactions(0, false); }, []);
+    setBusy(true);
+
+    CallAPI(
+      () =>
+        getInventoryTransactions({
+          search,
+          typeFilter,
+          offset: nextOffset,
+          limit: PAGE_SIZE,
+        }),
+      {
+        onCompleted: ({ rows, hasMore: more }) => {
+          setTransactions(prev => (append ? [...prev, ...rows] : rows));
+          setHasMore(more);
+          setOffset(nextOffset + rows.length);
+          setBusy(false);
+        },
+        onError: (err) => {
+          console.error(err);
+          setBusy(false);
+        },
+      }
+    );
+  }, [typeFilter]);
+
+  useEffect(() => { loadTransactions(0, false, searchQuery); }, []);
 
   // Debounced: search text or type filter changing both restart from page 1
   useEffect(() => {
-    const t = setTimeout(() => loadTransactions(0, false), 300);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchQuery, typeFilter]);
+    loadTransactions(0, false, searchQuery);
+  }, [typeFilter]);
+
+  const search = useMemo(
+    () =>
+      debounce((text: string) => {
+        loadTransactions(0, false, text);
+      }, 500),
+    [loadTransactions]
+  );
 
   const handleLoadMore = () => {
     if (loadingMore || !hasMore) return;
-    loadTransactions(offset, true);
+    loadTransactions(offset, true, searchQuery);
   };
 
   // ─── Add Transaction form ────────────────────────────────────────────────
@@ -164,7 +189,7 @@ export default function InventoryView() {
     };
 
     await CallAPI(() => saveInventoryTransaction(record), {
-      onCompleted: () => loadTransactions(0, false),
+      onCompleted: () => loadTransactions(0, false, searchQuery),
       onError: console.error,
     });
 
@@ -172,17 +197,17 @@ export default function InventoryView() {
     resetForm();
   };
 
-  if (loading) {
-    return <LoadingSpinner message="Loading inventory ledger..." subtitle="INVENTORY_LEDGER" />;
-  }
-
   return (
     <div className="space-y-6" id="inventory-view">
+      {loading && <LoadingSpinner message="Loading inventory ledger..." subtitle="INVENTORY_LEDGER" />}
       {/* Top bar */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <SearchInput
           value={searchQuery}
-          onChange={setSearchQuery}
+          onChange={(e) => {
+            setSearchQuery(e)
+            search(e)
+          }}
           placeholder="Search by material or product name..."
         />
 

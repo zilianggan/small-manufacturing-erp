@@ -157,6 +157,8 @@ export interface ProductionMaterialUsage {
   materialName: string; // joined, display only
   materialCode?: string; // joined, display only
   plannedQuantity: number;
+  actualQuantity: number;
+  returnedQuantity: number;
 }
 
 export interface SalesDetail {
@@ -177,7 +179,7 @@ export interface SalesHeader {
   salesNo: string;
   orderDate: string;
   deliveryDate?: string;
-  status: 'QUOTATION' | 'ORDERED' | 'DELIVERED' | 'CANCELLED';
+  status: 'QUOTATION' | 'ORDERED' | 'IN_PRODUCTION' | 'DONE_IN_PRODUCTION' | 'DELIVERED' | 'CANCELLED';
   clientId: string;
   clientName: string; // joined, display only
   totalAmount: number;
@@ -190,14 +192,16 @@ export interface SalesHeader {
 
 export interface WorkflowTask {
   id: string;
-  orderId: string;
-  productName: string;
-  quantity: number;
-  currentStep: 'PREPARATION' | 'ASSEMBLY' | 'QUALITY_CONTROL' | 'PACKAGING' | 'COMPLETED';
-  assignedTo?: string; // Can be name or employeeId
+  headerId: string; // joined via sales_detail.header_id — groups tasks by order
+  salesNo: string; // joined via sales_detail.sales_header.sales_no
+  productName: string; // joined via sales_detail.product_name
+  quantity: number; // joined via sales_detail.quantity
+  stage: 'PREPARATION' | 'ASSEMBLY' | 'QUALITY_CONTROL' | 'PACKAGING' | 'COMPLETED';
+  employeeId?: string;
+  employeeName?: string; // joined via employees.name
   startDate: string;
   endDate?: string;
-  notes?: string;
+  remark?: string;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -336,6 +340,7 @@ export interface InventoryTransaction {
   productId?: string;
   productName?: string; // joined, display only
   purchaseDetailId?: string; // FK -> purchase_detail.detail_id, set when a PO receipt generated this row
+  productionMaterialUsageId?: string; // FK -> production_material_usage.id, set when a production reservation/reconciliation generated this row
   transactionDate: string;
   createdAt?: string;
 }
@@ -344,4 +349,10 @@ export interface SystemAdminData {
   job_positions: JobPosition[];
   material_categories: MaterialCategory[];
   product_categories: ProductCategory[];
+}
+
+export interface DashboardData {
+  month: string;
+  total: number;
+  type: string;
 }

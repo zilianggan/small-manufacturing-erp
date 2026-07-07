@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { getVendors, getClients, saveVendor, saveClient, deleteVendor, deleteClient, generateId } from '../services/ContactsService';
 import { Vendor, Client, Attachment } from '../types';
 import { Plus, Mail, Phone, MapPin, Briefcase, Users, Paperclip, Edit, Trash2, ChevronRight, FileText } from 'lucide-react';
@@ -12,6 +12,7 @@ import CompanyFormFields from './CompanyFormFields';
 import ContactDetailView from './ContactDetailView';
 import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, SearchInput } from './ui';
 import { CallAPI } from './UIHelper';
+import { debounce } from 'lodash'
 
 type CompanyType = 'VENDORS' | 'CLIENTS';
 type Company = Vendor | Client;
@@ -23,12 +24,12 @@ type Company = Vendor | Client;
  */
 export default function ContactsView() {
   const [activeTab, setActiveTab] = useState<CompanyType>('VENDORS');
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState([{ search: '' }, { search: '' }]);
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const loadCompanies = (tab: CompanyType, search = searchQuery) => {
+  const loadCompanies = (tab: CompanyType, search: string = '') => {
     setLoading(true);
     const request = tab === 'VENDORS' ? getVendors(search) : getClients(search);
     CallAPI(() => request, {
@@ -41,14 +42,18 @@ export default function ContactsView() {
   };
 
   // Reload (unfiltered) whenever the active tab changes
-  useEffect(() => { setSearchQuery(''); loadCompanies(activeTab, ''); }, [activeTab]);
+  useEffect(() => {
+    loadCompanies(activeTab, searchQuery[activeTab === 'VENDORS' ? 0 : 1]?.search);
+  }, [activeTab]);
 
   // Debounced search-as-you-type
-  useEffect(() => {
-    const t = setTimeout(() => loadCompanies(activeTab, searchQuery), 300);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchQuery]);
+  const search = useMemo(
+    () =>
+      debounce((text: string) => {
+        loadCompanies(activeTab, text);
+      }, 500),
+    [activeTab]
+  );
 
   // Drill-down: selected company (shows ContactDetailView instead of the grid)
   const [selectedType, setSelectedType] = useState<CompanyType>('VENDORS');
@@ -142,15 +147,13 @@ export default function ContactsView() {
     );
   }
 
-  if (loading) {
-    return <LoadingSpinner message="Retrieving contact profiles..." subtitle="CONTACTS_LOAD" />;
-  }
-
   const companies = activeTab === 'VENDORS' ? vendors : clients;
 
   // ─── Company listing view ──────────────────────────────────────────────
   return (
     <div className="space-y-6" id="contacts-view">
+
+      {loading && <LoadingSpinner message="Retrieving contact profiles..." subtitle="CONTACTS_LOAD" />}
 
       {/* Top Toggle & Actions */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -176,8 +179,21 @@ export default function ContactsView() {
         {/* Search Input & Button */}
         <div className="flex items-center space-x-2">
           <SearchInput
-            value={searchQuery}
-            onChange={setSearchQuery}
+            value={searchQuery?.[activeTab === 'VENDORS' ? 0 : 1]?.search}
+            onChange={(e: any) => {
+              setSearchQuery((prev) => {
+                const updated = [...prev];
+                const index = activeTab === "VENDORS" ? 0 : 1;
+
+                updated[index] = {
+                  ...updated[index],
+                  search: e,
+                };
+
+                return updated;
+              });
+              search(e)
+            }}
             placeholder={`Search ${activeTab === 'VENDORS' ? 'suppliers' : 'clients'}...`}
             className="relative flex-1 sm:w-64"
           />

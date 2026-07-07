@@ -14,6 +14,7 @@ import ProductFormFields from './ProductFormFields';
 import ProductDetailView from './ProductDetailView';
 import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, SearchInput } from './ui';
 import { CallAPI } from './UIHelper';
+import { debounce } from 'lodash'
 
 /**
  * Product catalog listing: search, create/edit/delete, and the entry point
@@ -24,7 +25,7 @@ export default function ProductView() {
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const loadProducts = (search = searchQuery) => {
+  const loadProducts = (search: string = '') => {
     setLoading(true);
     CallAPI(() => getProducts(search), {
       onCompleted: (data) => { setProducts(data); setLoading(false); },
@@ -32,7 +33,13 @@ export default function ProductView() {
     });
   };
 
-  useEffect(() => { loadProducts(''); }, []);
+  const search = useMemo(
+    () =>
+      debounce((text: string) => {
+        loadProducts(text);
+      }, 500),
+    []
+  );
 
   // Debounced search-as-you-type
   useEffect(() => {
@@ -142,13 +149,9 @@ export default function ProductView() {
     );
   }
 
-  if (loading) {
-    return <LoadingSpinner message="Retrieving product catalog..." subtitle="PRODUCT_LOAD" />;
-  }
-
   return (
     <div className="space-y-6" id="product-view">
-
+      {loading && <LoadingSpinner message="Retrieving product catalog..." subtitle="PRODUCT_LOAD" />}
       {/* Top Actions */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <h3 className="font-sans font-bold text-slate-900 text-sm flex items-center space-x-2">
@@ -159,7 +162,10 @@ export default function ProductView() {
         <div className="flex items-center space-x-2">
           <SearchInput
             value={searchQuery}
-            onChange={setSearchQuery}
+            onChange={(e) => {
+              setSearchQuery(e)
+              search(e)
+            }}
             placeholder="Search products..."
             className="relative flex-1 sm:w-64"
           />

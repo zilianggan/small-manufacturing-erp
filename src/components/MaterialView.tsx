@@ -14,6 +14,7 @@ import MaterialFormFields from './MaterialFormFields';
 import MaterialDetailView from './MaterialDetailView';
 import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, SearchInput } from './ui';
 import { CallAPI } from './UIHelper';
+import { debounce } from 'lodash'
 
 /**
  * Material catalog listing: search, create/edit/delete, and the entry point
@@ -24,7 +25,7 @@ export default function MaterialView() {
   const [materials, setMaterials] = useState<Material[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const loadMaterials = (search = searchQuery) => {
+  const loadMaterials = (search: string = '') => {
     setLoading(true);
     CallAPI(() => getMaterials(search), {
       onCompleted: (data) => { setMaterials(data); setLoading(false); },
@@ -34,12 +35,13 @@ export default function MaterialView() {
 
   useEffect(() => { loadMaterials(''); }, []);
 
-  // Debounced search-as-you-type
-  useEffect(() => {
-    const t = setTimeout(() => loadMaterials(searchQuery), 300);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchQuery]);
+  const search = useMemo(
+    () =>
+      debounce((text: string) => {
+        loadMaterials(text);
+      }, 500),
+    []
+  );
 
   // ─── Material categories (reference data for the form) ──────────────────
   const [materialCategories, setMaterialCategories] = useState<MaterialCategory[]>([]);
@@ -151,13 +153,9 @@ export default function MaterialView() {
     );
   }
 
-  if (loading) {
-    return <LoadingSpinner message="Retrieving material catalog..." subtitle="MATERIAL_LOAD" />;
-  }
-
   return (
     <div className="space-y-6" id="material-view">
-
+      {loading && <LoadingSpinner message="Retrieving material catalog..." subtitle="MATERIAL_LOAD" />}
       {/* Top Actions */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <h3 className="font-sans font-bold text-slate-900 text-sm flex items-center space-x-2">
@@ -168,7 +166,10 @@ export default function MaterialView() {
         <div className="flex items-center space-x-2">
           <SearchInput
             value={searchQuery}
-            onChange={setSearchQuery}
+            onChange={(e) => {
+              setSearchQuery(e)
+              search(e)
+            }}
             placeholder="Search materials..."
             className="relative flex-1 sm:w-64"
           />

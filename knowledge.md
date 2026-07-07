@@ -18,13 +18,13 @@
 ## Architecture: two coexisting data-access patterns
 The app is mid-migration between two patterns. When touching a module, prefer pattern A; don't extend pattern B.
 
-**A. Module-owned service (preferred, direct-to-Supabase)** — `CompanyProfileService.ts`, `SystemAdminService.ts`, `ContactsService.ts`, `MaterialService.ts`, `ProductService.ts`, `InventoryTransactionService.ts`, `PurchasesService.ts`.
+**A. Module-owned service (preferred, direct-to-Supabase)** — `CompanyProfileService.ts`, `SystemAdminService.ts`, `ContactsService.ts`, `MaterialService.ts`, `ProductService.ts`, `InventoryTransactionService.ts`, `PurchasesService.ts`, `OrdersService.ts`.
 - The service imports `supabase` (from `services/supabase.ts`) directly for reads (with `.ilike`/`.eq` for search/filters), and `helper.ts`'s `upsertRecord`/`deleteRecord` for writes (these serialize camelCase → snake_case via a `ROW_MAPPERS` table keyed by a legacy `erp_*` string and resolve the real table name via `LS_TO_TABLE` — that indirection is just helper.ts's internal API, not a localStorage requirement).
 - Optional read-through localStorage cache for rarely-changing reference data only (see `SystemAdminService.getJobPositions`) — always invalidated (`removeStorageItem`) right after a write.
 - The view owns its own `useState` + `useEffect` + `CallAPI` (from `components/UIHelper.ts`) loading/loading-state — no shared data hook.
 - No `db.ts`, no `server.ts` REST hop, no `useTableData` hook.
 
-**B. Legacy REST hook** — `useTableData<T>('table_name')` (in `hooks/useTableData.ts`) calls `server.ts`'s `GET /api/data/:table?q=&<filterCol>=`, which runs the query server-side via a second Supabase client. Writes still go through `db.ts`'s per-table `save*`/localStorage-array functions. Still used by `OrdersView`, `EmployeesView`, `ReportsView`, `ImportExportModal` (bulk backup). Don't add new dependents; migrate a view to pattern A when you next touch it.
+**B. Legacy REST hook** — `useTableData<T>('table_name')` (in `hooks/useTableData.ts`) calls `server.ts`'s `GET /api/data/:table?q=&<filterCol>=`, which runs the query server-side via a second Supabase client. Writes still go through `db.ts`'s per-table `save*`/localStorage-array functions. Still used by `EmployeesView`, `ReportsView`, `ImportExportModal` (bulk backup). Don't add new dependents; migrate a view to pattern A when you next touch it.
 
 ## Project Structure
 ```
@@ -42,14 +42,16 @@ src/
 │   ├── ContactsView.tsx       # Vendor/Client company listing (search/add/edit/delete + drill-in)
 │   ├── ContactDetailView.tsx  # Drill-down: one company's info + its Contacts CRUD
 │   ├── CompanyFormFields.tsx  # Shared Vendor/Client form fields (used by both of the above)
-│   ├── OrdersView.tsx (sales orders)
-│   ├── PurchasesView.tsx (purchase orders)
+│   ├── OrdersView.tsx        # Quotation → Sales Order → Production → Delivered workflow over sales_header/sales_detail
+│   ├── PurchasesView.tsx     # Quotation → Purchase Order workflow over purchase_header/purchase_detail
 │   ├── WorkflowsView.tsx (production tasks)
 │   ├── EmployeesView.tsx
 │   ├── SystemAdminView.tsx   # Job Position / Material Category / Product Category reference data
 │   ├── ReportsView.tsx
 │   ├── ImportExportModal.tsx (Excel import/export)
-│   ├── InvoiceModal.tsx
+│   ├── InvoiceModal.tsx      # Tax invoice print doc (SalesHeader/SalesDetail)
+│   ├── SalesQuotationModal.tsx  # Client-facing sales quotation print doc
+│   ├── QuotationModal.tsx    # Vendor-facing purchase quotation print doc
 │   ├── OrderAccordion.tsx
 │   ├── TaskCard.tsx
 │   ├── SignaturePad.tsx
@@ -68,7 +70,7 @@ src/
     ├── ContactsService.ts        # Pattern A; Vendors + Clients + Contacts (people)
     ├── EmployeesService.ts       # Thin re-export wrapper over db.ts + SystemAdminService (pattern B)
     ├── InventoryService.ts       # Thin re-export wrapper over db.ts + SystemAdminService (pattern B)
-    ├── OrdersService.ts          # Thin re-export wrapper over db.ts (pattern B)
+    ├── OrdersService.ts          # Pattern A; sales_header/sales_detail/production_material_usage quotation→SO→production→delivery workflow
     ├── PurchasesService.ts       # Pattern A; purchase_header/purchase_detail quotation-to-PO workflow
     └── WorkflowsService.ts       # Thin re-export wrapper over db.ts (pattern B)
 
@@ -95,9 +97,11 @@ Root files:
 - **CompanyProfile**: name, icon (database|factory|cpu|wrench|custom), address, bank details, signature & chop images (base64)
 
 ### Orders & Production
-- **SalesOrder**: clientId, itemId, qty, unitPrice, totalPrice, orderDate, deliveryDate, status (PENDING|IN_PRODUCTION|SHIPPED|DELIVERED|CANCELLED), workflowTaskId, items[]
-- **PurchaseOrder**: vendorId, itemId, qty, unitCost, totalCost, orderDate, status (DRAFT|ORDERED|RECEIVED|CANCELLED), items[]
+- **SalesOrder**: clientId, itemId, qty, unitPrice, totalPrice, orderDate, deliveryDate, status (PENDING|IN_PRODUCTION|SHIPPED|DELIVERED|CANCELLED), workflowTaskId, items[] — legacy, `sales_orders` table, still used by Dashboard/Reports/ImportExportModal.
+- **PurchaseOrder**: vendorId, itemId, qty, unitCost, totalCost, orderDate, status (DRAFT|ORDERED|RECEIVED|CANCELLED), items[] — legacy, `purchase_orders` table, still used by Dashboard/Reports/ImportExportModal.
 - **WorkflowTask**: orderId, productName, qty, currentStep (PREPARATION|ASSEMBLY|QUALITY_CONTROL|PACKAGING|COMPLETED), assignedTo, dates, notes
+- **PurchaseHeader/PurchaseDetail**: `purchase_header`/`purchase_detail` — quotation→PO workflow (status QUOTATION|ORDERED|RECEIVED|CANCELLED), optional `salesHeaderId` link back to a `SalesHeader`, see `PurchasesService.ts`.
+- **SalesHeader/SalesDetail/ProductionMaterialUsage**: `sales_header`/`sales_detail`/`production_material_usage` — quotation→SO workflow, status `QUOTATION|ORDERED|IN_PRODUCTION|DONE_IN_PRODUCTION|DELIVERED|CANCELLED`. `ORDERED` rows are moved to `IN_PRODUCTION` (`startProduction`), then `DONE_IN_PRODUCTION` (`markProductionDone`), then `DELIVERED` (`markDelivered`) — `OrdersView.tsx` only shows the next action button for the row's current status. Each `SalesDetail` line carries a planned material-usage list (`production_material_usage`, `plannedQuantity` only — `actualQuantity`/`returnedQuantity` unwired until a future production/workflow step), see `OrdersService.ts`.
 
 ### Other
 - **Attachment**: name, type, size, dataUrl (base64)
@@ -114,7 +118,7 @@ Root files:
 2. **INVENTORY** → InventoryView: Manage raw materials & finished goods
 3. **CONTACTS** → ContactsView (+ ContactDetailView drill-down): Vendors & clients + their contacts
 4. **EMPLOYEES** → EmployeesView: Staff management
-5. **ORDERS** → OrdersView: Sales orders + invoicing
+5. **ORDERS** → OrdersView: Quotation → Sales Order → Production → Delivered workflow over `sales_header`/`sales_detail`, with per-line planned material usage (`production_material_usage`) and quotation/tax-invoice printing
 6. **PURCHASES** → PurchasesView: Quotation → Purchase Order workflow over `purchase_header`/`purchase_detail`, receiving stock via `inventory_transaction`
 7. **WORKFLOWS** → WorkflowsView: Production tasks (PREPARATION → ASSEMBLY → QC → PACKAGING → COMPLETED)
 8. **SYSTEM_ADMIN** → SystemAdminView: Job Position / Material Category / Product Category reference data

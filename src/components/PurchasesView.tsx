@@ -20,13 +20,14 @@ import LoadingSpinner from './LoadingSpinner';
 import ComboBox from './ComboBox';
 import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, FormField, SearchInput } from './ui';
 import { CallAPI } from './UIHelper';
+import { debounce } from 'lodash'
 
 type PurchaseTab = 'QUOTATION' | 'PO';
 type FormMode = 'CREATE' | 'EDIT' | 'CONVERT';
 
 export default function PurchasesView() {
   const [activeTab, setActiveTab] = useState<PurchaseTab>('QUOTATION');
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState([{ search: '' }, { search: '' }]);
   const [purchases, setPurchases] = useState<PurchaseHeader[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -53,7 +54,7 @@ export default function PurchasesView() {
     [materialCategories]
   );
 
-  const loadPurchases = (tab: PurchaseTab, search = searchQuery) => {
+  const loadPurchases = (tab: PurchaseTab, search: string = '') => {
     setLoading(true);
     CallAPI(() => getPurchases(tab === 'QUOTATION' ? 'QUOTATION' : 'PO', search), {
       onCompleted: (data) => { setPurchases(data); setLoading(false); },
@@ -61,13 +62,18 @@ export default function PurchasesView() {
     });
   };
 
-  useEffect(() => { setSearchQuery(''); loadPurchases(activeTab, ''); }, [activeTab]);
-
   useEffect(() => {
-    const t = setTimeout(() => loadPurchases(activeTab, searchQuery), 300);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchQuery]);
+    loadPurchases(activeTab, searchQuery[activeTab === 'QUOTATION' ? 0 : 1]?.search);
+  }, [activeTab]);
+
+  // Debounced search-as-you-type
+  const search = useMemo(
+    () =>
+      debounce((text: string) => {
+        loadPurchases(activeTab, text);
+      }, 500),
+    [activeTab]
+  );
 
   // Quotation print modal
   const [selectedQuotation, setSelectedQuotation] = useState<PurchaseHeader | null>(null);
@@ -276,19 +282,15 @@ export default function PurchasesView() {
 
   const dialogTitle = formMode === 'CREATE' ? 'Create Material Purchase Quotation'
     : formMode === 'EDIT' ? 'Edit Material Purchase Quotation'
-    : 'Confirm Purchase Order';
+      : 'Confirm Purchase Order';
 
   const submitLabel = formMode === 'CREATE' ? 'Save Quotation'
     : formMode === 'EDIT' ? 'Update Quotation'
-    : 'Confirm Purchase Order';
-
-  if (loading) {
-    return <LoadingSpinner message="Verifying supply orders..." subtitle="PURCHASE_ORDERS" />;
-  }
+      : 'Confirm Purchase Order';
 
   return (
     <div className="space-y-6" id="purchases-view">
-
+      {loading && <LoadingSpinner message="Verifying supply orders..." subtitle="PURCHASE_ORDERS" />}
       {/* Tab toggle + search + actions */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div className="flex space-x-1 p-1 bg-slate-100 rounded-lg border border-slate-200/50 self-start">
@@ -308,8 +310,21 @@ export default function PurchasesView() {
 
         <div className="flex items-center space-x-2">
           <SearchInput
-            value={searchQuery}
-            onChange={setSearchQuery}
+            value={searchQuery?.[activeTab === 'QUOTATION' ? 0 : 1]?.search}
+            onChange={(e: any) => {
+              setSearchQuery((prev) => {
+                const updated = [...prev];
+                const index = activeTab === "QUOTATION" ? 0 : 1;
+
+                updated[index] = {
+                  ...updated[index],
+                  search: e,
+                };
+
+                return updated;
+              });
+              search(e)
+            }}
             placeholder="Search by supplier or reference no..."
           />
           {activeTab === 'QUOTATION' && (
@@ -547,11 +562,10 @@ export default function PurchasesView() {
 
                     {activeTab === 'PO' && (
                       <td className="p-4">
-                        <span className={`px-2.5 py-1 rounded-full font-mono text-[10px] font-medium border ${
-                          p.status === 'ORDERED' ? 'bg-amber-50 text-amber-800 border-amber-200'
+                        <span className={`px-2.5 py-1 rounded-full font-mono text-[10px] font-medium border ${p.status === 'ORDERED' ? 'bg-amber-50 text-amber-800 border-amber-200'
                           : p.status === 'RECEIVED' ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
-                          : 'bg-red-50 text-red-800 border-red-200'
-                        }`}>
+                            : 'bg-red-50 text-red-800 border-red-200'
+                          }`}>
                           {p.status === 'ORDERED' ? 'Pending Stock' : p.status}
                         </span>
                       </td>

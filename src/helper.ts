@@ -6,7 +6,6 @@ const LS_TO_TABLE: Record<string, string> = {
     erp_clients: 'clients',
     erp_sales_orders: 'sales_orders',
     erp_purchase_orders: 'purchase_orders',
-    erp_workflow_tasks: 'workflow_tasks',
     erp_employees: 'employees',
     erp_job_positions: 'job_positions',
     erp_material_categories: 'material_categories',
@@ -71,6 +70,7 @@ const ROW_MAPPERS: Record<string, (row: any) => any> = {
         material_id: t.materialId || null,
         product_id: t.productId || null,
         purchase_detail_id: t.purchaseDetailId || null,
+        production_material_usage_id: t.productionMaterialUsageId || null,
         transaction_date: t.transactionDate
     }),
     erp_sales_orders: (o) => ({
@@ -87,12 +87,6 @@ const ROW_MAPPERS: Record<string, (row: any) => any> = {
         totalCost: Number(o.total_cost), orderDate: o.order_date, status: o.status,
         receivedDate: o.received_date, attachments: o.attachments || [], items: o.items || [],
         createdAt: o.created_at, updatedAt: o.updated_at
-    }),
-    erp_workflow_tasks: (t) => ({
-        id: t.id, orderId: t.order_id, productName: t.product_name, quantity: Number(t.quantity),
-        currentStep: t.current_step, assignedTo: t.assigned_to, startDate: t.start_date,
-        endDate: t.end_date, notes: t.notes,
-        createdAt: t.created_at, updatedAt: t.updated_at
     }),
     erp_employees: (e) => ({
         id: e.id, name: e.name, role: e.role, status: e.status,

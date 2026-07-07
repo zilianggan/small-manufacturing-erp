@@ -56,11 +56,6 @@ const ROW_MAPPERS: Record<string, (row: any) => any> = {
     totalCost: Number(o.total_cost), orderDate: o.order_date, status: o.status,
     receivedDate: o.received_date, attachments: o.attachments || [], items: o.items || []
   }),
-  workflow_tasks: (t) => ({
-    id: t.id, orderId: t.order_id, productName: t.product_name, quantity: Number(t.quantity),
-    currentStep: t.current_step, assignedTo: t.assigned_to, startDate: t.start_date,
-    endDate: t.end_date, notes: t.notes
-  }),
   employees: (e) => e,
   job_positions: (p) => ({
     id: p.id, name: p.name, isActive: p.is_active ?? true,

@@ -1,3 +1,16 @@
+Version 1.0.3
+--------------------
+- Inventory tab rewritten as a stock transaction ledger (inventory_transaction), backed by new InventoryTransactionService; material/product stock now only ever moves via inserted transaction rows, never direct quantity edits
+- Purchases rewritten with Quotation / Purchase Order tabs over purchase_header/purchase_detail (PurchasesService as pattern-A service); receiving a PO generates inventory_transaction rows; added vendor-facing QuotationModal print doc; Purchase Orders can optionally link back to a Sales Order (sales_header_id)
+- Orders rewritten with Quotation / Sales Order tabs over sales_header/sales_detail/production_material_usage (OrdersService rewritten as pattern-A service, replacing the legacy db.ts wrapper); added client-facing SalesQuotationModal and retargeted InvoiceModal from legacy SalesOrder to SalesHeader/SalesDetail
+- Sales Order production flow: Start Production reserves each line's planned material stock and opens workflow_tasks rows; Mark Production Done opens a new ProductionCompletionModal to reconcile actual material usage, credit leftover/by-product material, and record extra finished-goods yield before advancing the order; cancelling an in-production order now reverses the reservation and closes its tasks
+- Workflows tab migrated to a pattern-A production kanban: WorkflowsService talks to Supabase directly (getWorkflowTasks/updateWorkflowStage/assignEmployee), replacing the db.ts wrapper; WorkflowTask now carries a separate shop-floor `stage` (PREPARATION|ASSEMBLY|QUALITY_CONTROL|PACKAGING|COMPLETED) alongside its order-lifecycle `status`, joined off sales_detail/sales_header/employees; old TaskCard.tsx component removed
+- Schema: workflow_tasks gains a `stage` column (with check constraint), decoupled from its existing `status` column
+- Various view polish: ComboBox, LoadingSpinner, ReportsView, MaterialView, ProductView, ContactsView, EmployeesView, DashboardView, OrderAccordion
+- Fix loading load twice
+- Fix search causing multiple call api
+- Fix combobox got weird animation
+
 Version 1.0.2
 --------------------
 - Database schema overhaul: all tables moved from TEXT to UUID primary keys; auto created_at/updated_at triggers added for every table (function_trigger.sql replaces add_timestamps.sql)

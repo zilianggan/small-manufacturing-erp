@@ -9,6 +9,7 @@
  */
 import { supabase } from "./supabase";
 import { getClients } from "./ContactsService";
+import { saveInventoryTransaction } from "./InventoryTransactionService";
 import { Attachment, SalesHeader, SalesDetail, ProductionMaterialUsage } from "../types";
 
 export const generateId = (): string => crypto.randomUUID();
@@ -44,6 +45,8 @@ const mapMaterialUsageRow = (row: any): ProductionMaterialUsage => ({
   materialName: row.material?.name || '',
   materialCode: row.material?.code || undefined,
   plannedQuantity: Number(row.planned_quantity) || 0,
+  actualQuantity: Number(row.actual_quantity) || 0,
+  returnedQuantity: Number(row.returned_quantity) || 0,
 });
 
 const mapSalesDetailRow = (row: any): SalesDetail => ({
@@ -83,7 +86,7 @@ export const getSalesOrders = async (tab: 'QUOTATION' | 'SO', search = ''): Prom
 
   query = tab === 'QUOTATION'
     ? query.eq('status', 'QUOTATION')
-    : query.in('status', ['ORDERED', 'DELIVERED', 'CANCELLED']);
+    : query.in('status', ['ORDERED', 'IN_PRODUCTION', 'DONE_IN_PRODUCTION', 'DELIVERED', 'CANCELLED']);
 
   const q = search.trim();
   if (q) {
@@ -217,9 +220,159 @@ export const convertToSalesOrder = async (headerId: string, input: SalesFormInpu
   await replaceDetails(headerId, input.details);
 };
 
-// Status-only transition — no inventory_transaction insert. Actual product/
-// material stock movement is deferred to a future production/workflow step
-// that will consume production_material_usage.actual_quantity.
+// Reserves every planned material's stock (one -plannedQuantity
+// inventory_transaction each) and opens one workflow_tasks row per
+// sales_detail line — reconciliation against actual usage happens in
+// confirmProductionDone when the order is marked done.
+export const startProduction = async (header: SalesHeader): Promise<void> => {
+  const today = new Date().toISOString().split('T')[0];
+
+  const { error: taskError } = await supabase.from('workflow_tasks').insert(
+    header.details.map(d => ({
+      sales_detail_id: d.detailId,
+      status: 'IN_PRODUCTION',
+      stage: 'PREPARATION',
+      start_date: today,
+    }))
+  );
+  if (taskError) {
+    console.error('startProduction(workflow_tasks)', taskError);
+    throw taskError;
+  }
+
+  for (const detail of header.details) {
+    for (const material of detail.materials) {
+      await saveInventoryTransaction({
+        id: generateId(),
+        transactionType: 'SALES',
+        quantity: -material.plannedQuantity,
+        remark: header.salesNo,
+        materialId: material.materialId,
+        productionMaterialUsageId: material.id,
+        transactionDate: today,
+      });
+    }
+  }
+
+  const { error } = await supabase.from('sales_header').update({ status: 'IN_PRODUCTION' }).eq('id', header.id);
+  if (error) {
+    console.error('startProduction', error);
+    throw error;
+  }
+};
+
+export interface MaterialReconciliationInput {
+  usageId: string; // production_material_usage.id
+  materialId: string;
+  plannedQuantity: number;
+  actualQuantity: number;
+}
+
+export interface LeftoverMaterialInput {
+  salesDetailId: string;
+  materialId: string;
+  quantity: number;
+}
+
+export interface ExtraProducedInput {
+  salesDetailId: string;
+  productId: string;
+  quantity: number;
+}
+
+// Reconciles actual material usage against the reservation made in
+// startProduction, credits any leftover/by-product material and any
+// extra finished-goods yield, closes the order's workflow_tasks rows, and
+// advances the header to DONE_IN_PRODUCTION.
+export const confirmProductionDone = async (
+  header: SalesHeader,
+  reconciliations: MaterialReconciliationInput[],
+  leftovers: LeftoverMaterialInput[],
+  extraProduced: ExtraProducedInput[],
+): Promise<void> => {
+  const today = new Date().toISOString().split('T')[0];
+
+  for (const r of reconciliations) {
+    const diff = r.plannedQuantity - r.actualQuantity;
+    if (diff !== 0) {
+      await saveInventoryTransaction({
+        id: generateId(),
+        transactionType: diff > 0 ? 'SALES_RETURN' : 'SALES',
+        quantity: diff,
+        remark: header.salesNo,
+        materialId: r.materialId,
+        productionMaterialUsageId: r.usageId,
+        transactionDate: today,
+      });
+    }
+
+    const { error } = await supabase
+      .from('production_material_usage')
+      .update({ actual_quantity: r.actualQuantity, returned_quantity: Math.max(0, diff) })
+      .eq('id', r.usageId);
+    if (error) {
+      console.error('confirmProductionDone(reconciliation)', error);
+      throw error;
+    }
+  }
+
+  for (const l of leftovers) {
+    const { data: inserted, error: insertError } = await supabase
+      .from('production_material_usage')
+      .insert({
+        sales_detail_id: l.salesDetailId,
+        material_id: l.materialId,
+        planned_quantity: 0,
+        actual_quantity: 0,
+        returned_quantity: l.quantity,
+        remark: 'Leftover from production',
+      })
+      .select('id')
+      .single();
+    if (insertError) {
+      console.error('confirmProductionDone(leftover)', insertError);
+      throw insertError;
+    }
+
+    await saveInventoryTransaction({
+      id: generateId(),
+      transactionType: 'SALES_RETURN',
+      quantity: l.quantity,
+      remark: header.salesNo,
+      materialId: l.materialId,
+      productionMaterialUsageId: inserted.id,
+      transactionDate: today,
+    });
+  }
+
+  for (const p of extraProduced) {
+    if (p.quantity <= 0) continue;
+    await saveInventoryTransaction({
+      id: generateId(),
+      transactionType: 'ADJUSTMENT',
+      quantity: p.quantity,
+      remark: header.salesNo,
+      productId: p.productId,
+      transactionDate: today,
+    });
+  }
+
+  const { error: taskError } = await supabase
+    .from('workflow_tasks')
+    .update({ status: 'DONE', end_date: today })
+    .in('sales_detail_id', header.details.map(d => d.detailId));
+  if (taskError) {
+    console.error('confirmProductionDone(workflow_tasks)', taskError);
+    throw taskError;
+  }
+
+  const { error } = await supabase.from('sales_header').update({ status: 'DONE_IN_PRODUCTION' }).eq('id', header.id);
+  if (error) {
+    console.error('confirmProductionDone', error);
+    throw error;
+  }
+};
+
 export const markDelivered = async (headerId: string): Promise<void> => {
   const { error } = await supabase.from('sales_header').update({ status: 'DELIVERED' }).eq('id', headerId);
   if (error) {
@@ -228,8 +381,39 @@ export const markDelivered = async (headerId: string): Promise<void> => {
   }
 };
 
-export const cancelSalesOrder = async (headerId: string): Promise<void> => {
-  const { error } = await supabase.from('sales_header').update({ status: 'CANCELLED' }).eq('id', headerId);
+// If the order already reserved material stock (Start Production ran), a
+// cancel from IN_PRODUCTION must return that stock and close the order's
+// workflow_tasks rows — symmetric with what startProduction reserved/opened.
+// Cancelling from ORDERED (before any reservation) is still a plain status flip.
+export const cancelSalesOrder = async (header: SalesHeader): Promise<void> => {
+  const today = new Date().toISOString().split('T')[0];
+
+  if (header.status === 'IN_PRODUCTION') {
+    for (const detail of header.details) {
+      for (const material of detail.materials) {
+        await saveInventoryTransaction({
+          id: generateId(),
+          transactionType: 'SALES_RETURN',
+          quantity: material.plannedQuantity,
+          remark: header.salesNo,
+          materialId: material.materialId,
+          productionMaterialUsageId: material.id,
+          transactionDate: today,
+        });
+      }
+    }
+
+    const { error: taskError } = await supabase
+      .from('workflow_tasks')
+      .update({ status: 'CANCELLED', end_date: today })
+      .in('sales_detail_id', header.details.map(d => d.detailId));
+    if (taskError) {
+      console.error('cancelSalesOrder(workflow_tasks)', taskError);
+      throw taskError;
+    }
+  }
+
+  const { error } = await supabase.from('sales_header').update({ status: 'CANCELLED' }).eq('id', header.id);
   if (error) {
     console.error('cancelSalesOrder', error);
     throw error;

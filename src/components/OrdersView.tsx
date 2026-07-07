@@ -6,29 +6,31 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import {
   getSalesOrders, createSalesQuotation, updateSalesOrder, convertToSalesOrder,
-  markDelivered, cancelSalesOrder, deleteSalesOrder,
-  SalesDetailInput, MaterialUsageInput,
+  startProduction, confirmProductionDone, markDelivered, cancelSalesOrder, deleteSalesOrder,
+  SalesDetailInput, MaterialUsageInput, MaterialReconciliationInput, LeftoverMaterialInput, ExtraProducedInput,
 } from '../services/OrdersService';
 import { getProducts } from '../services/ProductService';
 import { getMaterials } from '../services/MaterialService';
 import { getMaterialCategories } from '../services/SystemAdminService';
 import { getClients } from '../services/ContactsService';
 import { SalesHeader, Client, Product, Material, MaterialCategory, Attachment } from '../types';
-import { Plus, Calendar, Check, Paperclip, Trash2, Edit, FileText, ArrowRightCircle } from 'lucide-react';
+import { Plus, Calendar, Check, CheckCheck, Factory, Paperclip, Trash2, Edit, FileText, ArrowRightCircle } from 'lucide-react';
 import AttachmentSection from './AttachmentSection';
 import SalesQuotationModal from './SalesQuotationModal';
 import InvoiceModal from './InvoiceModal';
+import ProductionCompletionModal from './ProductionCompletionModal';
 import LoadingSpinner from './LoadingSpinner';
 import ComboBox from './ComboBox';
 import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, FormField, SearchInput } from './ui';
 import { CallAPI } from './UIHelper';
+import { debounce } from 'lodash'
 
 type OrderTab = 'QUOTATION' | 'SO';
 type FormMode = 'CREATE' | 'EDIT' | 'CONVERT';
 
 export default function OrdersView() {
   const [activeTab, setActiveTab] = useState<OrderTab>('QUOTATION');
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState([{ search: '' }, { search: '' }]);
   const [orders, setOrders] = useState<SalesHeader[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -36,7 +38,8 @@ export default function OrdersView() {
   const [products, setProducts] = useState<Product[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
   const [materialCategories, setMaterialCategories] = useState<MaterialCategory[]>([]);
-  const [deliveringId, setDeliveringId] = useState<string | null>(null);
+  const [transitioningId, setTransitioningId] = useState<string | null>(null);
+  const [completingOrder, setCompletingOrder] = useState<SalesHeader | null>(null);
 
   useEffect(() => {
     getClients().then(setClients).catch(console.error);
@@ -60,7 +63,7 @@ export default function OrdersView() {
     [materialCategories]
   );
 
-  const loadOrders = (tab: OrderTab, search = searchQuery) => {
+  const loadOrders = (tab: OrderTab, search: string = '') => {
     setLoading(true);
     CallAPI(() => getSalesOrders(tab === 'QUOTATION' ? 'QUOTATION' : 'SO', search), {
       onCompleted: (data) => { setOrders(data); setLoading(false); },
@@ -68,13 +71,15 @@ export default function OrdersView() {
     });
   };
 
-  useEffect(() => { setSearchQuery(''); loadOrders(activeTab, ''); }, [activeTab]);
+  useEffect(() => { loadOrders(activeTab, searchQuery[activeTab === 'QUOTATION' ? 0 : 1]?.search); }, [activeTab]);
 
-  useEffect(() => {
-    const t = setTimeout(() => loadOrders(activeTab, searchQuery), 300);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchQuery]);
+  const search = useMemo(
+    () =>
+      debounce((text: string) => {
+        loadOrders(activeTab, text);
+      }, 500),
+    [activeTab]
+  );
 
   // Quotation print modal
   const [selectedQuotation, setSelectedQuotation] = useState<SalesHeader | null>(null);
@@ -300,24 +305,63 @@ export default function OrdersView() {
     });
   };
 
-  const handleMarkDelivered = async (id: string) => {
-    if (deliveringId === id) return;
-    setDeliveringId(id);
-    await CallAPI(() => markDelivered(id), {
+  const handleStartProduction = async (order: SalesHeader) => {
+    if (transitioningId === order.id) return;
+    setTransitioningId(order.id);
+    await CallAPI(() => startProduction(order), {
       onCompleted: () => {
-        setDeliveringId(null);
+        setTransitioningId(null);
         loadOrders(activeTab);
       },
       onError: (err) => {
-        setDeliveringId(null);
+        setTransitioningId(null);
         console.error(err);
       },
     });
   };
 
-  const handleCancel = async (id: string) => {
+  const openProductionCompletion = (order: SalesHeader) => {
+    setCompletingOrder(order);
+  };
+
+  const handleConfirmProductionDone = async (
+    reconciliations: MaterialReconciliationInput[],
+    leftovers: LeftoverMaterialInput[],
+    extraProduced: ExtraProducedInput[],
+  ) => {
+    if (!completingOrder) return;
+    setTransitioningId(completingOrder.id);
+    await CallAPI(() => confirmProductionDone(completingOrder, reconciliations, leftovers, extraProduced), {
+      onCompleted: () => {
+        setTransitioningId(null);
+        setCompletingOrder(null);
+        loadOrders(activeTab);
+      },
+      onError: (err) => {
+        setTransitioningId(null);
+        console.error(err);
+      },
+    });
+  };
+
+  const handleMarkDelivered = async (id: string) => {
+    if (transitioningId === id) return;
+    setTransitioningId(id);
+    await CallAPI(() => markDelivered(id), {
+      onCompleted: () => {
+        setTransitioningId(null);
+        loadOrders(activeTab);
+      },
+      onError: (err) => {
+        setTransitioningId(null);
+        console.error(err);
+      },
+    });
+  };
+
+  const handleCancel = async (order: SalesHeader) => {
     if (!confirm('Cancel this Sales Order?')) return;
-    await CallAPI(() => cancelSalesOrder(id), {
+    await CallAPI(() => cancelSalesOrder(order), {
       onCompleted: () => loadOrders(activeTab),
       onError: console.error,
     });
@@ -335,18 +379,15 @@ export default function OrdersView() {
 
   const dialogTitle = formMode === 'CREATE' ? 'Create Sales Quotation'
     : formMode === 'EDIT' ? 'Edit Sales Quotation'
-    : 'Confirm Sales Order';
+      : 'Confirm Sales Order';
 
   const submitLabel = formMode === 'CREATE' ? 'Save Quotation'
     : formMode === 'EDIT' ? 'Update Quotation'
-    : 'Confirm Sales Order';
-
-  if (loading) {
-    return <LoadingSpinner message="Processing sales contracts..." subtitle="SALES_CONTRACTS" />;
-  }
+      : 'Confirm Sales Order';
 
   return (
     <div className="space-y-6" id="orders-view">
+      {loading && <LoadingSpinner message="Processing sales contracts..." subtitle="SALES_CONTRACTS" />}
 
       {/* Tab toggle + search + actions */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -367,8 +408,21 @@ export default function OrdersView() {
 
         <div className="flex items-center space-x-2">
           <SearchInput
-            value={searchQuery}
-            onChange={setSearchQuery}
+            value={searchQuery?.[activeTab === 'QUOTATION' ? 0 : 1]?.search}
+            onChange={(e: any) => {
+              setSearchQuery((prev) => {
+                const updated = [...prev];
+                const index = activeTab === "QUOTATION" ? 0 : 1;
+
+                updated[index] = {
+                  ...updated[index],
+                  search: e,
+                };
+
+                return updated;
+              });
+              search(e)
+            }}
             placeholder="Search by client or reference no..."
           />
           {activeTab === 'QUOTATION' && (
@@ -670,12 +724,16 @@ export default function OrdersView() {
                     {/* Status Badge */}
                     {activeTab === 'SO' && (
                       <td className="p-4">
-                        <span className={`px-2.5 py-1 rounded-full font-mono text-[10px] font-medium border ${
-                          order.status === 'ORDERED' ? 'bg-amber-50 text-amber-800 border-amber-200'
-                          : order.status === 'DELIVERED' ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
-                          : 'bg-red-50 text-red-800 border-red-200'
-                        }`}>
-                          {order.status === 'ORDERED' ? 'Pending Delivery' : order.status}
+                        <span className={`px-2.5 py-1 rounded-full font-mono text-[10px] font-medium border ${order.status === 'ORDERED' ? 'bg-amber-50 text-amber-800 border-amber-200'
+                          : order.status === 'IN_PRODUCTION' ? 'bg-blue-50 text-blue-800 border-blue-200'
+                            : order.status === 'DONE_IN_PRODUCTION' ? 'bg-violet-50 text-violet-800 border-violet-200'
+                              : order.status === 'DELIVERED' ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                                : 'bg-red-50 text-red-800 border-red-200'
+                          }`}>
+                          {order.status === 'ORDERED' ? 'Pending Delivery'
+                            : order.status === 'IN_PRODUCTION' ? 'In Production'
+                              : order.status === 'DONE_IN_PRODUCTION' ? 'Done in Production'
+                                : order.status}
                         </span>
                       </td>
                     )}
@@ -709,15 +767,50 @@ export default function OrdersView() {
                               <FileText className="w-3.5 h-3.5" />
                             </button>
                             <button
-                              onClick={() => handleMarkDelivered(order.id)}
-                              disabled={deliveringId === order.id}
-                              title="Mark as delivered"
+                              onClick={() => handleStartProduction(order)}
+                              disabled={transitioningId === order.id}
+                              title="Proceed to production"
                               className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                             >
-                              <Check className="w-3.5 h-3.5" />
+                              <Factory className="w-3.5 h-3.5" />
                             </button>
-                            <button onClick={() => handleCancel(order.id)} className="p-1 text-slate-400 hover:text-red-600 rounded transition-colors text-[10px] font-medium">
+                            <button onClick={() => handleCancel(order)} className="p-1 text-slate-400 hover:text-red-600 rounded transition-colors text-[10px] font-medium">
                               Cancel
+                            </button>
+                          </>
+                        )}
+
+                        {order.status === 'IN_PRODUCTION' && (
+                          <>
+                            <button onClick={() => openInvoiceDoc(order)} title="Generate Tax Invoice" className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-50 rounded transition-colors">
+                              <FileText className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => openProductionCompletion(order)}
+                              disabled={transitioningId === order.id}
+                              title="Mark production as done"
+                              className="p-1.5 text-slate-400 hover:text-violet-600 hover:bg-violet-50 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              <CheckCheck className="w-3.5 h-3.5" />
+                            </button>
+                            <button onClick={() => handleCancel(order)} className="p-1 text-slate-400 hover:text-red-600 rounded transition-colors text-[10px] font-medium">
+                              Cancel
+                            </button>
+                          </>
+                        )}
+
+                        {order.status === 'DONE_IN_PRODUCTION' && (
+                          <>
+                            <button onClick={() => openInvoiceDoc(order)} title="Generate Tax Invoice" className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-50 rounded transition-colors">
+                              <FileText className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleMarkDelivered(order.id)}
+                              disabled={transitioningId === order.id}
+                              title="Mark as delivered"
+                              className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              <Check className="w-3.5 h-3.5" />
                             </button>
                           </>
                         )}
@@ -767,6 +860,15 @@ export default function OrdersView() {
           setIsInvoiceOpen(false);
           setSelectedInvoiceOrder(null);
         }}
+      />
+
+      {/* Production-done material reconciliation modal */}
+      <ProductionCompletionModal
+        order={completingOrder}
+        isOpen={!!completingOrder}
+        materials={rawMaterials}
+        onClose={() => setCompletingOrder(null)}
+        onSubmit={handleConfirmProductionDone}
       />
 
     </div>

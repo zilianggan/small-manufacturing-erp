@@ -212,6 +212,7 @@ CREATE TABLE inventory_transaction (
 CREATE TABLE workflow_tasks (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   status TEXT,
+  stage TEXT NOT NULL DEFAULT 'PREPARATION' CHECK (stage IN ('PREPARATION','ASSEMBLY','QUALITY_CONTROL','PACKAGING','COMPLETED')),
   start_date date,
   end_date date,
   remark TEXT,

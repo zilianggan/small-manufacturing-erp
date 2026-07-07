@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useId } from 'react';
+import React, { useState, useRef, useEffect, useId, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronDown, Search, X } from 'lucide-react';
 
@@ -62,9 +62,9 @@ export default function ComboBox({
     ? allOptions
     : query.trim()
       ? allOptions.filter(o =>
-          o.label.toLowerCase().includes(query.toLowerCase()) ||
-          (o.sublabel?.toLowerCase().includes(query.toLowerCase()) ?? false)
-        )
+        o.label.toLowerCase().includes(query.toLowerCase()) ||
+        (o.sublabel?.toLowerCase().includes(query.toLowerCase()) ?? false)
+      )
       : allOptions;
 
   const selectedLabel = allOptions.find(o => o.value === value)?.label ?? '';
@@ -87,7 +87,7 @@ export default function ComboBox({
 
   // Compute trigger position for the portal-rendered dropdown, and close
   // on scroll/resize of any ancestor so it never drifts off its trigger.
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!open) return;
 
     const updateCoords = () => {
@@ -205,7 +205,7 @@ export default function ComboBox({
       </button>
 
       {/* Dropdown, portalled to body so it can't inflate a scrollable ancestor */}
-      {open && createPortal(
+      {open && !(coords?.top === 0 && coords?.left === 0 && coords?.width === 0) && createPortal(
         <div
           ref={dropdownRef}
           style={{ position: 'fixed', top: coords.top, left: coords.left, width: coords.width }}

@@ -10,7 +10,7 @@ interface LoadingSpinnerProps {
 export default function LoadingSpinner({
   message = 'Loading production data...',
   subtitle = 'SYSTEM_PROCESSING',
-  fullPage = false
+  fullPage = true
 }: LoadingSpinnerProps) {
   const content = (
     <div className="bg-white/80 dark:bg-slate-900/60 backdrop-blur-md border border-slate-200/50 dark:border-slate-800/40 rounded-2xl shadow-xl p-8 max-w-sm w-full mx-4 flex flex-col items-center justify-center text-center animate-in fade-in zoom-in-95 duration-300">
