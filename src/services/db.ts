@@ -13,12 +13,10 @@ export const useSyncStore = create<SyncStore>((set) => ({ isSyncing: false, setS
 import {
   InventoryItem,
   Vendor,
-  Client,
   Contact,
   SalesOrder,
   PurchaseOrder,
   DashboardStats,
-  Employee,
   SalesOrderItem,
   PurchaseOrderItem,
 } from '../types';
@@ -42,7 +40,6 @@ export const generateId = (): string => {
 
 export const getInventory = (): InventoryItem[] => getStorageItem('erp_inventory', []);
 export const getVendors = (): Vendor[] => getStorageItem('erp_vendors', []);
-export const getClients = (): Client[] => getStorageItem('erp_clients', []);
 export const getContacts = (): Contact[] => getStorageItem('erp_contacts', []);
 export const getSalesOrders = (): SalesOrder[] => getStorageItem('erp_sales_orders', []);
 export const getPurchaseOrders = (): PurchaseOrder[] => getStorageItem('erp_purchase_orders', []);
@@ -54,16 +51,6 @@ export const saveInventory = async (items: InventoryItem[], changed?: InventoryI
   setStorageItem('erp_inventory', items);
   if (changed) await upsertRecord('erp_inventory', changed);
   if (deletedId) await deleteRecord('erp_inventory', deletedId);
-};
-export const saveVendors = async (items: Vendor[], changed?: Vendor, deletedId?: string) => {
-  setStorageItem('erp_vendors', items);
-  if (changed) await upsertRecord('erp_vendors', changed);
-  if (deletedId) await deleteRecord('erp_vendors', deletedId);
-};
-export const saveClients = async (items: Client[], changed?: Client, deletedId?: string) => {
-  setStorageItem('erp_clients', items);
-  if (changed) await upsertRecord('erp_clients', changed);
-  if (deletedId) await deleteRecord('erp_clients', deletedId);
 };
 // Contacts are always scoped to (and fetched per) a single vendor/client via
 // useTableData filters, so unlike the other savers here there's no full-list
@@ -256,17 +243,6 @@ export const getDashboardStats = (): DashboardStats => {
     activeWorkflowsCount: 0
   };
 };
-
-// --- Employees database ---
-export const getEmployees = (): Employee[] => getStorageItem('erp_employees', []);
-
-export const saveEmployees = async (employees: Employee[], changed?: Employee, deletedId?: string): Promise<void> => {
-  setStorageItem('erp_employees', employees);
-  if (changed) await upsertRecord('erp_employees', changed);
-  if (deletedId) await deleteRecord('erp_employees', deletedId);
-};
-
-
 
 // ─── Per-tab lazy loaders ───────────────────────────────────────────────────
 // Each view calls its own loader; data is cached in localStorage after first

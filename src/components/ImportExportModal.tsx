@@ -1,33 +1,23 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 import React, { useRef, useState } from 'react';
 import * as XLSX from 'xlsx';
 import {
-  X,
-  UploadCloud,
-  CheckCircle2,
-  AlertTriangle,
-  Download,
-  Clipboard,
-  Info,
-  FileText,
-  Database,
-  ArrowRight,
-  FileSpreadsheet,
-  Layers,
-  Users,
-  ShoppingBag,
-  History,
-  Briefcase
+  UploadCloud, CheckCircle2, AlertTriangle, Download, Clipboard, Info,
+  Database, ArrowRight, FileSpreadsheet, Layers, Users, ShoppingBag, Briefcase, Package,
 } from 'lucide-react';
-import { InventoryItem, Vendor, Client, SalesOrder, PurchaseOrder, Employee } from '../types';
 import {
-  getInventory, saveInventory,
-  getVendors, saveVendors,
-  getClients, saveClients,
-  getSalesOrders, saveSalesOrders,
-  getPurchaseOrders, savePurchaseOrders,
-  getEmployees, saveEmployees,
-  generateId
-} from '../services/db';
+  ImportColumn, ImportRowError,
+  VENDOR_COLUMNS, CLIENT_COLUMNS, MATERIAL_COLUMNS, PRODUCT_COLUMNS, PURCHASE_COLUMNS, SALES_COLUMNS,
+  importVendors, importClients, importMaterials, importProducts,
+  validatePurchaseImport, commitPurchaseImport, PurchaseImportPreview, PurchaseImportRow,
+  validateSalesImport, commitSalesImport, SalesImportPreview, SalesImportRow,
+  getVendorExportRows, getClientExportRows, getMaterialExportRows, getProductExportRows,
+  getPurchaseExportSheets, getSalesExportSheets,
+} from '../services/ImportExportService';
 
 interface ImportExportModalProps {
   isOpen: boolean;
@@ -35,86 +25,47 @@ interface ImportExportModalProps {
   onDataImported: () => void; // Refresh current views
 }
 
-type ImportType = 'FULL_BACKUP' | 'INVENTORY' | 'VENDORS' | 'CLIENTS' | 'EMPLOYEES' | 'SALES' | 'PURCHASES';
-type ExportType = 'CONTACTS' | 'INVENTORY' | 'EMPLOYEES' | 'SALES' | 'PURCHASES';
+type Category = 'VENDORS' | 'CLIENTS' | 'MATERIAL' | 'PRODUCT' | 'PURCHASE' | 'SALES';
 
-const EXPECTED_COLUMNS: Record<ImportType, { key: string, label: string, required: boolean }[]> = {
-  FULL_BACKUP: [],
-  INVENTORY: [
-    { key: 'id', label: 'Item ID', required: false },
-    { key: 'name', label: 'Item Name', required: true },
-    { key: 'sku', label: 'SKU', required: false },
-    { key: 'type', label: 'Type', required: false },
-    { key: 'materialCategoryId', label: 'Material Category ID', required: false },
-    { key: 'productCategoryId', label: 'Product Category ID', required: false },
-    { key: 'quantity', label: 'Quantity', required: false },
-    { key: 'unit', label: 'Unit', required: false },
-    { key: 'unitCost', label: 'Unit Cost', required: false },
-    { key: 'reorderPoint', label: 'Reorder Point', required: false },
-    { key: 'description', label: 'Description', required: false },
-  ],
-  VENDORS: [
-    { key: 'id', label: 'Vendor ID', required: false },
-    { key: 'companyName', label: 'Company Name', required: true },
-    { key: 'email', label: 'Email', required: false },
-    { key: 'officeNo', label: 'Office No.', required: false },
-    { key: 'address', label: 'Address', required: false },
-    { key: 'description', label: 'Description', required: false },
-  ],
-  CLIENTS: [
-    { key: 'id', label: 'Client ID', required: false },
-    { key: 'companyName', label: 'Company Name', required: true },
-    { key: 'email', label: 'Email', required: false },
-    { key: 'officeNo', label: 'Office No.', required: false },
-    { key: 'address', label: 'Address', required: false },
-    { key: 'description', label: 'Description', required: false },
-  ],
-  EMPLOYEES: [
-    { key: 'id', label: 'Employee ID', required: false },
-    { key: 'name', label: 'Name', required: true },
-    { key: 'role', label: 'Role', required: true },
-    { key: 'status', label: 'Status', required: false },
-    { key: 'email', label: 'Email', required: false },
-    { key: 'phone', label: 'Phone', required: false },
-  ],
-  SALES: [
-    { key: 'id', label: 'Order ID', required: false },
-    { key: 'clientName', label: 'Client Name', required: true },
-    { key: 'itemName', label: 'Item Name', required: true },
-    { key: 'quantity', label: 'Quantity', required: true },
-    { key: 'unitPrice', label: 'Unit Price', required: true },
-    { key: 'deliveryDate', label: 'Delivery Date', required: false },
-    { key: 'status', label: 'Status', required: false },
-  ],
-  PURCHASES: [
-    { key: 'id', label: 'PO ID', required: false },
-    { key: 'vendorName', label: 'Vendor Name', required: true },
-    { key: 'itemName', label: 'Item Name', required: true },
-    { key: 'quantity', label: 'Quantity', required: true },
-    { key: 'unitCost', label: 'Unit Cost', required: true },
-    { key: 'status', label: 'Status', required: false },
-  ]
+const EXPECTED_COLUMNS: Record<Category, ImportColumn[]> = {
+  VENDORS: VENDOR_COLUMNS,
+  CLIENTS: CLIENT_COLUMNS,
+  MATERIAL: MATERIAL_COLUMNS,
+  PRODUCT: PRODUCT_COLUMNS,
+  PURCHASE: PURCHASE_COLUMNS,
+  SALES: SALES_COLUMNS,
 };
 
+const CATEGORY_LIST: { id: Category; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
+  { id: 'VENDORS', label: 'Vendors', icon: Users },
+  { id: 'CLIENTS', label: 'Clients', icon: Briefcase },
+  { id: 'MATERIAL', label: 'Material Catalog', icon: Layers },
+  { id: 'PRODUCT', label: 'Product Catalog', icon: Package },
+  { id: 'PURCHASE', label: 'Purchase Orders', icon: ShoppingBag },
+  { id: 'SALES', label: 'Sales Orders', icon: FileSpreadsheet },
+];
+
+const isHeaderDetailCategory = (category: Category): category is 'PURCHASE' | 'SALES' =>
+  category === 'PURCHASE' || category === 'SALES';
+
 export default function ImportExportModal({ isOpen, onClose, onDataImported }: ImportExportModalProps) {
-  const [activeImportType, setActiveImportType] = useState<ImportType>('FULL_BACKUP');
-  const [importMode, setImportMode] = useState<'MERGE' | 'OVERWRITE'>('MERGE');
+  const [activeCategory, setActiveCategory] = useState<Category>('VENDORS');
   const [dragActive, setDragActive] = useState(false);
   const [status, setStatus] = useState<{ type: 'idle' | 'success' | 'error'; message: string; details?: string[] }>({ type: 'idle', message: '' });
   const [mappingState, setMappingState] = useState<{
+    category: Category;
     fileHeaders: string[];
     dataRows: any[][];
-    mapping: Record<string, string>; // expectedKey -> fileHeader
+    mapping: Record<string, string>;
   } | null>(null);
+  const [purchasePreview, setPurchasePreview] = useState<PurchaseImportPreview | null>(null);
+  const [salesPreview, setSalesPreview] = useState<SalesImportPreview | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   if (!isOpen) return null;
 
   const dateStamp = new Date().toISOString().split('T')[0];
-
-  const attachmentNames = (value: { name?: string }[] | undefined): string => {
-    return Array.isArray(value) ? value.map((item) => item.name || 'Attachment').join(', ') : '';
-  };
+  const activeCategoryLabel = CATEGORY_LIST.find(c => c.id === activeCategory)?.label || '';
 
   const appendRowsSheet = (wb: XLSX.WorkBook, sheetName: string, rows: Record<string, unknown>[]) => {
     const data = rows.length > 0 ? rows : [{ Notice: 'No records found' }];
@@ -122,543 +73,131 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
     XLSX.utils.book_append_sheet(wb, ws, sheetName);
   };
 
-  const exportCategory = (type: ExportType) => {
+  const handleExport = async (category: Category) => {
     const wb = XLSX.utils.book_new();
-    let fileName = `ERP_Export_${dateStamp}.xlsx`;
-    let exportedRecordCount = 0;
+    const fileName = `ERP_${category}_${dateStamp}.xlsx`;
+    let exportedCount = 0;
 
-    if (type === 'CONTACTS') {
-      const vendors = getVendors();
-      const clients = getClients();
-      appendRowsSheet(wb, 'Vendors', vendors.map((vendor) => ({
-        id: vendor.id,
-        companyName: vendor.companyName,
-        email: vendor.email,
-        officeNo: vendor.officeNo,
-        address: vendor.address,
-        description: vendor.description || '',
-        attachments: attachmentNames(vendor.attachments)
-      })));
-      appendRowsSheet(wb, 'Clients', clients.map((client) => ({
-        id: client.id,
-        companyName: client.companyName,
-        email: client.email,
-        officeNo: client.officeNo,
-        address: client.address,
-        description: client.description || '',
-        attachments: attachmentNames(client.attachments)
-      })));
-      fileName = `ERP_Vendors_Clients_${dateStamp}.xlsx`;
-      exportedRecordCount = vendors.length + clients.length;
-    } else if (type === 'INVENTORY') {
-      const inventory = getInventory();
-      appendRowsSheet(wb, 'Inventory', inventory.map((item) => ({
-        id: item.id,
-        name: item.name,
-        sku: item.sku,
-        type: item.type,
-        materialCategoryId: item.materialCategoryId || '',
-        productCategoryId: item.productCategoryId || '',
-        quantity: item.quantity,
-        unit: item.unit,
-        unitCost: item.unitCost,
-        reorderPoint: item.reorderPoint,
-        supplierId: item.supplierId || '',
-        description: item.description || '',
-        attachments: attachmentNames(item.attachments)
-      })));
-      fileName = `ERP_Inventory_${dateStamp}.xlsx`;
-      exportedRecordCount = inventory.length;
-    } else if (type === 'EMPLOYEES') {
-      const employees = getEmployees();
-      appendRowsSheet(wb, 'Employees', employees.map((employee) => ({
-        id: employee.id,
-        fullName: employee.fullName,
-        jobPositionId: employee.jobPositionId || '',
-        status: employee.status,
-        email: employee.email || '',
-        contactNo: employee.contactNo || ''
-      })));
-      fileName = `ERP_Employees_${dateStamp}.xlsx`;
-      exportedRecordCount = employees.length;
-    } else if (type === 'SALES') {
-      const orders = getSalesOrders();
-      appendRowsSheet(wb, 'Sales_Orders', orders.map((order) => ({
-        id: order.id,
-        clientId: order.clientId,
-        clientName: order.clientName,
-        orderDate: order.orderDate,
-        deliveryDate: order.deliveryDate,
-        status: order.status,
-        itemId: order.itemId,
-        itemName: order.itemName,
-        quantity: order.quantity,
-        unitPrice: order.unitPrice,
-        totalPrice: order.totalPrice,
-        workflowTaskId: order.workflowTaskId || '',
-        itemCount: order.items?.length || 1,
-        attachments: attachmentNames(order.attachments)
-      })));
-      appendRowsSheet(wb, 'Sales_Items', orders.flatMap((order) => {
-        const items = order.items && order.items.length > 0 ? order.items : [{
-          itemId: order.itemId,
-          itemName: order.itemName,
-          quantity: order.quantity,
-          unitPrice: order.unitPrice,
-          totalPrice: order.totalPrice
-        }];
-        return items.map((item) => ({
-          orderId: order.id,
-          clientName: order.clientName,
-          orderDate: order.orderDate,
-          deliveryDate: order.deliveryDate,
-          status: order.status,
-          itemId: item.itemId,
-          itemName: item.itemName,
-          quantity: item.quantity,
-          unitPrice: item.unitPrice,
-          totalPrice: item.totalPrice
-        }));
-      }));
-      fileName = `ERP_Sales_${dateStamp}.xlsx`;
-      exportedRecordCount = orders.length;
-    } else if (type === 'PURCHASES') {
-      const orders = getPurchaseOrders();
-      appendRowsSheet(wb, 'Purchase_Orders', orders.map((order) => ({
-        id: order.id,
-        vendorId: order.vendorId,
-        vendorName: order.vendorName,
-        orderDate: order.orderDate,
-        receivedDate: order.receivedDate || '',
-        status: order.status,
-        itemId: order.itemId,
-        itemName: order.itemName,
-        quantity: order.quantity,
-        unitCost: order.unitCost,
-        totalCost: order.totalCost,
-        itemCount: order.items?.length || 1,
-        attachments: attachmentNames(order.attachments)
-      })));
-      appendRowsSheet(wb, 'Purchase_Items', orders.flatMap((order) => {
-        const items = order.items && order.items.length > 0 ? order.items : [{
-          itemId: order.itemId,
-          itemName: order.itemName,
-          quantity: order.quantity,
-          unitCost: order.unitCost,
-          totalCost: order.totalCost
-        }];
-        return items.map((item) => ({
-          purchaseOrderId: order.id,
-          vendorName: order.vendorName,
-          orderDate: order.orderDate,
-          receivedDate: order.receivedDate || '',
-          status: order.status,
-          itemId: item.itemId,
-          itemName: item.itemName,
-          quantity: item.quantity,
-          unitCost: item.unitCost,
-          totalCost: item.totalCost
-        }));
-      }));
-      fileName = `ERP_Purchases_${dateStamp}.xlsx`;
-      exportedRecordCount = orders.length;
+    if (category === 'VENDORS') {
+      const rows = await getVendorExportRows();
+      appendRowsSheet(wb, 'Vendors', rows);
+      exportedCount = rows.length;
+    } else if (category === 'CLIENTS') {
+      const rows = await getClientExportRows();
+      appendRowsSheet(wb, 'Clients', rows);
+      exportedCount = rows.length;
+    } else if (category === 'MATERIAL') {
+      const rows = await getMaterialExportRows();
+      appendRowsSheet(wb, 'Material', rows);
+      exportedCount = rows.length;
+    } else if (category === 'PRODUCT') {
+      const rows = await getProductExportRows();
+      appendRowsSheet(wb, 'Product', rows);
+      exportedCount = rows.length;
+    } else if (category === 'PURCHASE') {
+      const { headerRows, itemRows } = await getPurchaseExportSheets();
+      appendRowsSheet(wb, 'Purchase_Items', itemRows);
+      appendRowsSheet(wb, 'Purchase_Orders', headerRows);
+      exportedCount = headerRows.length;
+    } else {
+      const { headerRows, itemRows } = await getSalesExportSheets();
+      appendRowsSheet(wb, 'Sales_Items', itemRows);
+      appendRowsSheet(wb, 'Sales_Orders', headerRows);
+      exportedCount = headerRows.length;
     }
 
     XLSX.writeFile(wb, fileName);
-    setStatus({
-      type: 'success',
-      message: `Export file created: ${fileName}`,
-      details: [`Exported ${exportedRecordCount} primary records.`]
-    });
+    setStatus({ type: 'success', message: `Export file created: ${fileName}`, details: [`Exported ${exportedCount} record(s).`] });
   };
 
-  // Formatter for help templates
-  const getTemplateHeaders = (type: ImportType): string => {
-    switch (type) {
-      case 'FULL_BACKUP':
-        return `File should contain sheets named:\n- erp_inventory\n- erp_vendors\n- erp_clients\n- erp_employees\n- erp_sales_orders\n- erp_purchase_orders\n- erp_job_positions\n- erp_material_categories\n- erp_product_categories`;
-      case 'INVENTORY':
-        return `Required columns:\nname\tsku\ttype\tmaterialCategoryId\tproductCategoryId\tquantity\tunit\tunitCost\treorderPoint`;
-      case 'VENDORS':
-        return `Required columns:\ncompanyName\temail\tofficeNo\taddress\tdescription`;
-      case 'CLIENTS':
-        return `Required columns:\ncompanyName\temail\tofficeNo\taddress\tdescription`;
-      case 'EMPLOYEES':
-        return `Required columns:\nfullName\tstatus\temail\tcontactNo\nOptional: jobPositionId`;
-      case 'SALES':
-        return `Required columns:\nclientName\titemName\tquantity\tunitPrice\tdeliveryDate\tstatus`;
-      case 'PURCHASES':
-        return `Required columns:\nvendorName\titemName\tquantity\tunitCost\tstatus`;
-      default:
-        return ``;
-    }
-  };
-
-  const validateAndImport = (parsed: any) => {
-    try {
-      let logs: string[] = [];
-      let successCount = 0;
-
-      if (activeImportType === 'FULL_BACKUP') {
-        // FULL RESTORE MODE
-        const keys = [
-          'erp_inventory',
-          'erp_vendors',
-          'erp_clients',
-          'erp_employees',
-          'erp_sales_orders',
-          'erp_purchase_orders',
-          'erp_workflow_tasks',
-          'erp_job_positions',
-          'erp_material_categories',
-          'erp_product_categories',
-          'erp_company_profile'
-        ];
-        let keysFound = 0;
-
-        keys.forEach(key => {
-          if (parsed[key]) {
-            keysFound++;
-            if (importMode === 'OVERWRITE') {
-              localStorage.setItem(key, JSON.stringify(parsed[key]));
-              logs.push(`Successfully replaced database key: ${key} (${parsed[key].length || 1} records)`);
-            } else {
-              // Merge logic
-              const existingRaw = localStorage.getItem(key);
-              if (existingRaw) {
-                try {
-                  const existingArr = JSON.parse(existingRaw);
-                  if (Array.isArray(existingArr) && Array.isArray(parsed[key])) {
-                    // Merge by ID
-                    const map = new Map();
-                    existingArr.forEach((item: any) => { if (item.id) map.set(item.id, item); });
-                    parsed[key].forEach((item: any) => {
-                      if (!item.id) {
-                        item.id = generateId();
-                      }
-                      map.set(item.id, item);
-                    });
-                    const merged = Array.from(map.values());
-                    localStorage.setItem(key, JSON.stringify(merged));
-                    logs.push(`Merged key: ${key} (${merged.length} total records, added/updated ${parsed[key].length})`);
-                  } else {
-                    // Fallback to overwrite for non-arrays
-                    localStorage.setItem(key, JSON.stringify(parsed[key]));
-                    logs.push(`Updated config key: ${key}`);
-                  }
-                } catch {
-                  localStorage.setItem(key, JSON.stringify(parsed[key]));
-                  logs.push(`Replaced key (invalid existing cache): ${key}`);
-                }
-              } else {
-                localStorage.setItem(key, JSON.stringify(parsed[key]));
-                logs.push(`Created key: ${key} (${parsed[key].length || 1} records)`);
-              }
-            }
-          }
-        });
-
-        if (keysFound === 0) {
-          setStatus({
-            type: 'error',
-            message: 'Invalid backup format!',
-            details: ['The uploaded Excel file does not contain any recognizable ERP database sheets (e.g. erp_inventory).']
-          });
-          return;
-        }
-
-        setStatus({
-          type: 'success',
-          message: `Successfully imported backup contents (${keysFound} databases restored).`,
-          details: logs
-        });
-        onDataImported();
-        return;
-      }
-
-      // CATEGORY-SPECIFIC IMPORT
-      if (!Array.isArray(parsed)) {
-        setStatus({
-          type: 'error',
-          message: 'Invalid format!',
-          details: ['Category-specific imports MUST be a table. Please review the template structure shown below.']
-        });
-        return;
-      }
-
-      if (activeImportType === 'INVENTORY') {
-        const current = importMode === 'OVERWRITE' ? [] : getInventory();
-        const itemsToImport: InventoryItem[] = parsed.map((raw: any, index) => {
-          if (!raw.name) throw new Error(`Record #${index + 1} is missing a required 'name' field.`);
-
-          const itemType = raw.type === 'RAW_MATERIAL' || raw.type === 'FINISHED_GOOD' ? raw.type : 'RAW_MATERIAL';
-          const prefix = itemType === 'RAW_MATERIAL' ? 'RM' : 'FG';
-
-          return {
-            id: raw.id || generateId(),
-            name: String(raw.name),
-            sku: raw.sku || `${prefix}-${String(raw.name).replace(/\s+/g, '-').toUpperCase()}-${Math.floor(Math.random() * 1000)}`,
-            type: itemType,
-            materialCategoryId: raw.materialCategoryId || undefined,
-            productCategoryId: raw.productCategoryId || undefined,
-            quantity: Number(raw.quantity) || 0,
-            unit: raw.unit || 'units',
-            unitCost: Number(raw.unitCost) || 0,
-            reorderPoint: Number(raw.reorderPoint) || 0,
-            supplierId: raw.supplierId || undefined,
-            description: raw.description || undefined,
-            attachments: Array.isArray(raw.attachments) ? raw.attachments : (raw.attachment ? [raw.attachment] : [])
-          };
-        });
-
-        const merged = importMode === 'OVERWRITE' ? itemsToImport : [
-          ...current.filter(c => !itemsToImport.some(i => i.id === c.id)),
-          ...itemsToImport
-        ];
-
-        saveInventory(merged);
-        successCount = itemsToImport.length;
-        logs.push(`Imported ${successCount} items successfully to the inventory database.`);
-      }
-
-      else if (activeImportType === 'VENDORS') {
-        const current = importMode === 'OVERWRITE' ? [] : getVendors();
-        const itemsToImport: Vendor[] = parsed.map((raw: any, index) => {
-          if (!raw.companyName) throw new Error(`Record #${index + 1} is missing a required vendor 'companyName' field.`);
-          return {
-            id: raw.id || generateId(),
-            companyName: String(raw.companyName),
-            email: raw.email || '',
-            officeNo: raw.officeNo || '',
-            address: raw.address || '',
-            description: raw.description || '',
-            attachments: Array.isArray(raw.attachments) ? raw.attachments : (raw.attachment ? [raw.attachment] : [])
-          };
-        });
-
-        const merged = importMode === 'OVERWRITE' ? itemsToImport : [
-          ...current.filter(c => !itemsToImport.some(i => i.id === c.id)),
-          ...itemsToImport
-        ];
-
-        saveVendors(merged);
-        successCount = itemsToImport.length;
-        logs.push(`Imported ${successCount} suppliers successfully to the registry.`);
-      }
-
-      else if (activeImportType === 'CLIENTS') {
-        const current = importMode === 'OVERWRITE' ? [] : getClients();
-        const itemsToImport: Client[] = parsed.map((raw: any, index) => {
-          if (!raw.companyName) throw new Error(`Record #${index + 1} is missing a required client 'companyName' field.`);
-          return {
-            id: raw.id || generateId(),
-            companyName: String(raw.companyName),
-            email: raw.email || '',
-            officeNo: raw.officeNo || '',
-            address: raw.address || '',
-            description: raw.description || '',
-            attachments: Array.isArray(raw.attachments) ? raw.attachments : (raw.attachment ? [raw.attachment] : [])
-          };
-        });
-
-        const merged = importMode === 'OVERWRITE' ? itemsToImport : [
-          ...current.filter(c => !itemsToImport.some(i => i.id === c.id)),
-          ...itemsToImport
-        ];
-
-        saveClients(merged);
-        successCount = itemsToImport.length;
-        logs.push(`Imported ${successCount} clients successfully to the directory.`);
-      }
-
-      else if (activeImportType === 'EMPLOYEES') {
-        const current = importMode === 'OVERWRITE' ? [] : getEmployees();
-        const itemsToImport: Employee[] = parsed.map((raw: any, index) => {
-          if (!raw.fullName) throw new Error(`Record #${index + 1} is missing an employee 'fullName' field.`);
-          return {
-            id: raw.id || generateId(),
-            fullName: String(raw.fullName),
-            jobPositionId: raw.jobPositionId || undefined,
-            status: raw.status === 'INACTIVE' ? 'INACTIVE' : 'ACTIVE',
-            email: raw.email || undefined,
-            contactNo: raw.contactNo || undefined
-          };
-        });
-
-        const merged = importMode === 'OVERWRITE' ? itemsToImport : [
-          ...current.filter(c => !itemsToImport.some(i => i.id === c.id || i.fullName.toLowerCase() === c.fullName.toLowerCase())),
-          ...itemsToImport
-        ];
-
-        saveEmployees(merged);
-        successCount = itemsToImport.length;
-        logs.push(`Imported ${successCount} employees successfully to the active directory.`);
-      }
-
-      else if (activeImportType === 'SALES') {
-        const current = importMode === 'OVERWRITE' ? [] : getSalesOrders();
-
-        // Let's search inventory items & clients to resolve references
-        const clientsList = getClients();
-        const inventoryList = getInventory();
-
-        const itemsToImport: SalesOrder[] = parsed.map((raw: any, index) => {
-          const clientName = raw.clientName || 'Walk-in Client';
-          let clientId = raw.clientId;
-          if (!clientId) {
-            const foundClient = clientsList.find(c => c.companyName.toLowerCase() === clientName.toLowerCase());
-            clientId = foundClient ? foundClient.id : undefined;
-          }
-
-          const itemName = raw.itemName || 'Custom Parts';
-          let itemId = raw.itemId;
-          if (!itemId) {
-            const foundItem = inventoryList.find(i => i.name.toLowerCase() === itemName.toLowerCase());
-            itemId = foundItem ? foundItem.id : undefined;
-          }
-
-          const status = ['PENDING', 'IN_PRODUCTION', 'SHIPPED', 'DELIVERED', 'CANCELLED'].includes(raw.status)
-            ? raw.status
-            : 'PENDING';
-
-          const qty = Number(raw.quantity) || 1;
-          const unitPrice = Number(raw.unitPrice) || 0.0;
-
-          return {
-            id: raw.id || generateId(),
-            clientId,
-            clientName,
-            itemId,
-            itemName,
-            quantity: qty,
-            unitPrice: unitPrice,
-            totalPrice: qty * unitPrice,
-            orderDate: raw.orderDate || new Date().toISOString().split('T')[0],
-            deliveryDate: raw.deliveryDate || new Date(Date.now() + 14 * 24 * 3600 * 1000).toISOString().split('T')[0],
-            status,
-            workflowTaskId: raw.workflowTaskId || undefined,
-            attachments: Array.isArray(raw.attachments) ? raw.attachments : (raw.attachment ? [raw.attachment] : [])
-          };
-        });
-
-        const merged = importMode === 'OVERWRITE' ? itemsToImport : [
-          ...current.filter(c => !itemsToImport.some(i => i.id === c.id)),
-          ...itemsToImport
-        ];
-
-        saveSalesOrders(merged);
-        successCount = itemsToImport.length;
-        logs.push(`Imported ${successCount} sales contracts successfully.`);
-      }
-
-      else if (activeImportType === 'PURCHASES') {
-        const current = importMode === 'OVERWRITE' ? [] : getPurchaseOrders();
-        const vendorsList = getVendors();
-        const inventoryList = getInventory();
-
-        const itemsToImport: PurchaseOrder[] = parsed.map((raw: any, index) => {
-          const vendorName = raw.vendorName || 'Generic Supplier';
-          let vendorId = raw.vendorId;
-          if (!vendorId) {
-            const foundVendor = vendorsList.find(v => v.companyName.toLowerCase() === vendorName.toLowerCase());
-            vendorId = foundVendor ? foundVendor.id : undefined;
-          }
-
-          const itemName = raw.itemName || 'Raw Material';
-          let itemId = raw.itemId;
-          if (!itemId) {
-            const foundItem = inventoryList.find(i => i.name.toLowerCase() === itemName.toLowerCase());
-            itemId = foundItem ? foundItem.id : undefined;
-          }
-
-          const status = ['DRAFT', 'ORDERED', 'RECEIVED', 'CANCELLED'].includes(raw.status)
-            ? raw.status
-            : 'ORDERED';
-
-          return {
-            id: raw.id || generateId(),
-            vendorId,
-            vendorName,
-            itemId,
-            itemName,
-            quantity: Number(raw.quantity) || 1,
-            unitCost: Number(raw.unitCost) || 0.0,
-            totalCost: (Number(raw.quantity) || 1) * (Number(raw.unitCost) || 0.0),
-            orderDate: raw.orderDate || new Date().toISOString().split('T')[0],
-            status,
-            receivedDate: raw.receivedDate || undefined,
-            attachments: Array.isArray(raw.attachments) ? raw.attachments : (raw.attachment ? [raw.attachment] : [])
-          };
-        });
-
-        const merged = importMode === 'OVERWRITE' ? itemsToImport : [
-          ...current.filter(c => !itemsToImport.some(i => i.id === c.id)),
-          ...itemsToImport
-        ];
-
-        savePurchaseOrders(merged);
-        successCount = itemsToImport.length;
-        logs.push(`Imported ${successCount} supplier purchase orders successfully.`);
-      }
-
-      setStatus({
-        type: 'success',
-        message: `Successfully completed import.`,
-        details: logs
-      });
-      onDataImported();
-    } catch (err: any) {
-      setStatus({
-        type: 'error',
-        message: 'Parsing or validation failed!',
-        details: [err.message || 'Make sure the Excel file is correctly formatted.']
-      });
-    }
+  const getTemplateHeaders = (category: Category): string => {
+    const cols = EXPECTED_COLUMNS[category];
+    const required = cols.filter(c => c.required).map(c => c.label).join('\t');
+    const optional = cols.filter(c => !c.required).map(c => c.label).join('\t');
+    return `Required columns:\n${required}${optional ? `\nOptional columns:\n${optional}` : ''}`;
   };
 
   const downloadErrorExcel = (headers: string[], rows: any[][], errors: string[]) => {
     const newHeaders = [...headers, 'Error Message'];
     const newRows = rows.map((row, i) => [...row, errors[i] || '']);
-
     const ws = XLSX.utils.aoa_to_sheet([newHeaders, ...newRows]);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Import_Errors");
-    XLSX.writeFile(wb, "Import_Errors.xlsx");
+    XLSX.utils.book_append_sheet(wb, ws, 'Import_Errors');
+    XLSX.writeFile(wb, 'Import_Errors.xlsx');
+  };
+
+  const runFlatImport = async (category: 'VENDORS' | 'CLIENTS' | 'MATERIAL' | 'PRODUCT', rows: Record<string, any>[]) => {
+    try {
+      const result = category === 'VENDORS' ? await importVendors(rows)
+        : category === 'CLIENTS' ? await importClients(rows)
+        : category === 'MATERIAL' ? await importMaterials(rows)
+        : await importProducts(rows);
+
+      setStatus({ type: 'success', message: 'Successfully completed import.', details: result.logs });
+      onDataImported();
+    } catch (err: any) {
+      setStatus({ type: 'error', message: 'Import failed!', details: [err.message || 'Make sure the Excel file is correctly formatted.'] });
+    }
+  };
+
+  const runHeaderDetailValidation = async (category: 'PURCHASE' | 'SALES', rows: Record<string, any>[]) => {
+    try {
+      if (category === 'PURCHASE') {
+        setPurchasePreview(await validatePurchaseImport(rows as unknown as PurchaseImportRow[]));
+      } else {
+        setSalesPreview(await validateSalesImport(rows as unknown as SalesImportRow[]));
+      }
+    } catch (err: any) {
+      setStatus({ type: 'error', message: 'Validation failed!', details: [err.message || 'Make sure the Excel file is correctly formatted.'] });
+    }
   };
 
   const executeImport = () => {
     if (!mappingState) return;
-    const expectedCols = EXPECTED_COLUMNS[activeImportType];
+    const importCategory = mappingState.category;
+    const expectedCols = EXPECTED_COLUMNS[importCategory];
 
-    // Check if required columns are mapped
     const missingMapped = expectedCols.filter(col => col.required && !mappingState.mapping[col.key]);
     if (missingMapped.length > 0) {
-      setStatus({
-        type: 'error',
-        message: 'Missing Required Column Mappings',
-        details: missingMapped.map(m => `Please map: ${m.label}`)
-      });
+      setStatus({ type: 'error', message: 'Missing Required Column Mappings', details: missingMapped.map(m => `Please map: ${m.label}`) });
       return;
     }
 
-    const parsed: any[] = [];
+    if (isHeaderDetailCategory(importCategory)) {
+      // Header+detail categories surface row-level errors in the Preview
+      // screen (validatePurchaseImport/validateSalesImport) instead of the
+      // download-an-error-Excel flow the flat categories use below.
+      const parsed: Record<string, any>[] = mappingState.dataRows.map((rowArray) => {
+        const rowObj: Record<string, any> = {};
+        mappingState.fileHeaders.forEach((header, index) => { rowObj[header] = rowArray[index]; });
+        const mappedObj: Record<string, any> = {};
+        expectedCols.forEach(col => {
+          const fileHeader = mappingState.mapping[col.key];
+          mappedObj[col.key] = fileHeader ? rowObj[fileHeader] : undefined;
+        });
+        return mappedObj;
+      });
+
+      setMappingState(null);
+      runHeaderDetailValidation(importCategory, parsed);
+      return;
+    }
+
+    const parsed: Record<string, any>[] = [];
     const rowErrors: string[] = [];
     let hasErrors = false;
 
-    mappingState.dataRows.forEach((rowArray, rowIndex) => {
-      const rowObj: any = {};
-      mappingState.fileHeaders.forEach((header, index) => {
-        rowObj[header] = rowArray[index];
-      });
+    mappingState.dataRows.forEach((rowArray) => {
+      const rowObj: Record<string, any> = {};
+      mappingState.fileHeaders.forEach((header, index) => { rowObj[header] = rowArray[index]; });
 
-      const mappedObj: any = {};
+      const mappedObj: Record<string, any> = {};
       let rowError = '';
 
       expectedCols.forEach(col => {
         const fileHeader = mappingState.mapping[col.key];
         const val = fileHeader ? rowObj[fileHeader] : undefined;
         mappedObj[col.key] = val;
-
         if (col.required && (val === undefined || val === null || String(val).trim() === '')) {
           rowError += `Missing value for ${col.label}. `;
           hasErrors = true;
@@ -674,55 +213,78 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
       setStatus({
         type: 'error',
         message: 'Import failed due to missing required data in some rows.',
-        details: ['An Excel file with error messages has been downloaded. Please fix the errors and try again.']
+        details: ['An Excel file with error messages has been downloaded. Please fix the errors and try again.'],
       });
       setMappingState(null);
       return;
     }
 
-    validateAndImport(parsed);
     setMappingState(null);
+    runFlatImport(importCategory, parsed);
+  };
+
+  const handleConfirmPurchaseImport = async () => {
+    if (!purchasePreview) return;
+    const result = await commitPurchaseImport(purchasePreview.groups);
+    setPurchasePreview(null);
+    if (result.failed) {
+      setStatus({
+        type: 'error',
+        message: `Import stopped at Purchase No "${result.failed.purchaseNo}".`,
+        details: [result.failed.message, `Successfully created before the failure: ${result.succeeded.join(', ') || 'none'}.`],
+      });
+    } else {
+      setStatus({ type: 'success', message: `Successfully imported ${result.succeeded.length} purchase order(s).`, details: result.succeeded });
+      onDataImported();
+    }
+  };
+
+  const handleConfirmSalesImport = async () => {
+    if (!salesPreview) return;
+    const result = await commitSalesImport(salesPreview.groups);
+    setSalesPreview(null);
+    if (result.failed) {
+      setStatus({
+        type: 'error',
+        message: `Import stopped at Sales No "${result.failed.salesNo}".`,
+        details: [result.failed.message, `Successfully created before the failure: ${result.succeeded.join(', ') || 'none'}.`],
+      });
+    } else {
+      setStatus({ type: 'success', message: `Successfully imported ${result.succeeded.length} sales order(s).`, details: result.succeeded });
+      onDataImported();
+    }
   };
 
   const handleFileProcessing = (file: File) => {
     const reader = new FileReader();
     reader.onload = (e) => {
       const data = e.target?.result;
-      if (file.name.endsWith('.xlsx') || file.name.endsWith('.xls')) {
-        const workbook = XLSX.read(data, { type: 'binary' });
-
-        if (activeImportType === 'FULL_BACKUP') {
-          const fullBackupData: any = {};
-          workbook.SheetNames.forEach(sheetName => {
-            fullBackupData[sheetName] = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]);
-          });
-          validateAndImport(fullBackupData);
-        } else {
-          const sheetName = workbook.SheetNames[0];
-          const worksheet = workbook.Sheets[sheetName];
-          const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' }) as any[][];
-
-          if (rows.length < 2) {
-            setStatus({ type: 'error', message: 'File has no data rows.' });
-            return;
-          }
-
-          const fileHeaders = rows[0].map(h => String(h || '').trim());
-          const dataRows = rows.slice(1);
-
-          // Auto-mapping
-          const expected = EXPECTED_COLUMNS[activeImportType];
-          const mapping: Record<string, string> = {};
-          expected.forEach(col => {
-            const match = fileHeaders.find(h => h.toLowerCase() === col.key.toLowerCase() || h.toLowerCase() === col.label.toLowerCase());
-            if (match) mapping[col.key] = match;
-          });
-
-          setMappingState({ fileHeaders, dataRows, mapping });
-        }
-      } else {
+      if (!file.name.endsWith('.xlsx') && !file.name.endsWith('.xls')) {
         setStatus({ type: 'error', message: 'Only Excel files (.xlsx, .xls) are supported.' });
+        return;
       }
+
+      const workbook = XLSX.read(data, { type: 'binary' });
+      const sheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[sheetName];
+      const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' }) as any[][];
+
+      if (rows.length < 2) {
+        setStatus({ type: 'error', message: 'File has no data rows.' });
+        return;
+      }
+
+      const fileHeaders = rows[0].map(h => String(h || '').trim());
+      const dataRows = rows.slice(1);
+
+      const expected = EXPECTED_COLUMNS[activeCategory];
+      const mapping: Record<string, string> = {};
+      expected.forEach(col => {
+        const match = fileHeaders.find(h => h.toLowerCase() === col.key.toLowerCase() || h.toLowerCase() === col.label.toLowerCase());
+        if (match) mapping[col.key] = match;
+      });
+
+      setMappingState({ category: activeCategory, fileHeaders, dataRows, mapping });
     };
     reader.readAsBinaryString(file);
   };
@@ -735,28 +297,23 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
   const handleDrag = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    if (e.type === "dragenter" || e.type === "dragover") {
-      setDragActive(true);
-    } else if (e.type === "dragleave") {
-      setDragActive(false);
-    }
+    if (e.type === 'dragenter' || e.type === 'dragover') setDragActive(true);
+    else if (e.type === 'dragleave') setDragActive(false);
   };
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
     setDragActive(false);
-
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      handleFileProcessing(e.dataTransfer.files[0]);
-    }
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) handleFileProcessing(e.dataTransfer.files[0]);
   };
+
+  const activePreview = activeCategory === 'PURCHASE' ? purchasePreview : activeCategory === 'SALES' ? salesPreview : null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
       <div className="w-full max-w-4xl bg-white border border-slate-200 rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in duration-200">
 
-        {/* Modal Header */}
         <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50 shrink-0">
           <div className="flex items-center space-x-2.5">
             <span className="p-1.5 bg-blue-600 rounded text-white shrink-0 flex items-center justify-center">
@@ -764,46 +321,33 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
             </span>
             <div>
               <h3 className="font-sans font-bold text-slate-900 text-sm">ERP Data Import & Export Hub</h3>
-              <p className="text-[10px] text-slate-500 font-mono">Load, merge, overwrite, or export vendors, clients, inventory, employees, sales, and purchases</p>
+              <p className="text-[10px] text-slate-500 font-mono">Load or export Vendors, Clients, Material, Product, Purchase and Sales orders</p>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="text-slate-400 hover:text-slate-600 font-bold text-base p-1.5 leading-none bg-transparent"
-          >
+          <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-600 font-bold text-base p-1.5 leading-none bg-transparent">
             &times;
           </button>
         </div>
 
-        {/* Modal Body (Two Column Layout) */}
         <div className="flex-1 overflow-y-auto p-5 flex flex-col lg:flex-row gap-5 min-h-0">
 
-          {/* Left Column: Side Controls & Navigation */}
           <div className="w-full lg:w-1/3 flex flex-col space-y-4 shrink-0">
-
             <div className="space-y-1.5">
-              <span className="font-semibold block text-slate-700 text-xs uppercase tracking-wider">1. Select Target Category</span>
+              <span className="font-semibold block text-slate-700 text-xs uppercase tracking-wider">1. Select Category</span>
               <div className="space-y-1">
-                {[
-                  { id: 'FULL_BACKUP' as ImportType, label: 'Full System Backup (.xlsx)', icon: Database, color: 'text-blue-600 bg-blue-50 border-blue-200' },
-                  { id: 'INVENTORY' as ImportType, label: 'Inventory Items', icon: Layers, color: 'text-amber-600 bg-amber-50 border-amber-200' },
-                  { id: 'VENDORS' as ImportType, label: 'Vendors & Suppliers', icon: Users, color: 'text-purple-600 bg-purple-50 border-purple-200' },
-                  { id: 'CLIENTS' as ImportType, label: 'Client Database', icon: Users, color: 'text-emerald-600 bg-emerald-50 border-emerald-200' },
-                  { id: 'EMPLOYEES' as ImportType, label: 'Employee Directory', icon: Briefcase, color: 'text-teal-600 bg-teal-50 border-teal-200' },
-                  { id: 'SALES' as ImportType, label: 'Sales Contracts', icon: FileSpreadsheet, color: 'text-sky-600 bg-sky-50 border-sky-200' },
-                  { id: 'PURCHASES' as ImportType, label: 'Material Purchases', icon: ShoppingBag, color: 'text-pink-600 bg-pink-50 border-pink-200' },
-                ].map((item) => {
+                {CATEGORY_LIST.map((item) => {
                   const Icon = item.icon;
-                  const isActive = activeImportType === item.id;
+                  const isActive = activeCategory === item.id;
                   return (
                     <button
                       key={item.id}
                       type="button"
                       onClick={() => {
-                        setActiveImportType(item.id);
+                        setActiveCategory(item.id);
                         setStatus({ type: 'idle', message: '' });
                         setMappingState(null);
+                        setPurchasePreview(null);
+                        setSalesPreview(null);
                       }}
                       className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-xs font-medium border transition-all text-left ${isActive
                         ? 'bg-blue-600 text-white border-blue-600 shadow-sm font-semibold'
@@ -814,42 +358,10 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
                         <Icon className="w-4 h-4 shrink-0" />
                         <span>{item.label}</span>
                       </div>
-                      <ArrowRight className={`w-3.5 h-3.5 opacity-60 transition-transform ${isActive ? 'translate-x-0.5' : 'group-hover:translate-x-1'}`} />
+                      <ArrowRight className={`w-3.5 h-3.5 opacity-60 transition-transform ${isActive ? 'translate-x-0.5' : ''}`} />
                     </button>
                   );
                 })}
-              </div>
-            </div>
-
-            <div className="space-y-1.5 pt-2 border-t border-slate-100">
-              <span className="font-semibold block text-slate-700 text-xs uppercase tracking-wider">2. Choose Import Strategy</span>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setImportMode('MERGE')}
-                  className={`p-2 rounded-lg border text-center transition-all flex flex-col items-center justify-center ${importMode === 'MERGE'
-                    ? 'bg-blue-50 border-blue-500 text-blue-700 font-semibold shadow-sm'
-                    : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
-                    }`}
-                >
-                  <span className="text-xs">Merge Records</span>
-                  <span className="text-[9px] text-slate-400 font-normal mt-0.5 font-mono">Updates or adds only</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (confirm('WARNING: Overwrite strategy will completely delete current records in this category and replace them with imported ones. Proceed?')) {
-                      setImportMode('OVERWRITE');
-                    }
-                  }}
-                  className={`p-2 rounded-lg border text-center transition-all flex flex-col items-center justify-center ${importMode === 'OVERWRITE'
-                    ? 'bg-amber-50 border-amber-500 text-amber-700 font-semibold shadow-sm'
-                    : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
-                    }`}
-                >
-                  <span className="text-xs text-amber-800">Overwrite DB</span>
-                  <span className="text-[9px] text-red-500/80 font-normal mt-0.5 font-mono">Deletes old records!</span>
-                </button>
               </div>
             </div>
 
@@ -859,19 +371,34 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
                 <span>Format Guidelines</span>
               </div>
               <p className="leading-relaxed">
-                Provide a clean Excel (.xlsx) file. Missing identifiers will be auto-generated on-the-fly. Unit pricing values will default to zero if absent.
+                Vendors/Clients/Material/Product are matched to existing records by name (and code, for Material/Product) — a match updates that record, otherwise a new one is created.
               </p>
-              <p className="leading-relaxed font-semibold text-amber-700">
-                ⚠️ Local storage space limits sizes to &lt; 2.5MB.
+              <p className="leading-relaxed">
+                Purchase/Sales rows are grouped into orders by Purchase No/Sales No. Every order is validated before anything is saved — you'll see a preview with any errors first.
               </p>
             </div>
 
+            <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+              <div className="flex items-center justify-between gap-3 mb-3">
+                <div>
+                  <h4 className="font-bold text-slate-900 text-xs">Export Data</h4>
+                  <p className="text-[10px] text-slate-400">Download the current {activeCategoryLabel} as Excel.</p>
+                </div>
+                <Download className="w-4 h-4 text-blue-500 shrink-0" />
+              </div>
+              <button
+                type="button"
+                onClick={() => handleExport(activeCategory)}
+                className="w-full flex items-center justify-center gap-2 px-3 py-2.5 border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 hover:border-blue-300 hover:bg-blue-50/50 transition-all"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Export {activeCategoryLabel}</span>
+              </button>
+            </div>
           </div>
 
-          {/* Right Column: Interaction panel */}
           <div className="flex-1 flex flex-col space-y-4 min-w-0">
 
-            {/* Status indicators */}
             {status.type !== 'idle' && (
               <div className={`p-4 rounded-xl border text-xs leading-relaxed animate-in slide-in-from-top-2 duration-200 ${status.type === 'success'
                 ? 'bg-emerald-50 border-emerald-100 text-emerald-800'
@@ -879,17 +406,15 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
                 }`}>
                 <div className="flex items-start space-x-2.5">
                   {status.type === 'success' ? (
-                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5 animate-bounce-subtle" />
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
                   ) : (
-                    <AlertTriangle className="w-4 h-4 text-red-600 shrink-0 mt-0.5 animate-pulse" />
+                    <AlertTriangle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
                   )}
                   <div className="space-y-1.5 w-full">
                     <span className="font-bold block text-slate-900">{status.message}</span>
                     {status.details && status.details.length > 0 && (
                       <ul className="list-disc list-inside space-y-1 font-mono text-[10px] bg-white/65 p-2 rounded-lg max-h-[140px] overflow-y-auto">
-                        {status.details.map((detail, index) => (
-                          <li key={index}>{detail}</li>
-                        ))}
+                        {status.details.map((detail, index) => <li key={index}>{detail}</li>)}
                       </ul>
                     )}
                   </div>
@@ -897,12 +422,55 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
               </div>
             )}
 
-            {/* Main file uploader area */}
-            {mappingState ? (
-              <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm animate-in fade-in zoom-in duration-200 flex-1 overflow-y-auto">
-                <h4 className="font-bold text-slate-900 mb-4 text-sm">Map Columns for {activeImportType}</h4>
+            {activePreview ? (
+              <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex-1 overflow-y-auto space-y-4">
+                <h4 className="font-bold text-slate-900 text-sm">Import Preview — {activeCategory === 'PURCHASE' ? 'Purchase Orders' : 'Sales Orders'}</h4>
+                <div className="grid grid-cols-3 gap-3 text-center">
+                  <div className="bg-slate-50 rounded-lg p-3">
+                    <div className="text-lg font-bold text-slate-900">{activePreview.groups.length}</div>
+                    <div className="text-[10px] text-slate-500 uppercase tracking-wide">Total Orders</div>
+                  </div>
+                  <div className="bg-slate-50 rounded-lg p-3">
+                    <div className="text-lg font-bold text-slate-900">{activePreview.totalDetailRows}</div>
+                    <div className="text-[10px] text-slate-500 uppercase tracking-wide">Total Detail Rows</div>
+                  </div>
+                  <div className={`rounded-lg p-3 ${activePreview.errors.length > 0 ? 'bg-red-50' : 'bg-emerald-50'}`}>
+                    <div className={`text-lg font-bold ${activePreview.errors.length > 0 ? 'text-red-700' : 'text-emerald-700'}`}>{activePreview.errors.length}</div>
+                    <div className="text-[10px] text-slate-500 uppercase tracking-wide">Validation Errors</div>
+                  </div>
+                </div>
+
+                {activePreview.errors.length > 0 && (
+                  <div className="bg-red-50 border border-red-100 rounded-lg p-3 max-h-[220px] overflow-y-auto">
+                    <ul className="space-y-1 text-[11px] text-red-800 font-mono">
+                      {activePreview.errors.map((err: ImportRowError, idx: number) => (
+                        <li key={idx}>Row {err.row}: {err.message}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                <div className="flex space-x-3 justify-end pt-2 border-t border-slate-100">
+                  <button
+                    onClick={() => { setPurchasePreview(null); setSalesPreview(null); }}
+                    className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg text-xs font-medium transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={activeCategory === 'PURCHASE' ? handleConfirmPurchaseImport : handleConfirmSalesImport}
+                    disabled={activePreview.errors.length > 0}
+                    className="px-4 py-2 bg-blue-600 text-white rounded-lg text-xs font-medium transition-colors hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    Confirm &amp; Import
+                  </button>
+                </div>
+              </div>
+            ) : mappingState ? (
+              <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex-1 overflow-y-auto">
+                <h4 className="font-bold text-slate-900 mb-4 text-sm">Map Columns for {CATEGORY_LIST.find(c => c.id === mappingState.category)?.label}</h4>
                 <div className="space-y-3 mb-6">
-                  {EXPECTED_COLUMNS[activeImportType].map(col => (
+                  {EXPECTED_COLUMNS[mappingState.category].map(col => (
                     <div key={col.key} className="flex items-center justify-between border-b border-slate-100 pb-3">
                       <div className="w-1/2 flex items-center">
                         <span className="text-xs font-medium text-slate-700">{col.label}</span>
@@ -913,40 +481,28 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
                           className="w-full text-xs border border-slate-200 rounded-md p-2 focus:ring-2 focus:ring-blue-500 outline-none"
                           value={mappingState.mapping[col.key] || ''}
                           onChange={(e) => {
-                            setMappingState(prev => prev ? {
-                              ...prev,
-                              mapping: { ...prev.mapping, [col.key]: e.target.value }
-                            } : null)
+                            setMappingState(prev => prev ? { ...prev, mapping: { ...prev.mapping, [col.key]: e.target.value } } : null);
                           }}
                         >
                           <option value="">-- Ignore / Not Mapped --</option>
-                          {mappingState.fileHeaders.map((h, i) => (
-                            <option key={i} value={h}>{h}</option>
-                          ))}
+                          {mappingState.fileHeaders.map((h, i) => <option key={i} value={h}>{h}</option>)}
                         </select>
                       </div>
                     </div>
                   ))}
                 </div>
                 <div className="flex space-x-3 justify-end mt-4">
-                  <button
-                    onClick={() => setMappingState(null)}
-                    className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg text-xs font-medium transition-colors"
-                  >
+                  <button onClick={() => setMappingState(null)} className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg text-xs font-medium transition-colors">
                     Cancel
                   </button>
-                  <button
-                    onClick={executeImport}
-                    className="px-4 py-2 bg-blue-600 text-white rounded-lg text-xs font-medium transition-colors hover:bg-blue-700"
-                  >
-                    Confirm & Import
+                  <button onClick={executeImport} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-xs font-medium transition-colors hover:bg-blue-700">
+                    {isHeaderDetailCategory(mappingState.category) ? 'Continue to Preview' : 'Confirm & Import'}
                   </button>
                 </div>
               </div>
             ) : (
               <div className="space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {/* Box A: Drag and Drop Upload */}
                   <div
                     onDragEnter={handleDrag}
                     onDragOver={handleDrag}
@@ -958,23 +514,14 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
                       : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50/50 dark:hover:bg-slate-950'
                       }`}
                   >
-                    <input
-                      type="file"
-                      ref={fileInputRef}
-                      onChange={handleFileUpload}
-                      accept=".xlsx,.xls"
-                      className="hidden"
-                    />
-                    <UploadCloud className="w-8 h-8 text-slate-400 mb-2 animate-bounce-subtle" />
-                    <span className="text-xs font-semibold text-slate-800 text-center block">
-                      Upload raw file backup
-                    </span>
+                    <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".xlsx,.xls" className="hidden" />
+                    <UploadCloud className="w-8 h-8 text-slate-400 mb-2" />
+                    <span className="text-xs font-semibold text-slate-800 text-center block">Upload Excel file</span>
                     <span className="text-[10px] text-slate-400 text-center mt-1">
-                      Drag and drop your exported <code className="font-mono bg-slate-100 px-1 py-0.5 rounded text-slate-600">.xlsx</code> file or click to browse
+                      Drag and drop your <code className="font-mono bg-slate-100 px-1 py-0.5 rounded text-slate-600">.xlsx</code> file or click to browse
                     </span>
                   </div>
 
-                  {/* Box B: Explanatory Template */}
                   <div className="bg-slate-900 text-slate-300 rounded-xl p-4 flex flex-col justify-between min-h-[150px] font-mono text-[10px]">
                     <div className="space-y-1">
                       <div className="flex items-center justify-between text-slate-400 pb-1.5 border-b border-slate-800">
@@ -982,14 +529,14 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
                         <span className="text-[8px] bg-slate-800 px-1 py-0.5 rounded text-slate-500">Read-only template</span>
                       </div>
                       <pre className="mt-2 text-slate-300 font-mono text-[9px] leading-relaxed max-h-[100px] overflow-y-auto overflow-x-hidden select-all whitespace-pre-wrap">
-                        {getTemplateHeaders(activeImportType)}
+                        {getTemplateHeaders(activeCategory)}
                       </pre>
                     </div>
                     <button
                       type="button"
                       onClick={() => {
-                        navigator.clipboard.writeText(getTemplateHeaders(activeImportType));
-                        alert("Template copied to clipboard!");
+                        navigator.clipboard.writeText(getTemplateHeaders(activeCategory));
+                        alert('Template copied to clipboard!');
                       }}
                       className="mt-3 w-full py-1.5 bg-slate-800 hover:bg-slate-700 hover:text-white rounded text-[10px] text-slate-300 font-sans font-medium transition-colors flex items-center justify-center space-x-1"
                     >
@@ -998,59 +545,17 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
                     </button>
                   </div>
                 </div>
-
-                <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
-                  <div className="flex items-center justify-between gap-3 mb-3">
-                    <div>
-                      <h4 className="font-bold text-slate-900 text-xs">Export Data</h4>
-                      <p className="text-[10px] text-slate-400">Download clean Excel files for accounting, audits, or migration.</p>
-                    </div>
-                    <Download className="w-4 h-4 text-blue-500 shrink-0" />
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    {[
-                      { id: 'CONTACTS' as ExportType, label: 'Vendors & Clients', icon: Users, tone: 'hover:border-emerald-300 hover:bg-emerald-50/50 dark:hover:bg-slate-950' },
-                      { id: 'INVENTORY' as ExportType, label: 'Inventory Data', icon: Layers, tone: 'hover:border-amber-300 hover:bg-amber-50/50 dark:hover:bg-slate-950' },
-                      { id: 'EMPLOYEES' as ExportType, label: 'Employee Data', icon: Briefcase, tone: 'hover:border-teal-300 hover:bg-teal-50/50 dark:hover:bg-slate-950' },
-                      { id: 'SALES' as ExportType, label: 'Sales Data', icon: FileSpreadsheet, tone: 'hover:border-sky-300 hover:bg-sky-50/50 dark:hover:bg-slate-950' },
-                      { id: 'PURCHASES' as ExportType, label: 'Purchase Data', icon: ShoppingBag, tone: 'hover:border-pink-300 hover:bg-pink-50/50 dark:hover:bg-slate-950' },
-                    ].map((item) => {
-                      const Icon = item.icon;
-                      return (
-                        <button
-                          key={item.id}
-                          type="button"
-                          onClick={() => exportCategory(item.id)}
-                          className={`flex items-center justify-between gap-2 px-3 py-2.5 border border-slate-200 rounded-lg text-left text-xs text-slate-700 transition-all ${item.tone}`}
-                        >
-                          <span className="flex items-center gap-2 min-w-0">
-                            <Icon className="w-4 h-4 text-slate-500 shrink-0" />
-                            <span className="font-semibold truncate">{item.label}</span>
-                          </span>
-                          <Download className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
               </div>
             )}
 
-            {/* Action buttons */}
             <div className="flex items-center justify-end space-x-2 pt-3 border-t border-slate-100 shrink-0">
-              <button
-                type="button"
-                onClick={onClose}
-                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold transition-colors"
-              >
+              <button type="button" onClick={onClose} className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold transition-colors">
                 Close Hub
               </button>
             </div>
 
           </div>
-
         </div>
-
       </div>
     </div>
   );
