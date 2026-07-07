@@ -7,15 +7,18 @@ import React, { useState, useMemo, useEffect } from 'react';
 import {
   getPurchases, createPurchaseQuotation, updatePurchase, convertToPurchaseOrder,
   receivePurchaseOrder, cancelPurchaseOrder, deletePurchase, getMaterialCategories,
+  getPurchaseById,
   PurchaseDetailInput,
 } from '../services/PurchasesService';
 import { getMaterials } from '../services/MaterialService';
 import { getVendors } from '../services/ContactsService';
-import { getSalesOrdersForLinking, SalesOrderLinkOption } from '../services/OrdersService';
+import { getSalesOrdersForLinking, SalesOrderLinkOption, getSalesOrderMaterialRequirements, SalesOrderMaterialRequirement } from '../services/OrdersService';
 import { PurchaseHeader, Vendor, Material, Attachment, MaterialCategory } from '../types';
-import { Plus, Calendar, Check, Paperclip, Trash2, Edit, FileText, ArrowRightCircle } from 'lucide-react';
+import { Plus, Calendar, Check, Paperclip, Trash2, Edit, FileText, ArrowRightCircle, Eye } from 'lucide-react';
 import AttachmentSection from './AttachmentSection';
 import QuotationModal from './QuotationModal';
+import InvoiceModal from './InvoiceModal';
+import PurchaseOrderDetailView from './PurchaseOrderDetailView';
 import LoadingSpinner from './LoadingSpinner';
 import ComboBox from './ComboBox';
 import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, FormField, SearchInput } from './ui';
@@ -25,7 +28,19 @@ import { debounce } from 'lodash'
 type PurchaseTab = 'QUOTATION' | 'PO';
 type FormMode = 'CREATE' | 'EDIT' | 'CONVERT';
 
-export default function PurchasesView() {
+interface PurchasesViewProps {
+  // Cross-tab drill-in: MaterialDetailView.tsx's purchase history links here
+  // via App.tsx passing a pending purchase header id, since Purchases/Material
+  // are separate top-level tabs with no shared router.
+  initialPurchaseId?: string | null;
+  onInitialPurchaseHandled?: () => void;
+  // Called instead of closing locally when the currently open detail page
+  // was reached via that cross-tab drill-in — lets App.tsx send the user
+  // back to the originating Material detail page rather than this list.
+  onReturnToOrigin?: () => void;
+}
+
+export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHandled, onReturnToOrigin }: PurchasesViewProps = {}) {
   const [activeTab, setActiveTab] = useState<PurchaseTab>('QUOTATION');
   const [searchQuery, setSearchQuery] = useState([{ search: '' }, { search: '' }]);
   const [purchases, setPurchases] = useState<PurchaseHeader[]>([]);
@@ -36,6 +51,48 @@ export default function PurchasesView() {
   const [materialCategories, setMaterialCategories] = useState<MaterialCategory[]>([]);
   const [salesLinkOptions, setSalesLinkOptions] = useState<SalesOrderLinkOption[]>([]);
   const [receivingId, setReceivingId] = useState<string | null>(null);
+
+  // Drill-down: selected purchase (shows PurchaseOrderDetailView instead of the table)
+  const [selectedPurchase, setSelectedPurchase] = useState<PurchaseHeader | null>(null);
+  // Tracks whether the open detail page was reached via the cross-tab
+  // initialPurchaseId drill-in (Back should return to that origin) or a
+  // plain click on a row in this view's own list (Back should just close).
+  const [detailOpenedExternally, setDetailOpenedExternally] = useState(false);
+  const refreshSelectedPurchase = (id: string) => {
+    getPurchaseById(id).then((purchase) => { if (purchase) setSelectedPurchase(purchase); }).catch(console.error);
+  };
+
+  const openPurchaseDetail = (purchase: PurchaseHeader) => {
+    setDetailOpenedExternally(false);
+    setSelectedPurchase(purchase);
+  };
+
+  const handlePurchaseDetailBack = () => {
+    if (detailOpenedExternally && onReturnToOrigin) {
+      onReturnToOrigin();
+    } else {
+      setSelectedPurchase(null);
+    }
+  };
+
+  // Cross-tab drill-in: fetch and open the purchase directly by id
+  // (independent of whatever tab/search filter is currently active), then
+  // tell the parent it's been handled so switching tabs again doesn't
+  // re-trigger it.
+  useEffect(() => {
+    if (!initialPurchaseId) return;
+    CallAPI(() => getPurchaseById(initialPurchaseId), {
+      onCompleted: (purchase) => {
+        if (purchase) {
+          setSelectedPurchase(purchase);
+          setDetailOpenedExternally(true);
+        }
+        onInitialPurchaseHandled?.();
+      },
+      onError: (err) => { console.error(err); onInitialPurchaseHandled?.(); },
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialPurchaseId]);
 
   useEffect(() => {
     getVendors().then(setVendors).catch(console.error);
@@ -91,6 +148,12 @@ export default function PurchasesView() {
   const [tempQuantity, setTempQuantity] = useState(10);
   const [tempUnitCost, setTempUnitCost] = useState(0);
   const [formAttachment, setFormAttachment] = useState<Attachment | undefined>(undefined);
+  const [requiredMaterials, setRequiredMaterials] = useState<SalesOrderMaterialRequirement[]>([]);
+
+  useEffect(() => {
+    if (!formSalesHeaderId) { setRequiredMaterials([]); return; }
+    getSalesOrderMaterialRequirements(formSalesHeaderId).then(setRequiredMaterials).catch(console.error);
+  }, [formSalesHeaderId]);
 
   const resetForm = () => {
     setEditHeaderId(null);
@@ -186,6 +249,14 @@ export default function PurchasesView() {
     setFormDetails(formDetails.filter((_, idx) => idx !== index));
   };
 
+  const handleUpdateFormItemQuantity = (index: number, quantity: number) => {
+    setFormDetails(formDetails.map((d, idx) => idx === index ? { ...d, quantity, totalPrice: quantity * d.unitCost } : d));
+  };
+
+  const handleUpdateFormItemUnitCost = (index: number, unitCost: number) => {
+    setFormDetails(formDetails.map((d, idx) => idx === index ? { ...d, unitCost, totalPrice: d.quantity * unitCost } : d));
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formVendorId) return;
@@ -230,12 +301,12 @@ export default function PurchasesView() {
       });
     } else if (formMode === 'EDIT' && editHeaderId) {
       await CallAPI(() => updatePurchase(editHeaderId, input), {
-        onCompleted: () => loadPurchases(activeTab),
+        onCompleted: () => { loadPurchases(activeTab); refreshSelectedPurchase(editHeaderId); },
         onError: console.error,
       });
     } else if (formMode === 'CONVERT' && editHeaderId) {
       await CallAPI(() => convertToPurchaseOrder(editHeaderId, input, formOrderDate || todayStr()), {
-        onCompleted: () => loadPurchases(activeTab),
+        onCompleted: () => { loadPurchases(activeTab); refreshSelectedPurchase(editHeaderId); },
         onError: console.error,
       });
     }
@@ -247,7 +318,10 @@ export default function PurchasesView() {
   const handleDelete = async (id: string) => {
     if (!confirm('Are you sure you want to delete this purchase?')) return;
     await CallAPI(() => deletePurchase(id), {
-      onCompleted: () => loadPurchases(activeTab),
+      onCompleted: () => {
+        loadPurchases(activeTab);
+        setSelectedPurchase((prev) => (prev?.id === id ? null : prev));
+      },
       onError: console.error,
     });
   };
@@ -259,6 +333,7 @@ export default function PurchasesView() {
       onCompleted: () => {
         setReceivingId(null);
         loadPurchases(activeTab);
+        refreshSelectedPurchase(purchase.id);
       },
       onError: (err) => {
         setReceivingId(null);
@@ -270,7 +345,7 @@ export default function PurchasesView() {
   const handleCancel = async (id: string) => {
     if (!confirm('Cancel this Purchase Order?')) return;
     await CallAPI(() => cancelPurchaseOrder(id), {
-      onCompleted: () => loadPurchases(activeTab),
+      onCompleted: () => { loadPurchases(activeTab); refreshSelectedPurchase(id); },
       onError: console.error,
     });
   };
@@ -291,6 +366,21 @@ export default function PurchasesView() {
   return (
     <div className="space-y-6" id="purchases-view">
       {loading && <LoadingSpinner message="Verifying supply orders..." subtitle="PURCHASE_ORDERS" />}
+
+      {selectedPurchase ? (
+        <PurchaseOrderDetailView
+          purchase={selectedPurchase}
+          onBack={handlePurchaseDetailBack}
+          receivingId={receivingId}
+          onEdit={openEditForm}
+          onConvert={openConvertForm}
+          onDelete={handleDelete}
+          onReceive={handleReceive}
+          onCancel={handleCancel}
+          onOpenQuotationDoc={openQuotationDoc}
+        />
+      ) : (
+      <>
       {/* Tab toggle + search + actions */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div className="flex space-x-1 p-1 bg-slate-100 rounded-lg border border-slate-200/50 self-start">
@@ -367,6 +457,20 @@ export default function PurchasesView() {
               />
             </FormField>
 
+            {formSalesHeaderId && requiredMaterials.length > 0 && (
+              <div className="sm:col-span-2 border border-indigo-100 rounded-lg p-3 bg-indigo-50/40 space-y-1.5">
+                <span className="font-semibold block text-[11px] text-indigo-900">Required Materials for Linked Sales Order</span>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-0.5">
+                  {requiredMaterials.map(r => (
+                    <div key={r.materialId} className="flex justify-between text-[11px] text-indigo-800 font-mono bg-white/60 rounded px-2 py-1">
+                      <span>{r.materialName}</span>
+                      <span>{r.requiredQuantity}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {formMode === 'CONVERT' && (
               <FormField label="Order Date *" labelClassName="font-semibold block text-slate-700" colSpan="sm:col-span-2">
                 <input
@@ -401,8 +505,25 @@ export default function PurchasesView() {
                       {formDetails.map((item, idx) => (
                         <tr key={idx} className="hover:bg-slate-50">
                           <td className="p-2 font-semibold text-slate-800">{item.materialName}</td>
-                          <td className="p-2 text-right font-mono">{item.quantity}</td>
-                          <td className="p-2 text-right font-mono">RM {item.unitCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                          <td className="p-2 text-right">
+                            <input
+                              type="number"
+                              min="1"
+                              value={item.quantity}
+                              onChange={(e) => handleUpdateFormItemQuantity(idx, Number(e.target.value))}
+                              className="w-20 px-1.5 py-1 bg-white border border-slate-200 rounded text-right font-mono text-[11px] focus:outline-none focus:border-blue-500"
+                            />
+                          </td>
+                          <td className="p-2 text-right">
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              value={item.unitCost}
+                              onChange={(e) => handleUpdateFormItemUnitCost(idx, Number(e.target.value))}
+                              className="w-24 px-1.5 py-1 bg-white border border-slate-200 rounded text-right font-mono text-[11px] focus:outline-none focus:border-blue-500"
+                            />
+                          </td>
                           <td className="p-2 text-right font-mono font-semibold">RM {item.totalPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                           <td className="p-2 text-center">
                             <button type="button" onClick={() => handleRemoveFormItem(idx)} className="text-red-500 hover:text-red-700 p-1" title="Remove item">
@@ -573,6 +694,9 @@ export default function PurchasesView() {
 
                     <td className="p-4 text-right">
                       <div className="flex items-center justify-end space-x-1.5">
+                        <button onClick={() => openPurchaseDetail(p)} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-slate-50 rounded transition-colors" title="View">
+                          <Eye className="w-3.5 h-3.5" />
+                        </button>
                         {p.status === 'QUOTATION' && (
                           <>
                             <button onClick={() => openEditForm(p)} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-slate-50 rounded transition-colors" title="Edit">
@@ -633,6 +757,8 @@ export default function PurchasesView() {
           </table>
         </div>
       </Card>
+      </>
+      )}
 
       <QuotationModal
         purchase={selectedQuotation}

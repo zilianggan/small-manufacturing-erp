@@ -131,6 +131,7 @@ export interface PurchaseDetail {
   unitCost: number;
   totalPrice: number;
   receivedQuantity: number;
+  material?: Material;
 }
 
 export interface PurchaseHeader {
@@ -172,6 +173,7 @@ export interface SalesDetail {
   totalPrice: number;
   remark?: string;
   materials: ProductionMaterialUsage[];
+  product?: Product;
 }
 
 export interface SalesHeader {
@@ -225,6 +227,28 @@ export interface DashboardStats {
   lowStockCount: number;
   pendingOrdersCount: number;
   activeWorkflowsCount: number;
+}
+
+export interface DashboardMonthlyTotal {
+  month: string; // 'YYYY-MM'
+  sales: number;
+  purchases: number;
+}
+
+export interface DashboardLowStockItem {
+  id: string;
+  name: string;
+  code?: string;
+  quantity: number;
+  minimumStock: number;
+}
+
+export interface DashboardData {
+  monthlyTotals: DashboardMonthlyTotal[];
+  rawMaterialQty: number;
+  finishedGoodsQty: number;
+  lowStockItems: DashboardLowStockItem[];
+  lowStockCount: number;
 }
 
 export interface CompanyProfile {
@@ -349,10 +373,4 @@ export interface SystemAdminData {
   job_positions: JobPosition[];
   material_categories: MaterialCategory[];
   product_categories: ProductCategory[];
-}
-
-export interface DashboardData {
-  month: string;
-  total: number;
-  type: string;
 }

@@ -57,6 +57,45 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<TabType>('DASHBOARD');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
+  // Cross-tab drill-in: ProductDetailView.tsx's order history / MaterialDetailView.tsx's
+  // purchase history links jump here — switch tabs and tell the destination view which
+  // header to open, since these are separate top-level tabs with no shared router. The
+  // "return to" id is remembered so the detail page's Back button can restore the
+  // originating Product/Material detail page instead of just showing that tab's list.
+  const [pendingSalesOrderId, setPendingSalesOrderId] = useState<string | null>(null);
+  const [salesOrderReturnToProductId, setSalesOrderReturnToProductId] = useState<string | null>(null);
+  const navigateToSalesOrder = (salesHeaderId: string, fromProductId?: string) => {
+    setPendingSalesOrderId(salesHeaderId);
+    setSalesOrderReturnToProductId(fromProductId || null);
+    setActiveTab('ORDERS');
+  };
+  const [pendingProductId, setPendingProductId] = useState<string | null>(null);
+  const returnFromSalesOrder = () => {
+    const productId = salesOrderReturnToProductId;
+    setSalesOrderReturnToProductId(null);
+    if (productId) {
+      setPendingProductId(productId);
+      setActiveTab('PRODUCT');
+    }
+  };
+
+  const [pendingPurchaseId, setPendingPurchaseId] = useState<string | null>(null);
+  const [purchaseReturnToMaterialId, setPurchaseReturnToMaterialId] = useState<string | null>(null);
+  const navigateToPurchaseOrder = (purchaseHeaderId: string, fromMaterialId?: string) => {
+    setPendingPurchaseId(purchaseHeaderId);
+    setPurchaseReturnToMaterialId(fromMaterialId || null);
+    setActiveTab('PURCHASES');
+  };
+  const [pendingMaterialId, setPendingMaterialId] = useState<string | null>(null);
+  const returnFromPurchaseOrder = () => {
+    const materialId = purchaseReturnToMaterialId;
+    setPurchaseReturnToMaterialId(null);
+    if (materialId) {
+      setPendingMaterialId(materialId);
+      setActiveTab('MATERIAL');
+    }
+  };
+
   // Dark mode state and persistence
   const [darkMode, setDarkMode] = useState<boolean>(() => {
     const stored = localStorage.getItem('erp_dark_mode');
@@ -80,7 +119,6 @@ export default function App() {
   const [showBrandingModal, setShowBrandingModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
-  const [isAppLoaded, setIsAppLoaded] = useState(false);
   const isSyncing = useSyncStore((state: any) => state.isSyncing);
 
   // Fetch company profile — localStorage first, fallback to API
@@ -219,10 +257,10 @@ export default function App() {
     { id: 'DASHBOARD' as TabType, label: 'Operations Board', icon: LayoutDashboard },
     { id: 'SYSTEM_ADMIN' as TabType, label: 'System Admin', icon: Settings },
     { id: 'CONTACTS' as TabType, label: 'Vendors & Clients', icon: Users },
+    { id: 'EMPLOYEES' as TabType, label: 'Employee Directory', icon: Briefcase },
     { id: 'MATERIAL' as TabType, label: 'Material Catalog', icon: Boxes },
     { id: 'PRODUCT' as TabType, label: 'Product Catalog', icon: Tag },
     { id: 'INVENTORY' as TabType, label: 'Inventory Stock', icon: Package },
-    { id: 'EMPLOYEES' as TabType, label: 'Employee Directory', icon: Briefcase },
     { id: 'PURCHASES' as TabType, label: 'Material purchases', icon: ShoppingBag },
     { id: 'ORDERS' as TabType, label: 'Sales Contracts', icon: FileSpreadsheet },
     { id: 'WORKFLOWS' as TabType, label: 'Production Kanban', icon: Shuffle },
@@ -477,12 +515,40 @@ export default function App() {
         <div className="p-6 flex-1 min-h-0 min-w-0 overflow-y-auto overscroll-contain">
           {activeTab === 'DASHBOARD' && <DashboardView key={refreshKey} />}
           {activeTab === 'INVENTORY' && <InventoryView key={refreshKey} />}
-          {activeTab === 'MATERIAL' && <MaterialView key={refreshKey} />}
-          {activeTab === 'PRODUCT' && <ProductView key={refreshKey} />}
+          {activeTab === 'MATERIAL' && (
+            <MaterialView
+              key={refreshKey}
+              onViewPurchaseOrder={navigateToPurchaseOrder}
+              initialMaterialId={pendingMaterialId}
+              onInitialMaterialHandled={() => setPendingMaterialId(null)}
+            />
+          )}
+          {activeTab === 'PRODUCT' && (
+            <ProductView
+              key={refreshKey}
+              onViewSalesOrder={navigateToSalesOrder}
+              initialProductId={pendingProductId}
+              onInitialProductHandled={() => setPendingProductId(null)}
+            />
+          )}
           {activeTab === 'CONTACTS' && <ContactsView key={refreshKey} />}
           {activeTab === 'EMPLOYEES' && <EmployeesView key={refreshKey} />}
-          {activeTab === 'ORDERS' && <OrdersView key={refreshKey} />}
-          {activeTab === 'PURCHASES' && <PurchasesView key={refreshKey} />}
+          {activeTab === 'ORDERS' && (
+            <OrdersView
+              key={refreshKey}
+              initialOrderId={pendingSalesOrderId}
+              onInitialOrderHandled={() => setPendingSalesOrderId(null)}
+              onReturnToOrigin={returnFromSalesOrder}
+            />
+          )}
+          {activeTab === 'PURCHASES' && (
+            <PurchasesView
+              key={refreshKey}
+              initialPurchaseId={pendingPurchaseId}
+              onInitialPurchaseHandled={() => setPendingPurchaseId(null)}
+              onReturnToOrigin={returnFromPurchaseOrder}
+            />
+          )}
           {activeTab === 'WORKFLOWS' && <WorkflowsView key={refreshKey} />}
           {activeTab === 'SYSTEM_ADMIN' && <SystemAdminView key={refreshKey} />}
           {activeTab === 'REPORTS' && <ReportsView key={refreshKey} />}

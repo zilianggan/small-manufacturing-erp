@@ -7,6 +7,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import {
   getSalesOrders, createSalesQuotation, updateSalesOrder, convertToSalesOrder,
   startProduction, confirmProductionDone, markDelivered, cancelSalesOrder, deleteSalesOrder,
+  getSalesOrderById,
   SalesDetailInput, MaterialUsageInput, MaterialReconciliationInput, LeftoverMaterialInput, ExtraProducedInput,
 } from '../services/OrdersService';
 import { getProducts } from '../services/ProductService';
@@ -14,11 +15,12 @@ import { getMaterials } from '../services/MaterialService';
 import { getMaterialCategories } from '../services/SystemAdminService';
 import { getClients } from '../services/ContactsService';
 import { SalesHeader, Client, Product, Material, MaterialCategory, Attachment } from '../types';
-import { Plus, Calendar, Check, CheckCheck, Factory, Paperclip, Trash2, Edit, FileText, ArrowRightCircle } from 'lucide-react';
+import { Plus, Calendar, Check, CheckCheck, Factory, Paperclip, Trash2, Edit, FileText, ArrowRightCircle, Eye } from 'lucide-react';
 import AttachmentSection from './AttachmentSection';
 import SalesQuotationModal from './SalesQuotationModal';
 import InvoiceModal from './InvoiceModal';
 import ProductionCompletionModal from './ProductionCompletionModal';
+import SalesOrderDetailView from './SalesOrderDetailView';
 import LoadingSpinner from './LoadingSpinner';
 import ComboBox from './ComboBox';
 import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, FormField, SearchInput } from './ui';
@@ -28,7 +30,19 @@ import { debounce } from 'lodash'
 type OrderTab = 'QUOTATION' | 'SO';
 type FormMode = 'CREATE' | 'EDIT' | 'CONVERT';
 
-export default function OrdersView() {
+interface OrdersViewProps {
+  // Cross-tab drill-in: ProductDetailView.tsx's order history links here
+  // via App.tsx passing a pending sales header id, since Orders/Product are
+  // separate top-level tabs with no shared router.
+  initialOrderId?: string | null;
+  onInitialOrderHandled?: () => void;
+  // Called instead of closing locally when the currently open detail page
+  // was reached via that cross-tab drill-in — lets App.tsx send the user
+  // back to the originating Product detail page rather than this list.
+  onReturnToOrigin?: () => void;
+}
+
+export default function OrdersView({ initialOrderId, onInitialOrderHandled, onReturnToOrigin }: OrdersViewProps = {}) {
   const [activeTab, setActiveTab] = useState<OrderTab>('QUOTATION');
   const [searchQuery, setSearchQuery] = useState([{ search: '' }, { search: '' }]);
   const [orders, setOrders] = useState<SalesHeader[]>([]);
@@ -41,12 +55,50 @@ export default function OrdersView() {
   const [transitioningId, setTransitioningId] = useState<string | null>(null);
   const [completingOrder, setCompletingOrder] = useState<SalesHeader | null>(null);
 
+  // Drill-down: selected order (shows SalesOrderDetailView instead of the table)
+  const [selectedOrder, setSelectedOrder] = useState<SalesHeader | null>(null);
+  // Tracks whether the open detail page was reached via the cross-tab
+  // initialOrderId drill-in (Back should return to that origin) or a plain
+  // click on a row in this view's own list (Back should just close locally).
+  const [detailOpenedExternally, setDetailOpenedExternally] = useState(false);
+
+  const openOrderDetail = (order: SalesHeader) => {
+    setDetailOpenedExternally(false);
+    setSelectedOrder(order);
+  };
+
+  const handleDetailBack = () => {
+    if (detailOpenedExternally && onReturnToOrigin) {
+      onReturnToOrigin();
+    } else {
+      setSelectedOrder(null);
+    }
+  };
+
   useEffect(() => {
     getClients().then(setClients).catch(console.error);
     getProducts().then(setProducts).catch(console.error);
     getMaterials().then(setMaterials).catch(console.error);
     CallAPI(getMaterialCategories, { onCompleted: setMaterialCategories, onError: console.error });
   }, []);
+
+  // Cross-tab drill-in: fetch and open the order directly by id (independent
+  // of whatever tab/search filter is currently active), then tell the parent
+  // it's been handled so switching tabs again doesn't re-trigger it.
+  useEffect(() => {
+    if (!initialOrderId) return;
+    CallAPI(() => getSalesOrderById(initialOrderId), {
+      onCompleted: (order) => {
+        if (order) {
+          setSelectedOrder(order);
+          setDetailOpenedExternally(true);
+        }
+        onInitialOrderHandled?.();
+      },
+      onError: (err) => { console.error(err); onInitialOrderHandled?.(); },
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialOrderId]);
 
   const activeProducts = useMemo(
     () => products.filter(p => p.status !== 'INACTIVE'),
@@ -72,6 +124,12 @@ export default function OrdersView() {
   };
 
   useEffect(() => { loadOrders(activeTab, searchQuery[activeTab === 'QUOTATION' ? 0 : 1]?.search); }, [activeTab]);
+
+  // Keeps the open detail page's data in sync after an edit/transition —
+  // loadOrders() only refreshes the list underneath it.
+  const refreshSelectedOrder = (id: string) => {
+    getSalesOrderById(id).then((order) => { if (order) setSelectedOrder(order); }).catch(console.error);
+  };
 
   const search = useMemo(
     () =>
@@ -147,6 +205,7 @@ export default function OrdersView() {
       productCode: d.productCode,
       quantity: d.quantity,
       unitPrice: d.unitPrice,
+      product: d.product,
       totalPrice: d.totalPrice,
       materials: d.materials.map(m => ({
         materialId: m.materialId,
@@ -241,6 +300,14 @@ export default function OrdersView() {
     setFormDetails(formDetails.filter((_, idx) => idx !== index));
   };
 
+  const handleUpdateFormItemQuantity = (index: number, quantity: number) => {
+    setFormDetails(formDetails.map((d, idx) => idx === index ? { ...d, quantity, totalPrice: quantity * d.unitPrice } : d));
+  };
+
+  const handleUpdateFormItemUnitPrice = (index: number, unitPrice: number) => {
+    setFormDetails(formDetails.map((d, idx) => idx === index ? { ...d, unitPrice, totalPrice: d.quantity * unitPrice } : d));
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formClientId) return;
@@ -283,12 +350,12 @@ export default function OrdersView() {
       });
     } else if (formMode === 'EDIT' && editHeaderId) {
       await CallAPI(() => updateSalesOrder(editHeaderId, input), {
-        onCompleted: () => loadOrders(activeTab),
+        onCompleted: () => { loadOrders(activeTab); refreshSelectedOrder(editHeaderId); },
         onError: console.error,
       });
     } else if (formMode === 'CONVERT' && editHeaderId) {
       await CallAPI(() => convertToSalesOrder(editHeaderId, input, formDeliveryDate || defaultDeliveryDate()), {
-        onCompleted: () => loadOrders(activeTab),
+        onCompleted: () => { loadOrders(activeTab); refreshSelectedOrder(editHeaderId); },
         onError: console.error,
       });
     }
@@ -300,7 +367,10 @@ export default function OrdersView() {
   const handleDelete = async (id: string) => {
     if (!confirm('Are you sure you want to delete this sales order?')) return;
     await CallAPI(() => deleteSalesOrder(id), {
-      onCompleted: () => loadOrders(activeTab),
+      onCompleted: () => {
+        loadOrders(activeTab);
+        setSelectedOrder((prev) => (prev?.id === id ? null : prev));
+      },
       onError: console.error,
     });
   };
@@ -312,6 +382,7 @@ export default function OrdersView() {
       onCompleted: () => {
         setTransitioningId(null);
         loadOrders(activeTab);
+        refreshSelectedOrder(order.id);
       },
       onError: (err) => {
         setTransitioningId(null);
@@ -334,8 +405,9 @@ export default function OrdersView() {
     await CallAPI(() => confirmProductionDone(completingOrder, reconciliations, leftovers, extraProduced), {
       onCompleted: () => {
         setTransitioningId(null);
-        setCompletingOrder(null);
         loadOrders(activeTab);
+        refreshSelectedOrder(completingOrder.id);
+        setCompletingOrder(null);
       },
       onError: (err) => {
         setTransitioningId(null);
@@ -351,6 +423,7 @@ export default function OrdersView() {
       onCompleted: () => {
         setTransitioningId(null);
         loadOrders(activeTab);
+        refreshSelectedOrder(id);
       },
       onError: (err) => {
         setTransitioningId(null);
@@ -362,7 +435,7 @@ export default function OrdersView() {
   const handleCancel = async (order: SalesHeader) => {
     if (!confirm('Cancel this Sales Order?')) return;
     await CallAPI(() => cancelSalesOrder(order), {
-      onCompleted: () => loadOrders(activeTab),
+      onCompleted: () => { loadOrders(activeTab); refreshSelectedOrder(order.id); },
       onError: console.error,
     });
   };
@@ -389,6 +462,23 @@ export default function OrdersView() {
     <div className="space-y-6" id="orders-view">
       {loading && <LoadingSpinner message="Processing sales contracts..." subtitle="SALES_CONTRACTS" />}
 
+      {selectedOrder ? (
+        <SalesOrderDetailView
+          order={selectedOrder}
+          onBack={handleDetailBack}
+          transitioningId={transitioningId}
+          onEdit={openEditForm}
+          onConvert={openConvertForm}
+          onDelete={handleDelete}
+          onStartProduction={handleStartProduction}
+          onProductionCompletion={openProductionCompletion}
+          onMarkDelivered={handleMarkDelivered}
+          onCancel={handleCancel}
+          onOpenQuotationDoc={openQuotationDoc}
+          onOpenInvoiceDoc={openInvoiceDoc}
+        />
+      ) : (
+      <>
       {/* Tab toggle + search + actions */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div className="flex space-x-1 p-1 bg-slate-100 rounded-lg border border-slate-200/50 self-start">
@@ -479,14 +569,29 @@ export default function OrdersView() {
                 <div className="space-y-2">
                   {formDetails.map((item, idx) => (
                     <div key={idx} className="border border-slate-200 rounded-lg bg-white p-2.5">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <span className="font-semibold text-slate-800 text-[11px]">{item.productName}</span>
-                          <div className="text-[10px] text-slate-400 font-mono">
-                            Qty: {item.quantity} @ RM {item.unitPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} = RM {item.totalPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                          </div>
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="font-semibold text-slate-800 text-[11px] flex-1">{item.productName}</span>
+                        <div className="flex items-center gap-1.5 text-[10px] text-slate-500 font-mono">
+                          <span>Qty:</span>
+                          <input
+                            type="number"
+                            min="1"
+                            value={item.quantity}
+                            onChange={(e) => handleUpdateFormItemQuantity(idx, Number(e.target.value))}
+                            className="w-14 px-1.5 py-1 bg-white border border-slate-200 rounded text-right font-mono text-[11px] focus:outline-none focus:border-blue-500"
+                          />
+                          <span>@ RM</span>
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={item.unitPrice}
+                            onChange={(e) => handleUpdateFormItemUnitPrice(idx, Number(e.target.value))}
+                            className="w-20 px-1.5 py-1 bg-white border border-slate-200 rounded text-right font-mono text-[11px] focus:outline-none focus:border-blue-500"
+                          />
+                          <span>= RM {item.totalPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                         </div>
-                        <button type="button" onClick={() => handleRemoveFormItem(idx)} className="text-red-500 hover:text-red-700 p-1" title="Remove line item">
+                        <button type="button" onClick={() => handleRemoveFormItem(idx)} className="text-red-500 hover:text-red-700 p-1 shrink-0" title="Remove line item">
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       </div>
@@ -741,6 +846,9 @@ export default function OrdersView() {
                     {/* Transition actions */}
                     <td className="p-4 text-right">
                       <div className="flex items-center justify-end space-x-1.5">
+                        <button onClick={() => openOrderDetail(order)} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-slate-50 rounded transition-colors" title="View">
+                          <Eye className="w-3.5 h-3.5" />
+                        </button>
                         {order.status === 'QUOTATION' && (
                           <>
                             <button onClick={() => openEditForm(order)} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-slate-50 rounded transition-colors" title="Edit">
@@ -844,6 +952,8 @@ export default function OrdersView() {
           </table>
         </div>
       </Card>
+      </>
+      )}
 
       {/* Quotation print modal */}
       <SalesQuotationModal

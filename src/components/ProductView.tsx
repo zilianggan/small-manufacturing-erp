@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import {
-  getProducts, saveProduct, deleteProduct, generateId, getProductCategories
+  getProducts, saveProduct, deleteProduct, generateId, getProductCategories, getProductById
 } from '../services/ProductService';
 import { Product, ProductCategory, Attachment } from '../types';
 import { Plus, Paperclip, Edit, Trash2, ChevronRight, FileText, Tag } from 'lucide-react';
@@ -16,11 +16,24 @@ import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, Sea
 import { CallAPI } from './UIHelper';
 import { debounce } from 'lodash'
 
+interface ProductViewProps {
+  // Cross-tab drill-in: passed through to ProductDetailView's order history
+  // links so they can jump to the Orders tab. fromProductId lets the
+  // destination detail page's Back button return here instead of its list.
+  onViewSalesOrder?: (salesHeaderId: string, fromProductId?: string) => void;
+  // Cross-tab return trip: reopens this product's detail page after a
+  // SalesOrderDetailView opened from here navigates back. Since switching
+  // App.tsx tabs unmounts this view, local selectedProduct state can't
+  // survive the round trip on its own.
+  initialProductId?: string | null;
+  onInitialProductHandled?: () => void;
+}
+
 /**
  * Product catalog listing: search, create/edit/delete, and the entry point
  * into ProductDetailView (product summary + order/sales history).
  */
-export default function ProductView() {
+export default function ProductView({ onViewSalesOrder, initialProductId, onInitialProductHandled }: ProductViewProps = {}) {
   const [searchQuery, setSearchQuery] = useState('');
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
@@ -60,6 +73,20 @@ export default function ProductView() {
 
   // Drill-down: selected product (shows ProductDetailView instead of the grid)
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+
+  // Cross-tab return trip: re-fetch and reopen the product this view was
+  // last showing before a drill-in navigated away to another tab.
+  useEffect(() => {
+    if (!initialProductId) return;
+    CallAPI(() => getProductById(initialProductId), {
+      onCompleted: (product) => {
+        if (product) setSelectedProduct(product);
+        onInitialProductHandled?.();
+      },
+      onError: (err) => { console.error(err); onInitialProductHandled?.(); },
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialProductId]);
 
   // ─── Product create/edit form ────────────────────────────────────────────
   const [showProductForm, setShowProductForm] = useState(false);
@@ -145,6 +172,7 @@ export default function ProductView() {
         onBack={() => { setSelectedProduct(null); loadProducts(); }}
         onProductUpdated={(updated) => setSelectedProduct(updated)}
         onProductDeleted={() => { setSelectedProduct(null); loadProducts(); }}
+        onViewSalesOrder={(salesHeaderId) => onViewSalesOrder?.(salesHeaderId, selectedProduct.id)}
       />
     );
   }

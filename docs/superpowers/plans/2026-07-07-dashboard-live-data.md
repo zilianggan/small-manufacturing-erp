@@ -1,3 +1,225 @@
+# Dashboard Live Data Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Replace `DashboardView.tsx`'s stale/broken data sources (`inventory_items`, `sales_orders`, `purchase_orders` — tables that no longer exist) and hardcoded chart numbers with live data from a new single-call `get_dashboard_data()` Postgres RPC, per `docs/superpowers/specs/2026-07-07-dashboard-live-data-design.md`.
+
+**Architecture:** One Postgres RPC function (`get_dashboard_data()` in `supabase/function_trigger.sql`, same pattern as the existing `get_system_admin_data()`) aggregates 6-month sales/purchase totals, raw/finished material quantities, and low-stock items in one round trip. A new pattern-A `DashboardService.ts` wraps the RPC call. `DashboardView.tsx` is rewritten to consume it, keeping `WorkflowsService.getWorkflowTasks()` (already correct) for the production queue panel.
+
+**Tech Stack:** React 19 + TypeScript, Supabase (`supabase-js`, Postgres RPC), Recharts, Tailwind v4. No automated test runner in this repo (`npm run lint` = `tsc --noEmit` is the only CI-style check) — per-task verification is a clean `tsc --noEmit`; the user applies the SQL function and does manual browser QA themselves (do not launch the dev server or drive the UI yourself).
+
+## Global Constraints
+
+- Spec: `docs/superpowers/specs/2026-07-07-dashboard-live-data-design.md` — every task below implements a section of it.
+- No commits are being made during this plan (user preference) — review each task's diff as uncommitted working-tree changes.
+- `supabase/schema.sql` and `supabase/function_trigger.sql` are reference files only — nothing in this repo auto-applies them to the live Supabase project. Do not attempt to run the new SQL function against the DB yourself; the user applies it manually in the Supabase SQL editor (Task 5 has the exact instruction to give them).
+- `ReportsView.tsx` / `db.ts`'s `getDashboardStats()`/`DashboardStats` type are untouched — separate legacy consumer, out of scope.
+- Do not touch `WorkflowsService.ts`, `WorkflowsView.tsx`, or `WorkflowTask` — `getWorkflowTasks()` already reads live `workflow_tasks` correctly and is reused as-is.
+- Do not run the dev server, open a browser, or otherwise self-test the UI — the user verifies manually. Verification command for every TS task: `npm run lint` (must exit 0, no new TypeScript errors).
+
+---
+
+### Task 1: SQL — `get_dashboard_data()` RPC function
+
+**Files:**
+- Modify: `supabase/function_trigger.sql` (append after `get_system_admin_data()`)
+
+**Interfaces:**
+- Produces: Postgres function `get_dashboard_data()` returning one row `(monthly_totals jsonb, raw_material_qty numeric, finished_goods_qty numeric, low_stock_items jsonb, low_stock_count integer)` — consumed by Task 3's `DashboardService.getDashboardData()` via `supabase.rpc('get_dashboard_data')`.
+
+- [ ] **Step 1: Append the function**
+
+At the end of `supabase/function_trigger.sql` (after the closing `$$;` of `get_system_admin_data`), add:
+
+```sql
+
+CREATE OR REPLACE FUNCTION get_dashboard_data()
+RETURNS TABLE (
+    monthly_totals jsonb,
+    raw_material_qty numeric,
+    finished_goods_qty numeric,
+    low_stock_items jsonb,
+    low_stock_count integer
+)
+LANGUAGE sql
+AS $$
+WITH months AS (
+    SELECT generate_series(
+        date_trunc('month', CURRENT_DATE) - interval '5 months',
+        date_trunc('month', CURRENT_DATE),
+        interval '1 month'
+    ) AS month_start
+),
+sales_by_month AS (
+    SELECT m.month_start, COALESCE(SUM(sh.total_amount), 0) AS sales_total
+    FROM months m
+    LEFT JOIN sales_header sh
+        ON date_trunc('month', sh.order_date) = m.month_start
+        AND sh.status NOT IN ('CANCELLED', 'QUOTATION')
+    GROUP BY m.month_start
+),
+purchases_by_month AS (
+    SELECT m.month_start, COALESCE(SUM(ph.total_price), 0) AS purchase_total
+    FROM months m
+    LEFT JOIN purchase_header ph
+        ON date_trunc('month', ph.order_date) = m.month_start
+        AND ph.status NOT IN ('CANCELLED', 'QUOTATION')
+    GROUP BY m.month_start
+),
+low_stock AS (
+    SELECT id, name, code, quantity, minimum_stock
+    FROM material
+    WHERE quantity <= minimum_stock
+    ORDER BY (quantity - minimum_stock) ASC
+    LIMIT 5
+)
+SELECT
+    (
+        SELECT jsonb_agg(jsonb_build_object(
+            'month', to_char(s.month_start, 'YYYY-MM'),
+            'sales', s.sales_total,
+            'purchases', p.purchase_total
+        ) ORDER BY s.month_start)
+        FROM sales_by_month s
+        JOIN purchases_by_month p ON p.month_start = s.month_start
+    ),
+    (SELECT COALESCE(SUM(quantity), 0) FROM material WHERE material_type = 'RAW_MATERIAL'),
+    (SELECT COALESCE(SUM(quantity), 0) FROM material WHERE material_type = 'FINISHED_GOOD'),
+    (SELECT jsonb_agg(t) FROM low_stock t),
+    (SELECT COUNT(*)::int FROM material WHERE quantity <= minimum_stock);
+$$;
+```
+
+- [ ] **Step 2: Self-check the SQL against the schema**
+
+Re-read `supabase/schema.sql`'s `sales_header`, `purchase_header`, and `material` table definitions. Confirm every column referenced above exists exactly as named: `sales_header.total_amount`/`order_date`/`status`, `purchase_header.total_price`/`order_date`/`status`, `material.id`/`name`/`code`/`quantity`/`minimum_stock`/`material_type`. No code-level check is possible for SQL in this repo (no local Postgres, no migration runner) — this read-back is the verification for this task.
+
+---
+
+### Task 2: Types — `DashboardData` shapes
+
+**Files:**
+- Modify: `src/types.ts` (add near the existing `DashboardStats` interface, ~line 230)
+
+**Interfaces:**
+- Produces: `DashboardMonthlyTotal { month: string; sales: number; purchases: number }`, `DashboardLowStockItem { id: string; name: string; code?: string; quantity: number; minimumStock: number }`, `DashboardData { monthlyTotals: DashboardMonthlyTotal[]; rawMaterialQty: number; finishedGoodsQty: number; lowStockItems: DashboardLowStockItem[]; lowStockCount: number }` — consumed by Task 3's `DashboardService.ts` and Task 4's `DashboardView.tsx`.
+
+- [ ] **Step 1: Add the new interfaces**
+
+In `src/types.ts`, directly after the existing `DashboardStats` interface (the one ending `activeWorkflowsCount: number; }`), add:
+
+```ts
+export interface DashboardMonthlyTotal {
+  month: string; // 'YYYY-MM'
+  sales: number;
+  purchases: number;
+}
+
+export interface DashboardLowStockItem {
+  id: string;
+  name: string;
+  code?: string;
+  quantity: number;
+  minimumStock: number;
+}
+
+export interface DashboardData {
+  monthlyTotals: DashboardMonthlyTotal[];
+  rawMaterialQty: number;
+  finishedGoodsQty: number;
+  lowStockItems: DashboardLowStockItem[];
+  lowStockCount: number;
+}
+```
+
+Leave the existing `DashboardStats` interface untouched — `db.ts`/`ReportsView.tsx` still use it.
+
+- [ ] **Step 2: Verify**
+
+Run: `npm run lint`
+Expected: exits 0, no new errors (this only adds unused-so-far types).
+
+---
+
+### Task 3: `DashboardService.ts` — RPC wrapper
+
+**Files:**
+- Create: `src/services/DashboardService.ts`
+
+**Interfaces:**
+- Consumes: `DashboardData` type from Task 2; `supabase` client from `./supabase`.
+- Produces: `getDashboardData(): Promise<DashboardData>` — consumed by Task 4's `DashboardView.tsx`.
+
+- [ ] **Step 1: Write the service**
+
+Create `src/services/DashboardService.ts`:
+
+```ts
+/**
+ * Dashboard module service layer.
+ *
+ * Talks to Supabase directly via a single RPC call (get_dashboard_data,
+ * defined in supabase/function_trigger.sql), mirroring how
+ * SystemAdminService.loadSystemAdminData calls get_system_admin_data.
+ * No db.ts, no server.ts REST hop, no useTableData.
+ */
+import { supabase } from "./supabase";
+import { DashboardData } from "../types";
+
+export const getDashboardData = async (): Promise<DashboardData> => {
+  const { data, error } = await supabase.rpc('get_dashboard_data').single<{
+    monthly_totals: { month: string; sales: number; purchases: number }[] | null;
+    raw_material_qty: number | string | null;
+    finished_goods_qty: number | string | null;
+    low_stock_items: { id: string; name: string; code: string | null; quantity: number | string; minimum_stock: number | string }[] | null;
+    low_stock_count: number | null;
+  }>();
+  if (error) {
+    console.error('getDashboardData', error);
+    throw error;
+  }
+
+  return {
+    monthlyTotals: (data.monthly_totals || []).map(m => ({
+      month: m.month,
+      sales: Number(m.sales) || 0,
+      purchases: Number(m.purchases) || 0,
+    })),
+    rawMaterialQty: Number(data.raw_material_qty) || 0,
+    finishedGoodsQty: Number(data.finished_goods_qty) || 0,
+    lowStockItems: (data.low_stock_items || []).map(r => ({
+      id: r.id,
+      name: r.name,
+      code: r.code || undefined,
+      quantity: Number(r.quantity) || 0,
+      minimumStock: Number(r.minimum_stock) || 0,
+    })),
+    lowStockCount: Number(data.low_stock_count) || 0,
+  };
+};
+```
+
+- [ ] **Step 2: Verify**
+
+Run: `npm run lint`
+Expected: exits 0, no new errors.
+
+---
+
+### Task 4: `DashboardView.tsx` — rewrite to use live data
+
+**Files:**
+- Modify: `src/components/DashboardView.tsx` (full rewrite — every section reads from the new data shape)
+
+**Interfaces:**
+- Consumes: `getDashboardData()` from Task 3, `DashboardData`/`DashboardMonthlyTotal`/`DashboardLowStockItem` types from Task 2, `getWorkflowTasks()` (unchanged, from `WorkflowsService.ts`), `WorkflowTask` type (unchanged).
+- Produces: nothing consumed elsewhere — this is the leaf UI component.
+
+- [ ] **Step 1: Replace the full file contents**
+
+Replace all of `src/components/DashboardView.tsx` with:
+
+```tsx
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -46,12 +268,7 @@ export default function DashboardView() {
   const totalSales = useMemo(() => dashboard.monthlyTotals.reduce((sum, m) => sum + m.sales, 0), [dashboard]);
   const totalPurchaseCosts = useMemo(() => dashboard.monthlyTotals.reduce((sum, m) => sum + m.purchases, 0), [dashboard]);
   const totalInventoryUnits = dashboard.rawMaterialQty + dashboard.finishedGoodsQty;
-
-  // Active (non-completed) workflow tasks
-  const activeWorkflowsList = useMemo(() => {
-    return workflows.filter(w => w.stage !== 'COMPLETED');
-  }, [workflows]);
-  const activeWorkflowsCount = activeWorkflowsList.length;
+  const activeWorkflowsCount = workflows.length;
 
   // Format currencies
   const formatCurrency = (val: number) => {
@@ -80,8 +297,10 @@ export default function DashboardView() {
     ];
   }, [dashboard]);
 
-  // Recent workflow steps (top 5 for display)
-  const activeWorkflows = useMemo(() => activeWorkflowsList.slice(0, 5), [activeWorkflowsList]);
+  // Recent workflow steps
+  const activeWorkflows = useMemo(() => {
+    return workflows.filter(w => w.stage !== 'COMPLETED').slice(0, 5);
+  }, [workflows]);
 
   return (
     <div className="space-y-6" id="dashboard-view">
@@ -291,3 +510,33 @@ export default function DashboardView() {
     </div>
   );
 }
+```
+
+- [ ] **Step 2: Verify**
+
+Run: `npm run lint`
+Expected: exits 0, no TypeScript errors. In particular confirm no remaining references to `InventoryItem`, `SalesOrder`, `PurchaseOrder`, or `useTableData` in this file.
+
+---
+
+### Task 5: Final check + manual QA handoff
+
+**Files:** none (verification-only task)
+
+**Interfaces:** none — this task confirms Tasks 1-4 integrate correctly.
+
+- [ ] **Step 1: Full project type-check**
+
+Run: `npm run lint`
+Expected: exits 0, no TypeScript errors anywhere in the project.
+
+- [ ] **Step 2: Grep for leftover legacy references**
+
+Run: `grep -rn "inventory_items\|useTableData" src/components/DashboardView.tsx`
+Expected: no matches (confirms the legacy hook/table names are fully gone from this file).
+
+- [ ] **Step 3: Hand off to the user**
+
+Tell the user:
+1. Apply the new `get_dashboard_data()` function from `supabase/function_trigger.sql` (Task 1) in the Supabase SQL editor — it isn't auto-applied.
+2. Manually open the app's Dashboard tab and confirm: KPI cards show real (non-fake) numbers, the bar chart shows up to 6 real months (not the old Jan-May hardcoded ones), the pie chart shows unit quantities, and the Critical Stock Alerts panel lists real low-stock materials.

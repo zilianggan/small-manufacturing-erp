@@ -51,6 +51,18 @@ export const getProducts = async (search = ''): Promise<Product[]> => {
 export const saveProduct = (product: Product): Promise<void> => upsertRecord('erp_product', product);
 export const deleteProduct = (id: string): Promise<void> => deleteRecord('erp_product', id);
 
+// Fetches a single product by id — used by ProductView.tsx to restore the
+// drill-down detail page after a cross-tab round trip (e.g. Orders ->
+// SalesOrderDetailView's back button returning to this product's page).
+export const getProductById = async (id: string): Promise<Product | null> => {
+  const { data, error } = await supabase.from('product').select('*').eq('id', id).maybeSingle();
+  if (error) {
+    console.error('getProductById', error);
+    return null;
+  }
+  return data ? mapProductRow(data) : null;
+};
+
 const mapSalesHistoryRow = (row: any): ProductSalesHistoryItem => ({
   detailId: row.detail_id,
   headerId: row.header_id,

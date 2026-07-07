@@ -171,3 +171,59 @@ SELECT
         FROM product_categories t
     );
 $$;
+
+CREATE OR REPLACE FUNCTION get_dashboard_data()
+RETURNS TABLE (
+    monthly_totals jsonb,
+    raw_material_qty numeric,
+    finished_goods_qty numeric,
+    low_stock_items jsonb,
+    low_stock_count integer
+)
+LANGUAGE sql
+AS $$
+WITH months AS (
+    SELECT generate_series(
+        date_trunc('month', CURRENT_DATE) - interval '5 months',
+        date_trunc('month', CURRENT_DATE),
+        interval '1 month'
+    ) AS month_start
+),
+sales_by_month AS (
+    SELECT m.month_start, COALESCE(SUM(sh.total_amount), 0) AS sales_total
+    FROM months m
+    LEFT JOIN sales_header sh
+        ON date_trunc('month', sh.order_date) = m.month_start
+        AND sh.status NOT IN ('CANCELLED', 'QUOTATION')
+    GROUP BY m.month_start
+),
+purchases_by_month AS (
+    SELECT m.month_start, COALESCE(SUM(ph.total_price), 0) AS purchase_total
+    FROM months m
+    LEFT JOIN purchase_header ph
+        ON date_trunc('month', ph.order_date) = m.month_start
+        AND ph.status NOT IN ('CANCELLED', 'QUOTATION')
+    GROUP BY m.month_start
+),
+low_stock AS (
+    SELECT id, name, code, quantity, minimum_stock
+    FROM material
+    WHERE quantity <= minimum_stock
+    ORDER BY (quantity - minimum_stock) ASC
+    LIMIT 5
+)
+SELECT
+    (
+        SELECT jsonb_agg(jsonb_build_object(
+            'month', to_char(s.month_start, 'YYYY-MM'),
+            'sales', s.sales_total,
+            'purchases', p.purchase_total
+        ) ORDER BY s.month_start)
+        FROM sales_by_month s
+        JOIN purchases_by_month p ON p.month_start = s.month_start
+    ),
+    (SELECT COALESCE(SUM(quantity), 0) FROM material WHERE material_type = 'RAW_MATERIAL'),
+    (SELECT COALESCE(SUM(quantity), 0) FROM material WHERE material_type = 'FINISHED_GOOD'),
+    (SELECT jsonb_agg(t) FROM low_stock t),
+    (SELECT COUNT(*)::int FROM material WHERE quantity <= minimum_stock);
+$$;

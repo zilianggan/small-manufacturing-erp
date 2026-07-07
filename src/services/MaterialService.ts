@@ -54,6 +54,18 @@ export const getMaterials = async (search = ''): Promise<Material[]> => {
 export const saveMaterial = (material: Material): Promise<void> => upsertRecord('erp_material', material);
 export const deleteMaterial = (id: string): Promise<void> => deleteRecord('erp_material', id);
 
+// Fetches a single material by id — used by MaterialView.tsx to restore the
+// drill-down detail page after a cross-tab round trip (e.g. Purchases ->
+// PurchaseOrderDetailView's back button returning to this material's page).
+export const getMaterialById = async (id: string): Promise<Material | null> => {
+  const { data, error } = await supabase.from('material').select('*').eq('id', id).maybeSingle();
+  if (error) {
+    console.error('getMaterialById', error);
+    return null;
+  }
+  return data ? mapMaterialRow(data) : null;
+};
+
 const mapPurchaseHistoryRow = (row: any): MaterialPurchaseHistoryItem => ({
   detailId: row.detail_id,
   headerId: row.header_id,

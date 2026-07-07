@@ -1,5 +1,6 @@
 Version 1.0.3
 --------------------
+- Restructure sales, inventory, employee, import export feature, dashboard.
 - Inventory tab rewritten as a stock transaction ledger (inventory_transaction), backed by new InventoryTransactionService; material/product stock now only ever moves via inserted transaction rows, never direct quantity edits
 - Purchases rewritten with Quotation / Purchase Order tabs over purchase_header/purchase_detail (PurchasesService as pattern-A service); receiving a PO generates inventory_transaction rows; added vendor-facing QuotationModal print doc; Purchase Orders can optionally link back to a Sales Order (sales_header_id)
 - Orders rewritten with Quotation / Sales Order tabs over sales_header/sales_detail/production_material_usage (OrdersService rewritten as pattern-A service, replacing the legacy db.ts wrapper); added client-facing SalesQuotationModal and retargeted InvoiceModal from legacy SalesOrder to SalesHeader/SalesDetail
@@ -10,6 +11,7 @@ Version 1.0.3
 - Fix loading load twice
 - Fix search causing multiple call api
 - Fix combobox got weird animation
+- Add redirect from material, product to sale order or purchase order
 
 Version 1.0.2
 --------------------

@@ -39,7 +39,7 @@ export default function SalesQuotationModal({ order, isOpen, onClose }: SalesQuo
     return clients.find(c => c.id === order.clientId);
   }, [order, clients]);
 
-  if (!isOpen || !order) return null;
+  if (!isOpen || !order || !companyProfile) return null;
 
   const referenceNo = order.salesNo;
   const grandTotal = order.totalAmount;
@@ -101,7 +101,6 @@ export default function SalesQuotationModal({ order, isOpen, onClose }: SalesQuo
                 .signature-image-wrapper { height: 60px; display: flex; align-items: center; justify-content: center; margin-bottom: 8px; }
                 .signature-line { width: 140px; border-bottom: 1px solid #cbd5e1; margin-bottom: 6px; }
                 .signature-title { font-size: 10px; font-weight: 700; color: #334155; }
-                @media print { body { padding: 0; } }
               </style>
             </head>
             <body>
@@ -169,7 +168,7 @@ export default function SalesQuotationModal({ order, isOpen, onClose }: SalesQuo
                       <td class="text-mono" style="color: #94a3b8;">${String(idx + 1).padStart(2, '0')}</td>
                       <td>
                         <div class="item-name">${item.productName}</div>
-                        <span class="item-desc">Finished product. Code: ${item.productCode || item.productId}</span>
+                        <span class="item-desc">${item.productCode || item.productId} | Dimension: ${item?.product?.dimension} </span>
                       </td>
                       <td class="text-right text-mono">${item.quantity} units</td>
                       <td class="text-right text-mono">RM ${item.unitPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
@@ -394,7 +393,7 @@ export default function SalesQuotationModal({ order, isOpen, onClose }: SalesQuo
                       <td className="p-3 font-mono text-slate-400">{String(idx + 1).padStart(2, '0')}</td>
                       <td className="p-3 font-semibold text-slate-800">
                         <div>{item.productName}</div>
-                        <span className="text-[9px] text-slate-400 font-normal">Finished product. Code: {item.productCode || item.productId}</span>
+                        <span className="text-[9px] text-slate-400 font-normal">{item.productCode || item.productId} | Dimension: {item?.product?.dimension} </span>
                       </td>
                       <td className="p-3 text-right font-mono">{item.quantity} units</td>
                       <td className="p-3 text-right font-mono">RM {item.unitPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>

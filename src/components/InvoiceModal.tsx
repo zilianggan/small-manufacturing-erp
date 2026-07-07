@@ -48,7 +48,7 @@ export default function InvoiceModal({ order, isOpen, onClose }: InvoiceModalPro
     return clients.find(c => c.id === order.clientId || c.companyName === order.clientName);
   }, [order, clients]);
 
-  if (!isOpen || !order) return null;
+  if (!isOpen || !order || !companyProfile) return null;
 
   // Let's compute some realistic invoice numbers and dates
   const invoiceNo = `INV-2026-${order.id.slice(0, 8).toUpperCase()}`;
@@ -303,11 +303,6 @@ export default function InvoiceModal({ order, isOpen, onClose }: InvoiceModalPro
                   font-weight: 700;
                   color: #334155;
                 }
-                @media print {
-                  body {
-                    padding: 0;
-                  }
-                }
               </style>
             </head>
             <body>
@@ -381,7 +376,7 @@ export default function InvoiceModal({ order, isOpen, onClose }: InvoiceModalPro
                       <td class="text-mono" style="color: #94a3b8;">${String(idx + 1).padStart(2, '0')}</td>
                       <td>
                         <div class="item-name">${item.productName}</div>
-                        <span class="item-desc">Finished product. Code: ${item.productCode || item.productId}</span>
+                        <span class="item-desc">${item.productCode || item.productId} | Dimension: ${item.product?.dimension}</span>
                       </td>
                       <td class="text-right text-mono">${item.quantity} pcs</td>
                       <td class="text-right text-mono">RM ${item.unitPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
@@ -668,7 +663,7 @@ export default function InvoiceModal({ order, isOpen, onClose }: InvoiceModalPro
                       <td className="p-3 font-mono text-slate-400">{String(idx + 1).padStart(2, '0')}</td>
                       <td className="p-3 font-semibold text-slate-800">
                         <div>{item.productName}</div>
-                        <span className="text-[9px] text-slate-400 font-normal">Finished product. Code: {item.productCode || item.productId}</span>
+                        <span className="text-[9px] text-slate-400 font-normal">{item.productCode || item.productId} | Dimension: {item.product?.dimension}</span>
                       </td>
                       <td className="p-3 text-right font-mono">{item.quantity} pcs</td>
                       <td className="p-3 text-right font-mono">RM {item.unitPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>

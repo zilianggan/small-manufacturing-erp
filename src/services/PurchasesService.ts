@@ -43,6 +43,7 @@ const mapPurchaseDetailRow = (row: any): PurchaseDetail => ({
   unitCost: Number(row.unit_cost) || 0,
   totalPrice: Number(row.total_price) || 0,
   receivedQuantity: Number(row.received_quantity) || 0,
+  material: row.material,
 });
 
 const mapPurchaseHeaderRow = (row: any): PurchaseHeader => ({
@@ -65,7 +66,7 @@ const mapPurchaseHeaderRow = (row: any): PurchaseHeader => ({
 export const getPurchases = async (tab: 'QUOTATION' | 'PO', search = ''): Promise<PurchaseHeader[]> => {
   let query = supabase
     .from('purchase_header')
-    .select('*, vendors(company_name), purchase_detail(*)')
+    .select('*, vendors(company_name), purchase_detail(*, material(name, code, dimension))')
     .order('created_at', { ascending: false });
 
   query = tab === 'QUOTATION'
@@ -90,6 +91,22 @@ export const getPurchases = async (tab: 'QUOTATION' | 'PO', search = ''): Promis
     return [];
   }
   return (data || []).map(mapPurchaseHeaderRow);
+};
+
+// Fetches a single purchase regardless of its status/tab or the list's
+// current search filter — used by PurchaseOrderDetailView.tsx and to
+// refresh an open detail page after an edit/transition.
+export const getPurchaseById = async (id: string): Promise<PurchaseHeader | null> => {
+  const { data, error } = await supabase
+    .from('purchase_header')
+    .select('*, vendors(company_name), purchase_detail(*, material(name, code, dimension))')
+    .eq('id', id)
+    .maybeSingle();
+  if (error) {
+    console.error('getPurchaseById', error);
+    return null;
+  }
+  return data ? mapPurchaseHeaderRow(data) : null;
 };
 
 const detailRowsForInsert = (headerId: string, details: PurchaseDetailInput[]) =>

@@ -196,7 +196,6 @@ CREATE TABLE production_material_usage (
 CREATE TABLE inventory_transaction (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   material_id UUID REFERENCES material(id) ON DELETE SET NULL,
-  product_id UUID REFERENCES product(id) ON DELETE SET NULL,
   transaction_type TEXT, -- PURCHASE, SALES, PURCHASE_RETURN, SALES_RETURN, ADJUSTMENT
   quantity NUMERIC NOT NULL,
   unit_cost NUMERIC,
@@ -205,8 +204,7 @@ CREATE TABLE inventory_transaction (
   production_material_usage_id UUID REFERENCES production_material_usage(id),
   transaction_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT chk_inventory_transaction_target CHECK ((material_id IS NOT NULL) <> (product_id IS NOT NULL))
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE workflow_tasks (
@@ -239,6 +237,11 @@ CHECK
   (vendor_id IS NOT NULL)::int +
   (client_id IS NOT NULL)::int = 1
 );
+
+ALTER TABLE inventory_transaction ALTER COLUMN material_id DROP NOT NULL;
+
+ALTER TABLE inventory_transaction
+ADD COLUMN product_id UUID REFERENCES product(id) ON DELETE SET NULL;
 
 DO $$
 DECLARE

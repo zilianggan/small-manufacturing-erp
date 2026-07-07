@@ -10,7 +10,7 @@
 import { supabase } from "./supabase";
 import { getClients } from "./ContactsService";
 import { saveInventoryTransaction } from "./InventoryTransactionService";
-import { Attachment, SalesHeader, SalesDetail, ProductionMaterialUsage } from "../types";
+import { Attachment, SalesHeader, SalesDetail, ProductionMaterialUsage, Product } from "../types";
 
 export const generateId = (): string => crypto.randomUUID();
 
@@ -28,6 +28,7 @@ export interface SalesDetailInput {
   quantity: number;
   unitPrice: number;
   totalPrice: number;
+  product?: Product;
   materials: MaterialUsageInput[];
 }
 
@@ -59,6 +60,7 @@ const mapSalesDetailRow = (row: any): SalesDetail => ({
   unitPrice: Number(row.unit_price) || 0,
   totalPrice: Number(row.total_price) || 0,
   remark: row.remark || undefined,
+  product: row.product,
   materials: (row.production_material_usage || []).map(mapMaterialUsageRow),
 });
 
@@ -81,7 +83,7 @@ const mapSalesHeaderRow = (row: any): SalesHeader => ({
 export const getSalesOrders = async (tab: 'QUOTATION' | 'SO', search = ''): Promise<SalesHeader[]> => {
   let query = supabase
     .from('sales_header')
-    .select('*, clients(company_name), sales_detail(*, production_material_usage(*, material(name, code)))')
+    .select('*, clients(company_name), sales_detail(*, product(name, code, dimension), production_material_usage(*, material(name, code)))')
     .order('created_at', { ascending: false });
 
   query = tab === 'QUOTATION'
@@ -106,6 +108,22 @@ export const getSalesOrders = async (tab: 'QUOTATION' | 'SO', search = ''): Prom
     return [];
   }
   return (data || []).map(mapSalesHeaderRow);
+};
+
+// Fetches a single sales order regardless of its status/tab or the list's
+// current search filter — used by SalesOrderDetailView.tsx's cross-tab
+// drill-in from ProductDetailView.tsx's order history link.
+export const getSalesOrderById = async (id: string): Promise<SalesHeader | null> => {
+  const { data, error } = await supabase
+    .from('sales_header')
+    .select('*, clients(company_name), sales_detail(*, product(name, code, dimension), production_material_usage(*, material(name, code)))')
+    .eq('id', id)
+    .maybeSingle();
+  if (error) {
+    console.error('getSalesOrderById', error);
+    return null;
+  }
+  return data ? mapSalesHeaderRow(data) : null;
 };
 
 const insertDetailsWithMaterials = async (headerId: string, details: SalesDetailInput[]): Promise<void> => {
@@ -434,12 +452,52 @@ export interface SalesOrderLinkOption {
   clientName: string;
 }
 
+export interface SalesOrderMaterialRequirement {
+  materialId: string;
+  materialName: string;
+  materialCode?: string;
+  requiredQuantity: number;
+}
+
+// Aggregates planned material usage across every product line of a sales
+// header — used by PurchasesView.tsx's "Linked Sales Order" picker so the
+// buyer can see how much material the linked contract actually needs.
+export const getSalesOrderMaterialRequirements = async (salesHeaderId: string): Promise<SalesOrderMaterialRequirement[]> => {
+  const { data, error } = await supabase
+    .from('sales_detail')
+    .select('production_material_usage(material_id, planned_quantity, material(name, code))')
+    .eq('header_id', salesHeaderId);
+  if (error) {
+    console.error('getSalesOrderMaterialRequirements', error);
+    return [];
+  }
+
+  const totals = new Map<string, SalesOrderMaterialRequirement>();
+  for (const row of (data || []) as any[]) {
+    for (const usage of row.production_material_usage || []) {
+      const existing = totals.get(usage.material_id);
+      if (existing) {
+        existing.requiredQuantity += Number(usage.planned_quantity) || 0;
+      } else {
+        totals.set(usage.material_id, {
+          materialId: usage.material_id,
+          materialName: usage.material?.name || '',
+          materialCode: usage.material?.code || undefined,
+          requiredQuantity: Number(usage.planned_quantity) || 0,
+        });
+      }
+    }
+  }
+  return Array.from(totals.values());
+};
+
 // Lightweight list for PurchasesView.tsx's "Linked Sales Order" picker —
 // doesn't need line items, just enough to label a ComboBox option.
 export const getSalesOrdersForLinking = async (search = ''): Promise<SalesOrderLinkOption[]> => {
   let query = supabase
     .from('sales_header')
     .select('id, sales_no, clients(company_name)')
+    .in('status', ['QUOTATION', 'ORDERED'])
     .order('created_at', { ascending: false });
 
   const q = search.trim();

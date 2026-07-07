@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import {
-  getMaterials, saveMaterial, deleteMaterial, generateId, getMaterialCategories
+  getMaterials, saveMaterial, deleteMaterial, generateId, getMaterialCategories, getMaterialById
 } from '../services/MaterialService';
 import { Material, MaterialCategory, MaterialType, Attachment } from '../types';
 import { Plus, Paperclip, Edit, Trash2, ChevronRight, FileText, Boxes, AlertTriangle } from 'lucide-react';
@@ -16,11 +16,24 @@ import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, Sea
 import { CallAPI } from './UIHelper';
 import { debounce } from 'lodash'
 
+interface MaterialViewProps {
+  // Cross-tab drill-in: passed through to MaterialDetailView's purchase
+  // history links so they can jump to the Purchases tab. fromMaterialId lets
+  // the destination detail page's Back button return here instead of its list.
+  onViewPurchaseOrder?: (purchaseHeaderId: string, fromMaterialId?: string) => void;
+  // Cross-tab return trip: reopens this material's detail page after a
+  // PurchaseOrderDetailView opened from here navigates back. Since switching
+  // App.tsx tabs unmounts this view, local selectedMaterial state can't
+  // survive the round trip on its own.
+  initialMaterialId?: string | null;
+  onInitialMaterialHandled?: () => void;
+}
+
 /**
  * Material catalog listing: search, create/edit/delete, and the entry point
  * into MaterialDetailView (material summary + purchase history).
  */
-export default function MaterialView() {
+export default function MaterialView({ onViewPurchaseOrder, initialMaterialId, onInitialMaterialHandled }: MaterialViewProps = {}) {
   const [searchQuery, setSearchQuery] = useState('');
   const [materials, setMaterials] = useState<Material[]>([]);
   const [loading, setLoading] = useState(true);
@@ -55,6 +68,20 @@ export default function MaterialView() {
 
   // Drill-down: selected material (shows MaterialDetailView instead of the grid)
   const [selectedMaterial, setSelectedMaterial] = useState<Material | null>(null);
+
+  // Cross-tab return trip: re-fetch and reopen the material this view was
+  // last showing before a drill-in navigated away to another tab.
+  useEffect(() => {
+    if (!initialMaterialId) return;
+    CallAPI(() => getMaterialById(initialMaterialId), {
+      onCompleted: (material) => {
+        if (material) setSelectedMaterial(material);
+        onInitialMaterialHandled?.();
+      },
+      onError: (err) => { console.error(err); onInitialMaterialHandled?.(); },
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialMaterialId]);
 
   // ─── Material create/edit form ───────────────────────────────────────────
   const [showMaterialForm, setShowMaterialForm] = useState(false);
@@ -149,6 +176,7 @@ export default function MaterialView() {
         onBack={() => { setSelectedMaterial(null); loadMaterials(); }}
         onMaterialUpdated={(updated) => setSelectedMaterial(updated)}
         onMaterialDeleted={() => { setSelectedMaterial(null); loadMaterials(); }}
+        onViewPurchaseOrder={(purchaseHeaderId) => onViewPurchaseOrder?.(purchaseHeaderId, selectedMaterial.id)}
       />
     );
   }

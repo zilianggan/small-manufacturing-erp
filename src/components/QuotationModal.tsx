@@ -39,7 +39,7 @@ export default function QuotationModal({ purchase, isOpen, onClose }: QuotationM
     return vendors.find(v => v.id === purchase.vendorId);
   }, [purchase, vendors]);
 
-  if (!isOpen || !purchase) return null;
+  if (!isOpen || !purchase || !companyProfile) return null;
 
   const referenceNo = purchase.purchaseNo;
   const grandTotal = purchase.totalPrice;
@@ -101,7 +101,6 @@ export default function QuotationModal({ purchase, isOpen, onClose }: QuotationM
                 .signature-image-wrapper { height: 60px; display: flex; align-items: center; justify-content: center; margin-bottom: 8px; }
                 .signature-line { width: 140px; border-bottom: 1px solid #cbd5e1; margin-bottom: 6px; }
                 .signature-title { font-size: 10px; font-weight: 700; color: #334155; }
-                @media print { body { padding: 0; } }
               </style>
             </head>
             <body>
@@ -169,7 +168,7 @@ export default function QuotationModal({ purchase, isOpen, onClose }: QuotationM
                       <td class="text-mono" style="color: #94a3b8;">${String(idx + 1).padStart(2, '0')}</td>
                       <td>
                         <div class="item-name">${item.materialName}</div>
-                        <span class="item-desc">Raw material. Code: ${item.materialCode || item.materialId}</span>
+                        <span class="item-desc">${item.materialCode || item.materialId} | Dimension: ${item.material.dimension}</span>
                       </td>
                       <td class="text-right text-mono">${item.quantity} units</td>
                       <td class="text-right text-mono">RM ${item.unitCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
@@ -394,7 +393,7 @@ export default function QuotationModal({ purchase, isOpen, onClose }: QuotationM
                       <td className="p-3 font-mono text-slate-400">{String(idx + 1).padStart(2, '0')}</td>
                       <td className="p-3 font-semibold text-slate-800">
                         <div>{item.materialName}</div>
-                        <span className="text-[9px] text-slate-400 font-normal">Raw material. Code: {item.materialCode || item.materialId}</span>
+                        <span className="text-[9px] text-slate-400 font-normal">{item.materialCode || item.materialId} | Dimension: {item.material.dimension}</span>
                       </td>
                       <td className="p-3 text-right font-mono">{item.quantity} units</td>
                       <td className="p-3 text-right font-mono">RM {item.unitCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>

@@ -8,7 +8,7 @@ import {
   saveProduct, deleteProduct, getProductCategories, getProductSalesHistory
 } from '../services/ProductService';
 import { Product, ProductCategory, ProductSalesHistoryItem, Attachment } from '../types';
-import { Paperclip, Edit, Trash2, ArrowLeft, FileSpreadsheet } from 'lucide-react';
+import { Paperclip, Edit, Trash2, ArrowLeft, FileSpreadsheet, ChevronRight } from 'lucide-react';
 import ProductFormFields from './ProductFormFields';
 import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card } from './ui';
 import { CallAPI } from './UIHelper';
@@ -18,6 +18,9 @@ interface ProductDetailViewProps {
   onBack: () => void;
   onProductUpdated: (product: Product) => void;
   onProductDeleted: () => void;
+  // Cross-tab drill-in: opens the linked sales order in the Orders tab.
+  // Optional since ProductDetailView can render standalone (e.g. in tests).
+  onViewSalesOrder?: (salesHeaderId: string) => void;
 }
 
 /**
@@ -26,7 +29,7 @@ interface ProductDetailViewProps {
  * first. Split out of ProductView.tsx to keep that file focused on the
  * catalog listing/search/create flow.
  */
-export default function ProductDetailView({ product, onBack, onProductUpdated, onProductDeleted }: ProductDetailViewProps) {
+export default function ProductDetailView({ product, onBack, onProductUpdated, onProductDeleted, onViewSalesOrder }: ProductDetailViewProps) {
   // ─── Product categories (reference data for the edit form) ──────────────
   const [productCategories, setProductCategories] = useState<ProductCategory[]>([]);
   useEffect(() => {
@@ -211,6 +214,7 @@ export default function ProductDetailView({ product, onBack, onProductUpdated, o
                   <th className="px-4 py-2 font-semibold">Unit Price</th>
                   <th className="px-4 py-2 font-semibold">Total Price</th>
                   <th className="px-4 py-2 font-semibold">Status</th>
+                  {onViewSalesOrder && <th className="px-4 py-2 font-semibold"></th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -229,6 +233,18 @@ export default function ProductDetailView({ product, onBack, onProductUpdated, o
                         </span>
                       )}
                     </td>
+                    {onViewSalesOrder && (
+                      <td className="px-4 py-2.5 text-right">
+                        <button
+                          onClick={() => onViewSalesOrder(item.headerId)}
+                          className="inline-flex items-center gap-0.5 text-[11px] font-medium text-blue-600 hover:text-blue-800"
+                          title="View sales order"
+                        >
+                          <span>View</span>
+                          <ChevronRight className="w-3 h-3" />
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>

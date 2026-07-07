@@ -42,8 +42,14 @@ src/
 │   ├── ContactsView.tsx       # Vendor/Client company listing (search/add/edit/delete + drill-in)
 │   ├── ContactDetailView.tsx  # Drill-down: one company's info + its Contacts CRUD
 │   ├── CompanyFormFields.tsx  # Shared Vendor/Client form fields (used by both of the above)
-│   ├── OrdersView.tsx        # Quotation → Sales Order → Production → Delivered workflow over sales_header/sales_detail
-│   ├── PurchasesView.tsx     # Quotation → Purchase Order workflow over purchase_header/purchase_detail
+│   ├── OrdersView.tsx        # Quotation → Sales Order → Production → Delivered workflow over sales_header/sales_detail; drills into SalesOrderDetailView.tsx via an Eye-icon row button
+│   ├── SalesOrderDetailView.tsx  # Drill-down: one SalesHeader's summary + status-lifecycle actions + line item/material breakdown (actions delegate back to OrdersView's handlers)
+│   ├── PurchasesView.tsx     # Quotation → Purchase Order workflow over purchase_header/purchase_detail; drills into PurchaseOrderDetailView.tsx via an Eye-icon row button
+│   ├── PurchaseOrderDetailView.tsx  # Drill-down: one PurchaseHeader's summary + status-lifecycle actions + material line item table (actions delegate back to PurchasesView's handlers)
+│   ├── ProductView.tsx       # Product catalog listing; drills into ProductDetailView.tsx
+│   ├── ProductDetailView.tsx # Drill-down: product info + read-only order/sales history, each row linking cross-tab to SalesOrderDetailView.tsx
+│   ├── MaterialView.tsx      # Material catalog listing; drills into MaterialDetailView.tsx
+│   ├── MaterialDetailView.tsx  # Drill-down: material info + read-only purchase history, each row linking cross-tab to PurchaseOrderDetailView.tsx
 │   ├── WorkflowsView.tsx (production tasks)
 │   ├── EmployeesView.tsx
 │   ├── SystemAdminView.tsx   # Job Position / Material Category / Product Category reference data
@@ -68,10 +74,12 @@ src/
     ├── CompanyProfileService.ts  # Pattern A reference implementation
     ├── SystemAdminService.ts     # Pattern A; owns Job Position/Material/Product Category reference data
     ├── ContactsService.ts        # Pattern A; Vendors + Clients + Contacts (people)
+    ├── ProductService.ts         # Pattern A; product catalog + getProductSalesHistory (ProductDetailView) + getProductById (drill-in restore)
+    ├── MaterialService.ts        # Pattern A; material catalog + getMaterialPurchaseHistory (MaterialDetailView) + getMaterialById (drill-in restore)
     ├── EmployeesService.ts       # Thin re-export wrapper over db.ts + SystemAdminService (pattern B)
     ├── InventoryService.ts       # Thin re-export wrapper over db.ts + SystemAdminService (pattern B)
-    ├── OrdersService.ts          # Pattern A; sales_header/sales_detail/production_material_usage quotation→SO→production→delivery workflow
-    ├── PurchasesService.ts       # Pattern A; purchase_header/purchase_detail quotation-to-PO workflow
+    ├── OrdersService.ts          # Pattern A; sales_header/sales_detail/production_material_usage quotation→SO→production→delivery workflow. Also: getSalesOrderById (single-order fetch for detail/drill-in), getSalesOrderMaterialRequirements (aggregated planned material qty for PurchasesView's linked-SO panel)
+    ├── PurchasesService.ts       # Pattern A; purchase_header/purchase_detail quotation-to-PO workflow. Also: getPurchaseById (single-purchase fetch for detail/drill-in)
     └── WorkflowsService.ts       # Thin re-export wrapper over db.ts (pattern B)
 
 Root files:
@@ -106,6 +114,22 @@ Root files:
 ### Other
 - **Attachment**: name, type, size, dataUrl (base64)
 - **DashboardStats**: totalSales, totalPurchaseCosts, totalProfit, inventoryValuation, lowStockCount, pendingOrdersCount, activeWorkflowsCount
+
+## Drill-Down Detail Pages & Cross-Tab Navigation
+Sales orders and purchases each have a dedicated drill-down detail page, opened via an `Eye` icon button in their list row's Actions cell (not a chevron next to the reference number):
+- `OrdersView.tsx` → `SalesOrderDetailView.tsx` (header summary + status-lifecycle action buttons, mirroring the row actions, plus line items/materials). Actions (`onEdit`, `onConvert`, `onDelete`, `onStartProduction`, `onProductionCompletion`, `onMarkDelivered`, `onCancel`, `onOpenQuotationDoc`, `onOpenInvoiceDoc`) are passed down from `OrdersView`, which stays the single source of truth for each transition; `refreshSelectedOrder()` re-fetches (`getSalesOrderById`) after any mutation so the open detail page stays in sync.
+- `PurchasesView.tsx` → `PurchaseOrderDetailView.tsx`, same shape (`onEdit`/`onConvert`/`onDelete`/`onReceive`/`onCancel`/`onOpenQuotationDoc`, `refreshSelectedPurchase()` via `getPurchaseById`).
+
+**Cross-tab drill-in** (e.g. Product's Order History → a specific Sales Order; Material's Purchase History → a specific Purchase): Product/Material and Orders/Purchases are separate top-level tabs in `App.tsx` with no shared router, and switching tabs unmounts the previous view (`{activeTab === 'X' && <XView key={refreshKey} />}`), so navigation state can't just live in local `useState`. The pattern:
+- `App.tsx` owns `pending<X>Id` (id to open on the destination tab) and `<x>ReturnTo<Y>Id` (id to restore on the origin tab if the user hits Back). `navigateToSalesOrder(salesHeaderId, fromProductId?)` / `navigateToPurchaseOrder(purchaseHeaderId, fromMaterialId?)` set both and flip `activeTab`. `returnFromSalesOrder()` / `returnFromPurchaseOrder()` do the reverse.
+- Destination view (`OrdersView`/`PurchasesView`) takes `initialOrderId`/`initialPurchaseId` + `onInitial*Handled` (clears the pending id once consumed) + `onReturnToOrigin`. A local `detailOpenedExternally` flag distinguishes "opened via cross-tab prop" (Back calls `onReturnToOrigin()`) from "opened via this view's own Eye button" (Back just closes to this view's own list).
+- Origin view (`ProductView`/`MaterialView`) takes `initialProductId`/`initialMaterialId` + `onInitial*Handled`, and re-fetches by id (`getProductById`/`getMaterialById`) to restore its `ProductDetailView`/`MaterialDetailView` drill-down on remount, since local state didn't survive the tab unmount.
+- `ProductDetailView`/`MaterialDetailView` accept `onViewSalesOrder`/`onViewPurchaseOrder` (rendered as a "View →" link per history row); `ProductView`/`MaterialView` wrap that callback to also pass their own currently-selected id as the "return to" argument.
+
+## Purchase/Sales Form Notes
+- **Line items are editable in-place**: in `PurchasesView.tsx`'s and `OrdersView.tsx`'s edit/convert form, already-added line rows have live `quantity`/`unitCost` (purchases) or `quantity`/`unitPrice` (sales) number inputs — not just the "add new item" panel — recalculating that row's `totalPrice` on change.
+- **Linked-SO material requirements**: when a Purchase Quotation/PO has a "Linked Sales Order" selected, `PurchasesView.tsx` shows a "Required Materials for Linked Sales Order" panel (via `OrdersService.getSalesOrderMaterialRequirements`) so the buyer can see how much of each material that contract actually needs.
+- **Print modals** (`InvoiceModal.tsx`, `QuotationModal.tsx`, `SalesQuotationModal.tsx`): guard `!companyProfile` before render (state starts `null`; company profile loads async, so the very first open could crash on `companyProfile.name` etc). The popup print window's body keeps its `padding: 40px` — an old `@media print { body { padding: 0 } }` rule was zeroing it out on the one thing that window exists to do (print), and has been removed from all three.
 
 ## Contacts Module (Vendors/Clients + their people)
 - **DB**: `vendors` and `clients` tables share the same shape (`company_name`, `email`, `office_no`, `address`, `description`, `attachments`). `contacts` table has `vendor_id`/`client_id` FKs (exactly one non-null, `chk_contact_owner` CHECK constraint) plus `job_position` FK → `job_positions`. All three have `updated_at` triggers (`function_trigger.sql`).

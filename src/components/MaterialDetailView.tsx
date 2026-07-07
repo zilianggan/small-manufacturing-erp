@@ -8,7 +8,7 @@ import {
   saveMaterial, deleteMaterial, getMaterialCategories, getMaterialPurchaseHistory
 } from '../services/MaterialService';
 import { Material, MaterialCategory, MaterialType, MaterialPurchaseHistoryItem, Attachment } from '../types';
-import { Paperclip, Edit, Trash2, ArrowLeft, AlertTriangle, ShoppingBag } from 'lucide-react';
+import { Paperclip, Edit, Trash2, ArrowLeft, AlertTriangle, ShoppingBag, ChevronRight } from 'lucide-react';
 import MaterialFormFields from './MaterialFormFields';
 import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card } from './ui';
 import { CallAPI } from './UIHelper';
@@ -18,6 +18,9 @@ interface MaterialDetailViewProps {
   onBack: () => void;
   onMaterialUpdated: (material: Material) => void;
   onMaterialDeleted: () => void;
+  // Cross-tab drill-in: opens the linked purchase order in the Purchases tab.
+  // Optional since MaterialDetailView can render standalone (e.g. in tests).
+  onViewPurchaseOrder?: (purchaseHeaderId: string) => void;
 }
 
 /**
@@ -26,7 +29,7 @@ interface MaterialDetailViewProps {
  * first. Split out of MaterialView.tsx to keep that file focused on the
  * catalog listing/search/create flow.
  */
-export default function MaterialDetailView({ material, onBack, onMaterialUpdated, onMaterialDeleted }: MaterialDetailViewProps) {
+export default function MaterialDetailView({ material, onBack, onMaterialUpdated, onMaterialDeleted, onViewPurchaseOrder }: MaterialDetailViewProps) {
   // ─── Material categories (reference data for the edit form) ─────────────
   const [materialCategories, setMaterialCategories] = useState<MaterialCategory[]>([]);
   useEffect(() => {
@@ -234,6 +237,7 @@ export default function MaterialDetailView({ material, onBack, onMaterialUpdated
                   <th className="px-4 py-2 font-semibold">Total Price</th>
                   <th className="px-4 py-2 font-semibold">Received Qty</th>
                   <th className="px-4 py-2 font-semibold">Status</th>
+                  {onViewPurchaseOrder && <th className="px-4 py-2 font-semibold"></th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -252,6 +256,18 @@ export default function MaterialDetailView({ material, onBack, onMaterialUpdated
                         </span>
                       )}
                     </td>
+                    {onViewPurchaseOrder && (
+                      <td className="px-4 py-2.5 text-right">
+                        <button
+                          onClick={() => onViewPurchaseOrder(item.headerId)}
+                          className="inline-flex items-center gap-0.5 text-[11px] font-medium text-blue-600 hover:text-blue-800"
+                          title="View purchase order"
+                        >
+                          <span>View</span>
+                          <ChevronRight className="w-3 h-3" />
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
