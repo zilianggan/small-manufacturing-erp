@@ -173,11 +173,11 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
       const employees = getEmployees();
       appendRowsSheet(wb, 'Employees', employees.map((employee) => ({
         id: employee.id,
-        name: employee.name,
-        role: employee.role,
+        fullName: employee.fullName,
+        jobPositionId: employee.jobPositionId || '',
         status: employee.status,
         email: employee.email || '',
-        phone: employee.phone || ''
+        contactNo: employee.contactNo || ''
       })));
       fileName = `ERP_Employees_${dateStamp}.xlsx`;
       exportedRecordCount = employees.length;
@@ -284,7 +284,7 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
       case 'CLIENTS':
         return `Required columns:\ncompanyName\temail\tofficeNo\taddress\tdescription`;
       case 'EMPLOYEES':
-        return `Required columns:\nname\trole\tstatus\temail\tphone`;
+        return `Required columns:\nfullName\tstatus\temail\tcontactNo\nOptional: jobPositionId`;
       case 'SALES':
         return `Required columns:\nclientName\titemName\tquantity\tunitPrice\tdeliveryDate\tstatus`;
       case 'PURCHASES':
@@ -474,20 +474,19 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
       else if (activeImportType === 'EMPLOYEES') {
         const current = importMode === 'OVERWRITE' ? [] : getEmployees();
         const itemsToImport: Employee[] = parsed.map((raw: any, index) => {
-          if (!raw.name) throw new Error(`Record #${index + 1} is missing an employee 'name' field.`);
-          if (!raw.role) throw new Error(`Record #${index + 1} ('${raw.name}') is missing an employee 'role' field.`);
+          if (!raw.fullName) throw new Error(`Record #${index + 1} is missing an employee 'fullName' field.`);
           return {
             id: raw.id || generateId(),
-            name: String(raw.name),
-            role: String(raw.role),
+            fullName: String(raw.fullName),
+            jobPositionId: raw.jobPositionId || undefined,
             status: raw.status === 'INACTIVE' ? 'INACTIVE' : 'ACTIVE',
             email: raw.email || undefined,
-            phone: raw.phone || undefined
+            contactNo: raw.contactNo || undefined
           };
         });
 
         const merged = importMode === 'OVERWRITE' ? itemsToImport : [
-          ...current.filter(c => !itemsToImport.some(i => i.id === c.id || i.name.toLowerCase() === c.name.toLowerCase())),
+          ...current.filter(c => !itemsToImport.some(i => i.id === c.id || i.fullName.toLowerCase() === c.fullName.toLowerCase())),
           ...itemsToImport
         ];
 

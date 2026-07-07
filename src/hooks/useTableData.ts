@@ -56,7 +56,11 @@ const ROW_MAPPERS: Record<string, (row: any) => any> = {
     totalCost: Number(o.total_cost), orderDate: o.order_date, status: o.status,
     receivedDate: o.received_date, attachments: o.attachments || [], items: o.items || []
   }),
-  employees: (e) => e,
+  employees: (e) => ({
+    id: e.id, fullName: e.full_name, contactNo: e.contact_no, email: e.email,
+    jobPositionId: e.job_position, status: e.status,
+    createdAt: e.created_at, updatedAt: e.updated_at
+  }),
   job_positions: (p) => ({
     id: p.id, name: p.name, isActive: p.is_active ?? true,
     createdAt: p.created_at, updatedAt: p.updated_at

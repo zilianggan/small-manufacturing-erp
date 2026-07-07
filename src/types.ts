@@ -198,7 +198,7 @@ export interface WorkflowTask {
   quantity: number; // joined via sales_detail.quantity
   stage: 'PREPARATION' | 'ASSEMBLY' | 'QUALITY_CONTROL' | 'PACKAGING' | 'COMPLETED';
   employeeId?: string;
-  employeeName?: string; // joined via employees.name
+  employeeName?: string; // joined via employees.full_name
   startDate: string;
   endDate?: string;
   remark?: string;
@@ -208,11 +208,11 @@ export interface WorkflowTask {
 
 export interface Employee {
   id: string;
-  name: string;
-  role: string;
-  status: 'ACTIVE' | 'INACTIVE';
+  fullName: string;
+  contactNo?: string;
   email?: string;
-  phone?: string;
+  jobPositionId?: string; // FK -> job_positions.id
+  status: 'ACTIVE' | 'INACTIVE';
   createdAt?: string;
   updatedAt?: string;
 }

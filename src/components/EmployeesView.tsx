@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Users,
   Plus,
@@ -9,9 +9,8 @@ import {
   Briefcase,
   Search
 } from 'lucide-react';
-import { Employee } from '../types';
-import { generateId, saveEmployees, getJobPositions } from '../services/EmployeesService';
-import { useTableData } from '../hooks/useTableData';
+import { Employee, JobPosition } from '../types';
+import { generateId, getEmployees, saveEmployee, deleteEmployee, getJobPositions } from '../services/EmployeesService';
 import LoadingSpinner from './LoadingSpinner';
 import ComboBox from './ComboBox';
 import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, FormField } from './ui';
@@ -20,9 +19,23 @@ import { CallAPI } from './UIHelper';
 const employeeFieldInputClassName = 'w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 font-sans text-xs text-slate-800';
 
 export default function EmployeesView() {
-  const { data: employeesData, loading, refetch } = useTableData<Employee>('employees');
   const [employees, setEmployees] = useState<Employee[]>([]);
-  useEffect(() => { setEmployees(employeesData); }, [employeesData]);
+  const [loading, setLoading] = useState(true);
+
+  const loadEmployees = () => {
+    CallAPI(() => getEmployees(), {
+      onCompleted: (data) => {
+        setEmployees(data);
+        setLoading(false);
+      },
+      onError: (err) => {
+        console.error(err);
+        setLoading(false);
+      },
+    });
+  };
+
+  useEffect(() => { loadEmployees(); }, []);
 
   // Search and Filters
   const [searchTerm, setSearchTerm] = useState('');
@@ -31,12 +44,12 @@ export default function EmployeesView() {
   // Form States
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
-  const [name, setName] = useState('');
-  const [role, setRole] = useState('');
+  const [fullName, setFullName] = useState('');
+  const [jobPositionId, setJobPositionId] = useState('');
   const [status, setStatus] = useState<'ACTIVE' | 'INACTIVE'>('ACTIVE');
   const [email, setEmail] = useState('');
-  const [phone, setPhone] = useState('');
-  const [jobPositions, setJobPositions] = useState([]);
+  const [contactNo, setContactNo] = useState('');
+  const [jobPositions, setJobPositions] = useState<JobPosition[]>([]);
 
   useEffect(() => {
     CallAPI(getJobPositions, {
@@ -45,14 +58,16 @@ export default function EmployeesView() {
     });
   }, [])
 
+  const jobPositionMap = useMemo(() => new Map(jobPositions.map(p => [p.id, p.name])), [jobPositions]);
 
   const activeJobPositionOptions = jobPositions
-    .filter(position => position.is_active || position.name === role)
-    .map(position => ({ value: position.name, label: position.name }));
+    .filter(position => position.is_active || position.id === jobPositionId)
+    .map(position => ({ value: position.id, label: position.name }));
 
   const filteredEmployees = employees.filter(emp => {
-    const matchesSearch = emp.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      emp.role.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    const positionName = (emp.jobPositionId && jobPositionMap.get(emp.jobPositionId)) || '';
+    const matchesSearch = emp.fullName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      positionName.toLowerCase().includes(searchTerm.toLowerCase()) ||
       (emp.email && emp.email.toLowerCase().includes(searchTerm.toLowerCase()));
     const matchesStatus = statusFilter === 'ALL' || emp.status === statusFilter;
     return matchesSearch && matchesStatus;
@@ -60,21 +75,21 @@ export default function EmployeesView() {
 
   const handleOpenAddForm = () => {
     setEditingEmployee(null);
-    setName('');
-    setRole('');
+    setFullName('');
+    setJobPositionId('');
     setStatus('ACTIVE');
     setEmail('');
-    setPhone('');
+    setContactNo('');
     setIsFormOpen(true);
   };
 
   const handleOpenEditForm = (emp: Employee) => {
     setEditingEmployee(emp);
-    setName(emp.name);
-    setRole(emp.role);
+    setFullName(emp.fullName);
+    setJobPositionId(emp.jobPositionId || '');
     setStatus(emp.status);
     setEmail(emp.email || '');
-    setPhone(emp.phone || '');
+    setContactNo(emp.contactNo || '');
     setIsFormOpen(true);
   };
 
@@ -82,11 +97,10 @@ export default function EmployeesView() {
     if (!confirm(`Are you sure you want to delete ${empName}? This employee will no longer be listed in the team catalog.`)) return;
 
     const previous = employees;
-    const updated = employees.filter(e => e.id !== id);
-    setEmployees(updated);
+    setEmployees(employees.filter(e => e.id !== id));
 
-    await CallAPI(() => saveEmployees(updated, undefined, id), {
-      onCompleted: refetch,
+    await CallAPI(() => deleteEmployee(id), {
+      onCompleted: loadEmployees,
       onError: (err) => {
         console.error(err);
         setEmployees(previous);
@@ -96,45 +110,24 @@ export default function EmployeesView() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim() || !role.trim()) return;
+    if (!fullName.trim()) return;
 
-    let updatedList: Employee[];
-
-    if (editingEmployee) {
-      updatedList = employees.map(emp => {
-        if (emp.id === editingEmployee.id) {
-          return {
-            ...emp,
-            name: name.trim(),
-            role: role.trim(),
-            status,
-            email: email.trim() || undefined,
-            phone: phone.trim() || undefined
-          };
-        }
-        return emp;
-      });
-    } else {
-      const newEmployee: Employee = {
-        id: generateId(),
-        name: name.trim(),
-        role: role.trim(),
-        status,
-        email: email.trim() || undefined,
-        phone: phone.trim() || undefined
-      };
-      updatedList = [...employees, newEmployee];
-    }
-
-    const changedEmp = editingEmployee
-      ? updatedList.find(e => e.id === editingEmployee.id)
-      : updatedList[updatedList.length - 1];
+    const savedEmployee: Employee = {
+      id: editingEmployee ? editingEmployee.id : generateId(),
+      fullName: fullName.trim(),
+      jobPositionId: jobPositionId || undefined,
+      status,
+      email: email.trim() || undefined,
+      contactNo: contactNo.trim() || undefined
+    };
 
     const previous = employees;
-    setEmployees(updatedList);
+    setEmployees(editingEmployee
+      ? employees.map(emp => emp.id === savedEmployee.id ? savedEmployee : emp)
+      : [...employees, savedEmployee]);
 
-    await CallAPI(() => saveEmployees(updatedList, changedEmp), {
-      onCompleted: refetch,
+    await CallAPI(() => saveEmployee(savedEmployee), {
+      onCompleted: loadEmployees,
       onError: (err) => {
         console.error(err);
         setEmployees(previous);
@@ -219,14 +212,16 @@ export default function EmployeesView() {
                 <div className="flex items-start justify-between">
                   <div className="flex items-center space-x-3 min-w-0">
                     <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center shrink-0 border border-slate-200 text-slate-500 font-bold font-sans text-xs uppercase">
-                      {emp.name.split(' ').map(n => n[0]).join('').substring(0, 2)}
+                      {emp.fullName.split(' ').map(n => n[0]).join('').substring(0, 2)}
                     </div>
                     <div className="min-w-0">
-                      <h4 className="font-sans font-bold text-slate-900 text-sm truncate">{emp.name}</h4>
-                      <p className="text-[11px] text-slate-500 font-semibold truncate flex items-center space-x-1">
-                        <Briefcase className="w-3 h-3 text-slate-400 shrink-0" />
-                        <span>{emp.role}</span>
-                      </p>
+                      <h4 className="font-sans font-bold text-slate-900 text-sm truncate">{emp.fullName}</h4>
+                      {emp.jobPositionId && jobPositionMap.get(emp.jobPositionId) && (
+                        <p className="text-[11px] text-slate-500 font-semibold truncate flex items-center space-x-1">
+                          <Briefcase className="w-3 h-3 text-slate-400 shrink-0" />
+                          <span>{jobPositionMap.get(emp.jobPositionId)}</span>
+                        </p>
+                      )}
                     </div>
                   </div>
 
@@ -245,10 +240,10 @@ export default function EmployeesView() {
                       <span className="font-mono text-[11px] truncate">{emp.email}</span>
                     </div>
                   )}
-                  {emp.phone && (
+                  {emp.contactNo && (
                     <div className="flex items-center space-x-2">
                       <Phone className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                      <span className="font-mono text-[11px]">{emp.phone}</span>
+                      <span className="font-mono text-[11px]">{emp.contactNo}</span>
                     </div>
                   )}
                 </div>
@@ -268,7 +263,7 @@ export default function EmployeesView() {
                 <button
                   id={`btn-delete-emp-${emp.id}`}
                   type="button"
-                  onClick={() => handleDelete(emp.id, emp.name)}
+                  onClick={() => handleDelete(emp.id, emp.fullName)}
                   className="p-1.5 text-slate-500 hover:text-red-600 hover:bg-slate-50 rounded transition-colors"
                   title="Remove employee"
                 >
@@ -299,18 +294,17 @@ export default function EmployeesView() {
             <input
               type="text"
               required
-              value={name}
-              onChange={(e) => setName(e.target.value)}
+              value={fullName}
+              onChange={(e) => setFullName(e.target.value)}
               placeholder="e.g. John Doe"
               className={employeeFieldInputClassName}
             />
           </FormField>
 
-          <FormField label="Designation / Role *" labelClassName="font-semibold block text-slate-700">
+          <FormField label="Job Position" labelClassName="font-semibold block text-slate-700">
             <ComboBox
-              required
-              value={role}
-              onChange={setRole}
+              value={jobPositionId}
+              onChange={setJobPositionId}
               noneLabel="-- Select Job Position --"
               options={activeJobPositionOptions}
             />
@@ -340,8 +334,8 @@ export default function EmployeesView() {
           <FormField label="Phone Contact" labelClassName="font-semibold block text-slate-700">
             <input
               type="text"
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
+              value={contactNo}
+              onChange={(e) => setContactNo(e.target.value)}
               placeholder="e.g. +60 12-345-6789"
               className={employeeFieldInputClassName}
             />

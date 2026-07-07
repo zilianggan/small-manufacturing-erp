@@ -27,7 +27,7 @@ const ROW_MAPPERS: Record<string, (row: any) => any> = {
         createdAt: i.created_at, updatedAt: i.updated_at
     }),
     // NOTE: unlike the other entries in this map (which deserialize DB rows
-    // for the now-unused loadTableProgressively path), these three serialize
+    // for the now-unused loadTableProgressively path), these four serialize
     // JS (camelCase) records -> DB (snake_case) rows, since upsertRecord()
     // is their only live caller.
     erp_vendors: (v) => ({
@@ -89,9 +89,8 @@ const ROW_MAPPERS: Record<string, (row: any) => any> = {
         createdAt: o.created_at, updatedAt: o.updated_at
     }),
     erp_employees: (e) => ({
-        id: e.id, name: e.name, role: e.role, status: e.status,
-        email: e.email, phone: e.phone,
-        createdAt: e.created_at, updatedAt: e.updated_at
+        id: e.id, full_name: e.fullName, contact_no: e.contactNo || null, email: e.email || null,
+        job_position: e.jobPositionId || null, status: e.status || null
     }),
     erp_job_positions: (p) => ({
         id: p.id,

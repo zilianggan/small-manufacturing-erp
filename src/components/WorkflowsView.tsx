@@ -57,7 +57,7 @@ export default function WorkflowsView() {
     const employee = employees.find(e => e.id === employeeId);
     const updated = tasks.map(t => {
       if (t.id === taskId) {
-        return { ...t, employeeId: employeeId || undefined, employeeName: employee?.name };
+        return { ...t, employeeId: employeeId || undefined, employeeName: employee?.fullName };
       }
       return t;
     });

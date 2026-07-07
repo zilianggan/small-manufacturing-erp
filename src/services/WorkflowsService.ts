@@ -22,7 +22,7 @@ const mapTaskRow = (row: any): WorkflowTask => ({
     quantity: Number(row.sales_detail?.quantity) || 0,
     stage: row.stage,
     employeeId: row.employee_id || undefined,
-    employeeName: row.employees?.name || undefined,
+    employeeName: row.employees?.full_name || undefined,
     startDate: row.start_date,
     endDate: row.end_date || undefined,
     remark: row.remark || undefined,

@@ -23,7 +23,7 @@ export default function OrderAccordion({ salesNo, tasks, onAssignTask, employees
     tasks.forEach(task => onAssignTask(task.id, employeeId));
   };
 
-  const employeeOptions = employees.map(emp => ({ value: emp.id, label: emp.name }));
+  const employeeOptions = employees.map(emp => ({ value: emp.id, label: emp.fullName }));
 
   return (
     <div className="bg-white border border-slate-200 rounded-lg shadow-sm">
