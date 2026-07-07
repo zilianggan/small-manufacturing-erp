@@ -18,6 +18,7 @@ import {
   getVendorExportRows, getClientExportRows, getMaterialExportRows, getProductExportRows,
   getPurchaseExportSheets, getSalesExportSheets,
 } from '../services/ImportExportService';
+import { useToast } from './ui';
 
 interface ImportExportModalProps {
   isOpen: boolean;
@@ -49,6 +50,7 @@ const isHeaderDetailCategory = (category: Category): category is 'PURCHASE' | 'S
   category === 'PURCHASE' || category === 'SALES';
 
 export default function ImportExportModal({ isOpen, onClose, onDataImported }: ImportExportModalProps) {
+  const toast = useToast();
   const [activeCategory, setActiveCategory] = useState<Category>('VENDORS');
   const [dragActive, setDragActive] = useState(false);
   const [status, setStatus] = useState<{ type: 'idle' | 'success' | 'error'; message: string; details?: string[] }>({ type: 'idle', message: '' });
@@ -108,6 +110,7 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
 
     XLSX.writeFile(wb, fileName);
     setStatus({ type: 'success', message: `Export file created: ${fileName}`, details: [`Exported ${exportedCount} record(s).`] });
+    toast.success(`Exported ${exportedCount} record(s) to ${fileName}.`);
   };
 
   const getTemplateHeaders = (category: Category): string => {
@@ -134,9 +137,11 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
         : await importProducts(rows);
 
       setStatus({ type: 'success', message: 'Successfully completed import.', details: result.logs });
+      toast.success('Import completed successfully.');
       onDataImported();
     } catch (err: any) {
       setStatus({ type: 'error', message: 'Import failed!', details: [err.message || 'Make sure the Excel file is correctly formatted.'] });
+      toast.error(err.message || 'Import failed. Make sure the Excel file is correctly formatted.');
     }
   };
 
@@ -149,6 +154,7 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
       }
     } catch (err: any) {
       setStatus({ type: 'error', message: 'Validation failed!', details: [err.message || 'Make sure the Excel file is correctly formatted.'] });
+      toast.error(err.message || 'Validation failed. Make sure the Excel file is correctly formatted.');
     }
   };
 
@@ -160,6 +166,7 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
     const missingMapped = expectedCols.filter(col => col.required && !mappingState.mapping[col.key]);
     if (missingMapped.length > 0) {
       setStatus({ type: 'error', message: 'Missing Required Column Mappings', details: missingMapped.map(m => `Please map: ${m.label}`) });
+      toast.warning('Please map all required columns before continuing.');
       return;
     }
 
@@ -215,6 +222,7 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
         message: 'Import failed due to missing required data in some rows.',
         details: ['An Excel file with error messages has been downloaded. Please fix the errors and try again.'],
       });
+      toast.warning('Import failed: some rows are missing required data. Check the downloaded error file.');
       setMappingState(null);
       return;
     }
@@ -233,8 +241,10 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
         message: `Import stopped at Purchase No "${result.failed.purchaseNo}".`,
         details: [result.failed.message, `Successfully created before the failure: ${result.succeeded.join(', ') || 'none'}.`],
       });
+      toast.error(`Import stopped at Purchase No "${result.failed.purchaseNo}": ${result.failed.message}`);
     } else {
       setStatus({ type: 'success', message: `Successfully imported ${result.succeeded.length} purchase order(s).`, details: result.succeeded });
+      toast.success(`Successfully imported ${result.succeeded.length} purchase order(s).`);
       onDataImported();
     }
   };
@@ -249,8 +259,10 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
         message: `Import stopped at Sales No "${result.failed.salesNo}".`,
         details: [result.failed.message, `Successfully created before the failure: ${result.succeeded.join(', ') || 'none'}.`],
       });
+      toast.error(`Import stopped at Sales No "${result.failed.salesNo}": ${result.failed.message}`);
     } else {
       setStatus({ type: 'success', message: `Successfully imported ${result.succeeded.length} sales order(s).`, details: result.succeeded });
+      toast.success(`Successfully imported ${result.succeeded.length} sales order(s).`);
       onDataImported();
     }
   };
@@ -261,6 +273,7 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
       const data = e.target?.result;
       if (!file.name.endsWith('.xlsx') && !file.name.endsWith('.xls')) {
         setStatus({ type: 'error', message: 'Only Excel files (.xlsx, .xls) are supported.' });
+        toast.warning('Only Excel files (.xlsx, .xls) are supported.');
         return;
       }
 
@@ -271,6 +284,7 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
 
       if (rows.length < 2) {
         setStatus({ type: 'error', message: 'File has no data rows.' });
+        toast.warning('File has no data rows.');
         return;
       }
 
@@ -536,7 +550,7 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
                       type="button"
                       onClick={() => {
                         navigator.clipboard.writeText(getTemplateHeaders(activeCategory));
-                        alert('Template copied to clipboard!');
+                        toast.success('Template copied to clipboard!');
                       }}
                       className="mt-3 w-full py-1.5 bg-slate-800 hover:bg-slate-700 hover:text-white rounded text-[10px] text-slate-300 font-sans font-medium transition-colors flex items-center justify-center space-x-1"
                     >

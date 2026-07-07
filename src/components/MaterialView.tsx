@@ -12,15 +12,18 @@ import { Plus, Paperclip, Edit, Trash2, ChevronRight, FileText, Boxes, AlertTria
 import LoadingSpinner from './LoadingSpinner';
 import MaterialFormFields from './MaterialFormFields';
 import MaterialDetailView from './MaterialDetailView';
-import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, SearchInput } from './ui';
+import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, SearchInput, useToast, useConfirm } from './ui';
 import { CallAPI } from './UIHelper';
 import { debounce } from 'lodash'
 
 interface MaterialViewProps {
-  // Cross-tab drill-in: passed through to MaterialDetailView's purchase
-  // history links so they can jump to the Purchases tab. fromMaterialId lets
+  // Cross-tab drill-in: passed through to MaterialDetailView's inventory list
+  // links so they can jump to the Purchases tab. fromMaterialId lets
   // the destination detail page's Back button return here instead of its list.
   onViewPurchaseOrder?: (purchaseHeaderId: string, fromMaterialId?: string) => void;
+  // Cross-tab drill-in: same as above but for rows where this material was
+  // consumed in production against a sales order — jumps to the Orders tab.
+  onViewSalesOrder?: (salesHeaderId: string, fromProductId?: string, fromMaterialId?: string) => void;
   // Cross-tab return trip: reopens this material's detail page after a
   // PurchaseOrderDetailView opened from here navigates back. Since switching
   // App.tsx tabs unmounts this view, local selectedMaterial state can't
@@ -33,7 +36,9 @@ interface MaterialViewProps {
  * Material catalog listing: search, create/edit/delete, and the entry point
  * into MaterialDetailView (material summary + purchase history).
  */
-export default function MaterialView({ onViewPurchaseOrder, initialMaterialId, onInitialMaterialHandled }: MaterialViewProps = {}) {
+export default function MaterialView({ onViewPurchaseOrder, onViewSalesOrder, initialMaterialId, onInitialMaterialHandled }: MaterialViewProps = {}) {
+  const toast = useToast();
+  const confirm = useConfirm();
   const [searchQuery, setSearchQuery] = useState('');
   const [materials, setMaterials] = useState<Material[]>([]);
   const [loading, setLoading] = useState(true);
@@ -151,8 +156,8 @@ export default function MaterialView({ onViewPurchaseOrder, initialMaterialId, o
     };
 
     await CallAPI(() => saveMaterial(record), {
-      onCompleted: () => loadMaterials(),
-      onError: console.error,
+      onCompleted: () => { loadMaterials(); toast.success(editMaterialId ? 'Material updated.' : 'Material added.'); },
+      onError: (err) => { console.error(err); toast.error('Failed to save material.'); },
     });
 
     resetForm();
@@ -160,11 +165,11 @@ export default function MaterialView({ onViewPurchaseOrder, initialMaterialId, o
   };
 
   const handleDeleteMaterial = async (item: Material) => {
-    if (!confirm(`Delete ${item.name}? This cannot be undone.`)) return;
+    if (!(await confirm(`Delete ${item.name}? This cannot be undone.`))) return;
 
     await CallAPI(() => deleteMaterial(item.id), {
-      onCompleted: () => loadMaterials(),
-      onError: console.error,
+      onCompleted: () => { loadMaterials(); toast.success(`${item.name} deleted.`); },
+      onError: (err) => { console.error(err); toast.error('Failed to delete material.'); },
     });
   };
 
@@ -177,6 +182,7 @@ export default function MaterialView({ onViewPurchaseOrder, initialMaterialId, o
         onMaterialUpdated={(updated) => setSelectedMaterial(updated)}
         onMaterialDeleted={() => { setSelectedMaterial(null); loadMaterials(); }}
         onViewPurchaseOrder={(purchaseHeaderId) => onViewPurchaseOrder?.(purchaseHeaderId, selectedMaterial.id)}
+        onViewSalesOrder={(salesHeaderId) => onViewSalesOrder?.(salesHeaderId, undefined, selectedMaterial.id)}
       />
     );
   }
@@ -340,7 +346,7 @@ function MaterialCard({
           onClick={onOpen}
           className="flex items-center space-x-1 text-[11px] font-medium text-blue-600 hover:text-blue-800"
         >
-          <span>View Purchase History</span>
+          <span>View Inventory List</span>
         </button>
 
         <div className="flex items-center space-x-1.5 opacity-0 group-hover:opacity-100 transition-opacity">

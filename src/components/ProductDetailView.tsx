@@ -5,13 +5,14 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import {
-  saveProduct, deleteProduct, getProductCategories, getProductSalesHistory
+  saveProduct, deleteProduct, getProductCategories, getProductInventoryList
 } from '../services/ProductService';
-import { Product, ProductCategory, ProductSalesHistoryItem, Attachment } from '../types';
+import { Product, ProductCategory, InventoryListItem, Attachment } from '../types';
 import { Paperclip, Edit, Trash2, ArrowLeft, FileSpreadsheet, ChevronRight } from 'lucide-react';
 import ProductFormFields from './ProductFormFields';
-import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card } from './ui';
+import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, useToast, useConfirm } from './ui';
 import { CallAPI } from './UIHelper';
+import { TRANSACTION_TYPE_BADGE } from './InventoryListShared';
 
 interface ProductDetailViewProps {
   product: Product;
@@ -25,11 +26,14 @@ interface ProductDetailViewProps {
 
 /**
  * Drill-down "detail page" for a single Product: its own info card (with
- * edit/delete) plus a read-only order/sales history section, sorted newest
- * first. Split out of ProductView.tsx to keep that file focused on the
- * catalog listing/search/create flow.
+ * edit/delete) plus a read-only inventory list section (sales plus any other
+ * stock movement — e.g. extra-produced adjustments), sorted newest first.
+ * Split out of ProductView.tsx to keep that file focused on the catalog
+ * listing/search/create flow.
  */
 export default function ProductDetailView({ product, onBack, onProductUpdated, onProductDeleted, onViewSalesOrder }: ProductDetailViewProps) {
+  const toast = useToast();
+  const confirm = useConfirm();
   // ─── Product categories (reference data for the edit form) ──────────────
   const [productCategories, setProductCategories] = useState<ProductCategory[]>([]);
   useEffect(() => {
@@ -40,13 +44,13 @@ export default function ProductDetailView({ product, onBack, onProductUpdated, o
     [productCategories]
   );
 
-  // ─── Order (sales) history for this product ──────────────────────────────
-  const [salesHistory, setSalesHistory] = useState<ProductSalesHistoryItem[]>([]);
+  // ─── Inventory list for this product ──────────────────────────────────────
+  const [salesHistory, setSalesHistory] = useState<InventoryListItem[]>([]);
   const [salesHistoryLoading, setSalesHistoryLoading] = useState(true);
 
   useEffect(() => {
     setSalesHistoryLoading(true);
-    CallAPI(() => getProductSalesHistory(product.id), {
+    CallAPI(() => getProductInventoryList(product.id), {
       onCompleted: (data) => { setSalesHistory(data); setSalesHistoryLoading(false); },
       onError: (err) => { console.error(err); setSalesHistoryLoading(false); },
     });
@@ -92,19 +96,19 @@ export default function ProductDetailView({ product, onBack, onProductUpdated, o
     };
 
     await CallAPI(() => saveProduct(updated), {
-      onCompleted: () => onProductUpdated(updated),
-      onError: console.error,
+      onCompleted: () => { onProductUpdated(updated); toast.success('Product updated.'); },
+      onError: (err) => { console.error(err); toast.error('Failed to update product.'); },
     });
 
     setShowProductForm(false);
   };
 
   const handleDeleteProduct = async () => {
-    if (!confirm(`Delete ${product.name}? This cannot be undone.`)) return;
+    if (!(await confirm(`Delete ${product.name}? This cannot be undone.`))) return;
 
     await CallAPI(() => deleteProduct(product.id), {
-      onCompleted: onProductDeleted,
-      onError: console.error,
+      onCompleted: () => { onProductDeleted(); toast.success(`${product.name} deleted.`); },
+      onError: (err) => { console.error(err); toast.error('Failed to delete product.'); },
     });
   };
 
@@ -191,62 +195,73 @@ export default function ProductDetailView({ product, onBack, onProductUpdated, o
         </div>
       </Card>
 
-      {/* Order history section */}
+      {/* Inventory list section */}
       <div className="flex items-center gap-2">
         <FileSpreadsheet className="w-4 h-4 text-slate-500" />
-        <h3 className="font-sans font-bold text-slate-900 text-sm">Order History</h3>
+        <h3 className="font-sans font-bold text-slate-900 text-sm">Inventory List</h3>
       </div>
 
       <Card className="overflow-hidden">
         {salesHistoryLoading ? (
-          <div className="p-12 text-center text-xs text-slate-400">Loading order history...</div>
+          <div className="p-12 text-center text-xs text-slate-400">Loading inventory list...</div>
         ) : salesHistory.length === 0 ? (
-          <div className="p-12 text-center text-xs text-slate-400">No order history yet.</div>
+          <div className="p-12 text-center text-xs text-slate-400">No inventory transactions yet.</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-xs text-left">
               <thead className="bg-slate-50 text-slate-500 border-b border-slate-100">
                 <tr>
-                  <th className="px-4 py-2 font-semibold">Sales No.</th>
+                  <th className="px-4 py-2 font-semibold">Type</th>
+                  <th className="px-4 py-2 font-semibold">Ref No.</th>
+                  <th className="px-4 py-2 font-semibold">Vendor / Client</th>
                   <th className="px-4 py-2 font-semibold">Order Date</th>
-                  <th className="px-4 py-2 font-semibold">Delivery Date</th>
                   <th className="px-4 py-2 font-semibold">Quantity</th>
-                  <th className="px-4 py-2 font-semibold">Unit Price</th>
+                  <th className="px-4 py-2 font-semibold">Unit Cost</th>
                   <th className="px-4 py-2 font-semibold">Total Price</th>
                   <th className="px-4 py-2 font-semibold">Status</th>
                   {onViewSalesOrder && <th className="px-4 py-2 font-semibold"></th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {salesHistory.map((item) => (
-                  <tr key={item.detailId} className="hover:bg-slate-50/50 transition-colors">
-                    <td className="px-4 py-2.5 font-mono text-slate-700">{item.salesNo || '-'}</td>
-                    <td className="px-4 py-2.5 text-slate-600">{item.orderDate || '-'}</td>
-                    <td className="px-4 py-2.5 text-slate-600">{item.deliveryDate || '-'}</td>
-                    <td className="px-4 py-2.5 text-slate-600">{item.quantity}</td>
-                    <td className="px-4 py-2.5 text-slate-600">{item.unitPrice.toFixed(2)}</td>
-                    <td className="px-4 py-2.5 text-slate-600">{item.totalPrice.toFixed(2)}</td>
-                    <td className="px-4 py-2.5">
-                      {item.status && (
-                        <span className="px-1.5 py-0.5 bg-slate-50 text-slate-600 border border-slate-200 rounded text-[10px] font-mono">
-                          {item.status}
+                {salesHistory.map((item) => {
+                  const badge = TRANSACTION_TYPE_BADGE[item.transactionType];
+                  return (
+                    <tr key={item.id} className="hover:bg-slate-50/50 transition-colors">
+                      <td className="px-4 py-2.5">
+                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-mono border ${badge.className}`}>
+                          {badge.label}
                         </span>
-                      )}
-                    </td>
-                    {onViewSalesOrder && (
-                      <td className="px-4 py-2.5 text-right">
-                        <button
-                          onClick={() => onViewSalesOrder(item.headerId)}
-                          className="inline-flex items-center gap-0.5 text-[11px] font-medium text-blue-600 hover:text-blue-800"
-                          title="View sales order"
-                        >
-                          <span>View</span>
-                          <ChevronRight className="w-3 h-3" />
-                        </button>
                       </td>
-                    )}
-                  </tr>
-                ))}
+                      <td className="px-4 py-2.5 font-mono text-slate-700">{item.refNo || '-'}</td>
+                      <td className="px-4 py-2.5 text-slate-600">{item.counterpartyName || '-'}</td>
+                      <td className="px-4 py-2.5 text-slate-600">{item.orderDate || '-'}</td>
+                      <td className="px-4 py-2.5 text-slate-600">{item.quantity}</td>
+                      <td className="px-4 py-2.5 text-slate-600">{item.unitCost != null ? item.unitCost.toFixed(2) : '-'}</td>
+                      <td className="px-4 py-2.5 text-slate-600">{item.totalPrice != null ? item.totalPrice.toFixed(2) : '-'}</td>
+                      <td className="px-4 py-2.5">
+                        {item.status && (
+                          <span className="px-1.5 py-0.5 bg-slate-50 text-slate-600 border border-slate-200 rounded text-[10px] font-mono">
+                            {item.status}
+                          </span>
+                        )}
+                      </td>
+                      {onViewSalesOrder && (
+                        <td className="px-4 py-2.5 text-right">
+                          {item.salesHeaderId && (
+                            <button
+                              onClick={() => onViewSalesOrder(item.salesHeaderId!)}
+                              className="inline-flex items-center gap-0.5 text-[11px] font-medium text-blue-600 hover:text-blue-800"
+                              title="View sales order"
+                            >
+                              <span>View</span>
+                              <ChevronRight className="w-3 h-3" />
+                            </button>
+                          )}
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

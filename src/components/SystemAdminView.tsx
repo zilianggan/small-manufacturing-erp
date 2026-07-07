@@ -14,7 +14,7 @@ import { JobPosition, MaterialCategory, ProductCategory } from '../types';
 import {
   generateId,
 } from '../services/db';
-import { Card, Dialog, DialogCancelButton, DialogFooter, DialogSubmitButton, FormField, fieldInputClassName } from './ui';
+import { Card, Dialog, DialogCancelButton, DialogFooter, DialogSubmitButton, FormField, fieldInputClassName, useToast, useConfirm } from './ui';
 import { getJobPositions, getMaterialCategories, getProductCategories, loadSystemAdminData, saveJobPositions, saveMaterialCategories, saveProductCategories } from '../services/SystemAdminService';
 import { CallAPI } from './UIHelper';
 
@@ -43,6 +43,8 @@ const emptyFormState = {
 };
 
 export default function SystemAdminView() {
+  const toast = useToast();
+  const confirm = useConfirm();
   const [activeKind, setActiveKind] = useState<ParameterKind>('JOB_POSITION');
   const [searchTerm, setSearchTerm] = useState('');
   const [jobPositions, setJobPositions] = useState<JobPosition[]>([]);
@@ -89,7 +91,7 @@ export default function SystemAdminView() {
     });
   }
 
-  const saveRecords = async (kind: ParameterKind, items: ParameterRecord[], changed?: ParameterRecord, deletedId?: string) => {
+  const saveRecords = async (kind: ParameterKind, items: ParameterRecord[], changed?: ParameterRecord, deletedId?: string, successMessage?: string) => {
     const loader = loaders[kind];
     await CallAPI(() => loader.setApi(
       items as any[],
@@ -97,8 +99,8 @@ export default function SystemAdminView() {
       deletedId
     ),
       {
-        onCompleted: () => loadData(kind),
-        onError: console.error,
+        onCompleted: () => { loadData(kind); if (successMessage) toast.success(successMessage); },
+        onError: (err) => { console.error(err); toast.error('Failed to save changes.'); },
       }
     );
   };
@@ -164,13 +166,13 @@ export default function SystemAdminView() {
       ? records.map(r => r.id === editing.id ? nextRecord : r)
       : [...records, nextRecord];
 
-    saveRecords(activeKind, nextRecords, nextRecord);
+    saveRecords(activeKind, nextRecords, nextRecord, undefined, editing ? `${activeSection.title} updated.` : `${activeSection.title} added.`);
     setDialogOpen(false);
   };
 
-  const handleDelete = (record: ParameterRecord) => {
-    if (!confirm(`Delete ${record.name}?`)) return;
-    saveRecords(activeKind, records.filter(r => r.id !== record.id), undefined, record.id);
+  const handleDelete = async (record: ParameterRecord) => {
+    if (!(await confirm(`Delete ${record.name}?`))) return;
+    saveRecords(activeKind, records.filter(r => r.id !== record.id), undefined, record.id, `${record.name} deleted.`);
   };
 
   const handleToggleActive = (record: ParameterRecord) => {

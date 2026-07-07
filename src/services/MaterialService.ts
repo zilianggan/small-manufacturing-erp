@@ -7,8 +7,9 @@
  */
 import { supabase } from "./supabase";
 import { upsertRecord, deleteRecord } from "../helper";
-import { Material, MaterialPurchaseHistoryItem } from "../types";
+import { InventoryListItem, Material } from "../types";
 import { getMaterialCategories } from "./SystemAdminService";
+import { getInventoryMovements } from "./InventoryTransactionService";
 
 export { getMaterialCategories };
 
@@ -66,36 +67,41 @@ export const getMaterialById = async (id: string): Promise<Material | null> => {
   return data ? mapMaterialRow(data) : null;
 };
 
-const mapPurchaseHistoryRow = (row: any): MaterialPurchaseHistoryItem => ({
-  detailId: row.detail_id,
-  headerId: row.header_id,
-  materialId: row.material_id,
+const mapPurchaseHistoryRow = (row: any): InventoryListItem => ({
+  id: row.detail_id,
+  transactionType: 'PURCHASE',
+  refNo: row.purchase_header?.purchase_no,
+  counterpartyName: row.purchase_header?.vendors?.company_name || '',
+  orderDate: row.purchase_header?.order_date || row.purchase_header?.quotation_date,
   quantity: Number(row.quantity) || 0,
   unitCost: Number(row.unit_cost) || 0,
   totalPrice: Number(row.total_price) || 0,
-  receivedQuantity: Number(row.received_quantity) || 0,
-  purchaseNo: row.purchase_header?.purchase_no,
-  quotationDate: row.purchase_header?.quotation_date,
-  orderDate: row.purchase_header?.order_date,
-  receivedDate: row.purchase_header?.received_date,
   status: row.purchase_header?.status,
-  vendorId: row.purchase_header?.vendor_id,
-  createdAt: row.created_at
+  purchaseHeaderId: row.header_id,
 });
 
-// Read-only join for MaterialDetailView's purchase history section, ordered
-// by purchase_header.order_date desc (newest first). purchase_detail/
-// purchase_header aren't used anywhere else in the app yet.
-export const getMaterialPurchaseHistory = async (materialId: string): Promise<MaterialPurchaseHistoryItem[]> => {
-  const { data, error } = await supabase
-    .from('purchase_detail')
-    .select('*, purchase_header(*)')
-    .eq('material_id', materialId)
-    .order('order_date', { foreignTable: 'purchase_header', ascending: false });
+// MaterialDetailView's "Inventory List": every purchase order line for this
+// material (purchase_detail/purchase_header, including not-yet-received
+// lines) merged with any other ledger movement against it — chiefly
+// production consumption (SALES/SALES_RETURN, tied back to the sales order
+// that consumed it) and stock ADJUSTMENTs. PURCHASE is excluded from the
+// ledger side since purchase_detail above already covers it with richer,
+// pre-receipt data.
+export const getMaterialInventoryList = async (materialId: string): Promise<InventoryListItem[]> => {
+  const [purchaseRows, movementRows] = await Promise.all([
+    (async () => {
+      const { data, error } = await supabase
+        .from('purchase_detail')
+        .select('*, purchase_header(*, vendors(company_name))')
+        .eq('material_id', materialId);
+      if (error) {
+        console.error('getMaterialInventoryList(purchase)', error);
+        return [];
+      }
+      return (data || []).map(mapPurchaseHistoryRow);
+    })(),
+    getInventoryMovements({ materialId }, ['PURCHASE']),
+  ]);
 
-  if (error) {
-    console.error('getMaterialPurchaseHistory', error);
-    return [];
-  }
-  return (data || []).map(mapPurchaseHistoryRow);
+  return [...purchaseRows, ...movementRows].sort((a, b) => (b.orderDate || '').localeCompare(a.orderDate || ''));
 };

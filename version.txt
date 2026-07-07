@@ -12,6 +12,8 @@ Version 1.0.3
 - Fix search causing multiple call api
 - Fix combobox got weird animation
 - Add redirect from material, product to sale order or purchase order
+- Add toast message
+- Remove alert use dialog box instead
 
 Version 1.0.2
 --------------------

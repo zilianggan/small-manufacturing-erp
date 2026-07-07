@@ -7,8 +7,9 @@
  */
 import { supabase } from "./supabase";
 import { upsertRecord, deleteRecord } from "../helper";
-import { Product, ProductSalesHistoryItem } from "../types";
+import { InventoryListItem, Product } from "../types";
 import { getProductCategories } from "./SystemAdminService";
+import { getInventoryMovements } from "./InventoryTransactionService";
 
 export { getProductCategories };
 
@@ -63,35 +64,39 @@ export const getProductById = async (id: string): Promise<Product | null> => {
   return data ? mapProductRow(data) : null;
 };
 
-const mapSalesHistoryRow = (row: any): ProductSalesHistoryItem => ({
-  detailId: row.detail_id,
-  headerId: row.header_id,
-  productId: row.product_id,
-  quantity: Number(row.quantity) || 0,
-  unitPrice: Number(row.unit_price) || 0,
-  totalPrice: Number(row.total_price) || 0,
-  remark: row.remark,
-  salesNo: row.sales_header?.sales_no,
+const mapSalesHistoryRow = (row: any): InventoryListItem => ({
+  id: row.detail_id,
+  transactionType: 'SALES',
+  refNo: row.sales_header?.sales_no,
+  counterpartyName: row.sales_header?.clients?.company_name || '',
   orderDate: row.sales_header?.order_date,
-  deliveryDate: row.sales_header?.delivery_date,
+  quantity: Number(row.quantity) || 0,
+  unitCost: Number(row.unit_price) || 0,
+  totalPrice: Number(row.total_price) || 0,
   status: row.sales_header?.status,
-  clientId: row.sales_header?.client_id,
-  createdAt: row.created_at
+  salesHeaderId: row.header_id,
 });
 
-// Read-only join for ProductDetailView's order history section, ordered by
-// sales_header.order_date desc (newest first). sales_detail/sales_header
-// aren't used anywhere else in the app yet.
-export const getProductSalesHistory = async (productId: string): Promise<ProductSalesHistoryItem[]> => {
-  const { data, error } = await supabase
-    .from('sales_detail')
-    .select('*, sales_header(*)')
-    .eq('product_id', productId)
-    .order('order_date', { foreignTable: 'sales_header', ascending: false });
+// ProductDetailView's "Inventory List": every sales order line for this
+// product (sales_detail/sales_header) merged with any other ledger movement
+// against it — chiefly extra-produced stock ADJUSTMENTs. SALES is excluded
+// from the ledger side since sales_detail above already covers it (products
+// have no dedicated stock ledger entry for the ordered/ordinary quantity).
+export const getProductInventoryList = async (productId: string): Promise<InventoryListItem[]> => {
+  const [salesRows, movementRows] = await Promise.all([
+    (async () => {
+      const { data, error } = await supabase
+        .from('sales_detail')
+        .select('*, sales_header(*, clients(company_name))')
+        .eq('product_id', productId);
+      if (error) {
+        console.error('getProductInventoryList(sales)', error);
+        return [];
+      }
+      return (data || []).map(mapSalesHistoryRow);
+    })(),
+    getInventoryMovements({ productId }, ['SALES']),
+  ]);
 
-  if (error) {
-    console.error('getProductSalesHistory', error);
-    return [];
-  }
-  return (data || []).map(mapSalesHistoryRow);
+  return [...salesRows, ...movementRows].sort((a, b) => (b.orderDate || '').localeCompare(a.orderDate || ''));
 };

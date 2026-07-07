@@ -13,7 +13,7 @@ import { Plus, Mail, Phone, MapPin, Paperclip, Edit, Trash2, ArrowLeft, Users, F
 import AttachmentSection from './AttachmentSection';
 import ComboBox from './ComboBox';
 import CompanyFormFields from './CompanyFormFields';
-import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, FormField, fieldInputClassName, SearchInput } from './ui';
+import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, FormField, fieldInputClassName, SearchInput, useToast, useConfirm } from './ui';
 import { CallAPI } from './UIHelper';
 
 type CompanyType = 'VENDORS' | 'CLIENTS';
@@ -34,6 +34,8 @@ interface ContactDetailViewProps {
  * focused on the company listing/search/create flow.
  */
 export default function ContactDetailView({ company, companyType, onBack, onCompanyUpdated, onCompanyDeleted }: ContactDetailViewProps) {
+  const toast = useToast();
+  const confirm = useConfirm();
   // ─── Job positions (reference data for the contact form) ───────────────
   const [jobPositions, setJobPositions] = useState<JobPosition[]>([]);
   useEffect(() => {
@@ -101,20 +103,20 @@ export default function ContactDetailView({ company, companyType, onBack, onComp
 
     const save = companyType === 'VENDORS' ? saveVendor(updated as Vendor) : saveClient(updated as Client);
     await CallAPI(() => save, {
-      onCompleted: () => onCompanyUpdated(updated),
-      onError: console.error,
+      onCompleted: () => { onCompanyUpdated(updated); toast.success('Profile updated.'); },
+      onError: (err) => { console.error(err); toast.error('Failed to update profile.'); },
     });
 
     setShowCompanyForm(false);
   };
 
   const handleDeleteCompany = async () => {
-    if (!confirm(`Delete ${company.companyName}? Its contacts will be removed as well.`)) return;
+    if (!(await confirm(`Delete ${company.companyName}? Its contacts will be removed as well.`))) return;
 
     const remove = companyType === 'VENDORS' ? deleteVendor(company.id) : deleteClient(company.id);
     await CallAPI(() => remove, {
-      onCompleted: onCompanyDeleted,
-      onError: console.error,
+      onCompleted: () => { onCompanyDeleted(); toast.success(`${company.companyName} deleted.`); },
+      onError: (err) => { console.error(err); toast.error('Failed to delete profile.'); },
     });
   };
 
@@ -167,8 +169,8 @@ export default function ContactDetailView({ company, companyType, onBack, onComp
     };
 
     await CallAPI(() => saveContact(newContact), {
-      onCompleted: () => loadContacts(),
-      onError: console.error,
+      onCompleted: () => { loadContacts(); toast.success(editContactId ? 'Contact updated.' : 'Contact added.'); },
+      onError: (err) => { console.error(err); toast.error('Failed to save contact.'); },
     });
 
     resetContactForm();
@@ -176,11 +178,11 @@ export default function ContactDetailView({ company, companyType, onBack, onComp
   };
 
   const handleDeleteContact = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this contact?')) return;
+    if (!(await confirm('Are you sure you want to delete this contact?'))) return;
 
     await CallAPI(() => deleteContact(id), {
-      onCompleted: () => loadContacts(),
-      onError: console.error,
+      onCompleted: () => { loadContacts(); toast.success('Contact deleted.'); },
+      onError: (err) => { console.error(err); toast.error('Failed to delete contact.'); },
     });
   };
 

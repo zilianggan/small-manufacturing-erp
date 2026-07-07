@@ -13,6 +13,11 @@ import { Card } from './ui';
 interface PurchaseOrderDetailViewProps {
   purchase: PurchaseHeader;
   onBack: () => void;
+  // Label for the Back button — defaults to "Back to Purchases" for a plain
+  // in-tab drill-in, but the caller overrides it (e.g. "Back to Material")
+  // when this page was opened via a cross-tab link so onBack actually
+  // returns to that origin instead of this tab's list.
+  backLabel?: string;
   receivingId: string | null;
   onEdit: (purchase: PurchaseHeader) => void;
   onConvert: (purchase: PurchaseHeader) => void;
@@ -31,8 +36,8 @@ interface PurchaseOrderDetailViewProps {
  * as callbacks so there's a single source of truth for each transition.
  */
 export default function PurchaseOrderDetailView({
-  purchase, onBack, receivingId,
-  onEdit, onConvert, onDelete, onReceive, onCancel, onOpenQuotationDoc,
+  purchase, onBack, backLabel = 'Back to Purchases', receivingId,
+  onEdit, onConvert, onDelete, onReceive, onCancel, onOpenQuotationDoc
 }: PurchaseOrderDetailViewProps) {
   const statusBadgeClass = purchase.status === 'ORDERED' ? 'bg-amber-50 text-amber-800 border-amber-200'
     : purchase.status === 'RECEIVED' ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
@@ -46,7 +51,7 @@ export default function PurchaseOrderDetailView({
         className="flex items-center space-x-1.5 text-xs font-medium text-slate-500 hover:text-slate-800 transition-colors"
       >
         <ArrowLeft className="w-3.5 h-3.5" />
-        <span>Back to Purchases</span>
+        <span>{backLabel}</span>
       </button>
 
       {/* Header summary card */}

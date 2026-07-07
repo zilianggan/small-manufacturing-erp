@@ -13,12 +13,14 @@ import { Employee, JobPosition } from '../types';
 import { generateId, getEmployees, saveEmployee, deleteEmployee, getJobPositions } from '../services/EmployeesService';
 import LoadingSpinner from './LoadingSpinner';
 import ComboBox from './ComboBox';
-import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, FormField } from './ui';
+import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, FormField, useToast, useConfirm } from './ui';
 import { CallAPI } from './UIHelper';
 
 const employeeFieldInputClassName = 'w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 font-sans text-xs text-slate-800';
 
 export default function EmployeesView() {
+  const toast = useToast();
+  const confirm = useConfirm();
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -94,16 +96,17 @@ export default function EmployeesView() {
   };
 
   const handleDelete = async (id: string, empName: string) => {
-    if (!confirm(`Are you sure you want to delete ${empName}? This employee will no longer be listed in the team catalog.`)) return;
+    if (!(await confirm(`Are you sure you want to delete ${empName}? This employee will no longer be listed in the team catalog.`))) return;
 
     const previous = employees;
     setEmployees(employees.filter(e => e.id !== id));
 
     await CallAPI(() => deleteEmployee(id), {
-      onCompleted: loadEmployees,
+      onCompleted: () => { loadEmployees(); toast.success(`${empName} removed from the team catalog.`); },
       onError: (err) => {
         console.error(err);
         setEmployees(previous);
+        toast.error('Failed to delete employee.');
       },
     });
   };
@@ -127,10 +130,11 @@ export default function EmployeesView() {
       : [...employees, savedEmployee]);
 
     await CallAPI(() => saveEmployee(savedEmployee), {
-      onCompleted: loadEmployees,
+      onCompleted: () => { loadEmployees(); toast.success(editingEmployee ? 'Employee updated.' : 'Employee added.'); },
       onError: (err) => {
         console.error(err);
         setEmployees(previous);
+        toast.error('Failed to save employee.');
       },
     });
 

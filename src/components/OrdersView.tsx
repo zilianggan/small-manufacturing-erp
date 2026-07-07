@@ -23,7 +23,7 @@ import ProductionCompletionModal from './ProductionCompletionModal';
 import SalesOrderDetailView from './SalesOrderDetailView';
 import LoadingSpinner from './LoadingSpinner';
 import ComboBox from './ComboBox';
-import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, FormField, SearchInput } from './ui';
+import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, FormField, SearchInput, useToast, useConfirm } from './ui';
 import { CallAPI } from './UIHelper';
 import { debounce } from 'lodash'
 
@@ -31,18 +31,25 @@ type OrderTab = 'QUOTATION' | 'SO';
 type FormMode = 'CREATE' | 'EDIT' | 'CONVERT';
 
 interface OrdersViewProps {
-  // Cross-tab drill-in: ProductDetailView.tsx's order history links here
-  // via App.tsx passing a pending sales header id, since Orders/Product are
-  // separate top-level tabs with no shared router.
+  // Cross-tab drill-in: ProductDetailView.tsx's/MaterialDetailView.tsx's
+  // inventory list links here via App.tsx passing a pending sales header id,
+  // since Orders/Product/Material are separate top-level tabs with no shared
+  // router.
   initialOrderId?: string | null;
   onInitialOrderHandled?: () => void;
+  // Which detail page the cross-tab drill-in came from — a material row can
+  // link here too (production consumption against this sale) — used only to
+  // word the detail page's Back button correctly.
+  initialOrderOrigin?: 'PRODUCT' | 'MATERIAL';
   // Called instead of closing locally when the currently open detail page
   // was reached via that cross-tab drill-in — lets App.tsx send the user
-  // back to the originating Product detail page rather than this list.
+  // back to the originating Product/Material detail page rather than this list.
   onReturnToOrigin?: () => void;
 }
 
-export default function OrdersView({ initialOrderId, onInitialOrderHandled, onReturnToOrigin }: OrdersViewProps = {}) {
+export default function OrdersView({ initialOrderId, onInitialOrderHandled, initialOrderOrigin, onReturnToOrigin }: OrdersViewProps = {}) {
+  const toast = useToast();
+  const confirm = useConfirm();
   const [activeTab, setActiveTab] = useState<OrderTab>('QUOTATION');
   const [searchQuery, setSearchQuery] = useState([{ search: '' }, { search: '' }]);
   const [orders, setOrders] = useState<SalesHeader[]>([]);
@@ -332,7 +339,7 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, onRe
     }
 
     if (finalDetails.length === 0) {
-      alert('Please add at least one product item to this sales contract.');
+      toast.warning('Please add at least one product item to this sales contract.');
       return;
     }
 
@@ -345,18 +352,18 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, onRe
 
     if (formMode === 'CREATE') {
       await CallAPI(() => createSalesQuotation(input), {
-        onCompleted: () => loadOrders(activeTab),
-        onError: console.error,
+        onCompleted: () => { loadOrders(activeTab); toast.success('Sales quotation created.'); },
+        onError: (err) => { console.error(err); toast.error('Failed to create sales quotation.'); },
       });
     } else if (formMode === 'EDIT' && editHeaderId) {
       await CallAPI(() => updateSalesOrder(editHeaderId, input), {
-        onCompleted: () => { loadOrders(activeTab); refreshSelectedOrder(editHeaderId); },
-        onError: console.error,
+        onCompleted: () => { loadOrders(activeTab); refreshSelectedOrder(editHeaderId); toast.success('Sales order updated.'); },
+        onError: (err) => { console.error(err); toast.error('Failed to update sales order.'); },
       });
     } else if (formMode === 'CONVERT' && editHeaderId) {
       await CallAPI(() => convertToSalesOrder(editHeaderId, input, formDeliveryDate || defaultDeliveryDate()), {
-        onCompleted: () => { loadOrders(activeTab); refreshSelectedOrder(editHeaderId); },
-        onError: console.error,
+        onCompleted: () => { loadOrders(activeTab); refreshSelectedOrder(editHeaderId); toast.success('Sales order confirmed.'); },
+        onError: (err) => { console.error(err); toast.error('Failed to confirm sales order.'); },
       });
     }
 
@@ -365,13 +372,14 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, onRe
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this sales order?')) return;
+    if (!(await confirm('Are you sure you want to delete this sales order?'))) return;
     await CallAPI(() => deleteSalesOrder(id), {
       onCompleted: () => {
         loadOrders(activeTab);
         setSelectedOrder((prev) => (prev?.id === id ? null : prev));
+        toast.success('Sales order deleted.');
       },
-      onError: console.error,
+      onError: (err) => { console.error(err); toast.error('Failed to delete sales order.'); },
     });
   };
 
@@ -383,10 +391,12 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, onRe
         setTransitioningId(null);
         loadOrders(activeTab);
         refreshSelectedOrder(order.id);
+        toast.success('Production started.');
       },
       onError: (err) => {
         setTransitioningId(null);
         console.error(err);
+        toast.error('Failed to start production.');
       },
     });
   };
@@ -408,10 +418,12 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, onRe
         loadOrders(activeTab);
         refreshSelectedOrder(completingOrder.id);
         setCompletingOrder(null);
+        toast.success('Production marked as done.');
       },
       onError: (err) => {
         setTransitioningId(null);
         console.error(err);
+        toast.error('Failed to complete production.');
       },
     });
   };
@@ -424,19 +436,21 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, onRe
         setTransitioningId(null);
         loadOrders(activeTab);
         refreshSelectedOrder(id);
+        toast.success('Order marked as delivered.');
       },
       onError: (err) => {
         setTransitioningId(null);
         console.error(err);
+        toast.error('Failed to mark order as delivered.');
       },
     });
   };
 
   const handleCancel = async (order: SalesHeader) => {
-    if (!confirm('Cancel this Sales Order?')) return;
+    if (!(await confirm('Cancel this Sales Order?', { title: 'Cancel Sales Order' }))) return;
     await CallAPI(() => cancelSalesOrder(order), {
-      onCompleted: () => { loadOrders(activeTab); refreshSelectedOrder(order.id); },
-      onError: console.error,
+      onCompleted: () => { loadOrders(activeTab); refreshSelectedOrder(order.id); toast.success('Sales order cancelled.'); },
+      onError: (err) => { console.error(err); toast.error('Failed to cancel sales order.'); },
     });
   };
 
@@ -466,6 +480,7 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, onRe
         <SalesOrderDetailView
           order={selectedOrder}
           onBack={handleDetailBack}
+          backLabel={detailOpenedExternally ? (initialOrderOrigin === 'MATERIAL' ? 'Back to Material' : 'Back to Product') : 'Back to Sales Contracts'}
           transitioningId={transitioningId}
           onEdit={openEditForm}
           onConvert={openConvertForm}

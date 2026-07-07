@@ -10,7 +10,7 @@ import { Plus, Mail, Phone, MapPin, Briefcase, Users, Paperclip, Edit, Trash2, C
 import LoadingSpinner from './LoadingSpinner';
 import CompanyFormFields from './CompanyFormFields';
 import ContactDetailView from './ContactDetailView';
-import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, SearchInput } from './ui';
+import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, SearchInput, useToast, useConfirm } from './ui';
 import { CallAPI } from './UIHelper';
 import { debounce } from 'lodash'
 
@@ -23,6 +23,8 @@ type Company = Vendor | Client;
  * company summary + its Contacts CRUD).
  */
 export default function ContactsView() {
+  const toast = useToast();
+  const confirm = useConfirm();
   const [activeTab, setActiveTab] = useState<CompanyType>('VENDORS');
   const [searchQuery, setSearchQuery] = useState([{ search: '' }, { search: '' }]);
   const [vendors, setVendors] = useState<Vendor[]>([]);
@@ -111,8 +113,8 @@ export default function ContactsView() {
 
     const save = activeTab === 'VENDORS' ? saveVendor(record as Vendor) : saveClient(record as Client);
     await CallAPI(() => save, {
-      onCompleted: () => loadCompanies(activeTab),
-      onError: console.error,
+      onCompleted: () => { loadCompanies(activeTab); toast.success(editCompanyId ? 'Profile updated.' : 'Profile added.'); },
+      onError: (err) => { console.error(err); toast.error('Failed to save profile.'); },
     });
 
     resetCompanyForm();
@@ -120,12 +122,12 @@ export default function ContactsView() {
   };
 
   const handleDeleteCompany = async (item: Company) => {
-    if (!confirm(`Delete ${item.companyName}? Its contacts will be removed as well.`)) return;
+    if (!(await confirm(`Delete ${item.companyName}? Its contacts will be removed as well.`))) return;
 
     const remove = activeTab === 'VENDORS' ? deleteVendor(item.id) : deleteClient(item.id);
     await CallAPI(() => remove, {
-      onCompleted: () => loadCompanies(activeTab),
-      onError: console.error,
+      onCompleted: () => { loadCompanies(activeTab); toast.success(`${item.companyName} deleted.`); },
+      onError: (err) => { console.error(err); toast.error('Failed to delete profile.'); },
     });
   };
 

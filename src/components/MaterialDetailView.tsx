@@ -5,13 +5,14 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import {
-  saveMaterial, deleteMaterial, getMaterialCategories, getMaterialPurchaseHistory
+  saveMaterial, deleteMaterial, getMaterialCategories, getMaterialInventoryList
 } from '../services/MaterialService';
-import { Material, MaterialCategory, MaterialType, MaterialPurchaseHistoryItem, Attachment } from '../types';
+import { Material, MaterialCategory, MaterialType, InventoryListItem, Attachment } from '../types';
 import { Paperclip, Edit, Trash2, ArrowLeft, AlertTriangle, ShoppingBag, ChevronRight } from 'lucide-react';
 import MaterialFormFields from './MaterialFormFields';
-import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card } from './ui';
+import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, useToast, useConfirm } from './ui';
 import { CallAPI } from './UIHelper';
+import { TRANSACTION_TYPE_BADGE } from './InventoryListShared';
 
 interface MaterialDetailViewProps {
   material: Material;
@@ -21,15 +22,21 @@ interface MaterialDetailViewProps {
   // Cross-tab drill-in: opens the linked purchase order in the Purchases tab.
   // Optional since MaterialDetailView can render standalone (e.g. in tests).
   onViewPurchaseOrder?: (purchaseHeaderId: string) => void;
+  // Cross-tab drill-in: opens the linked sales order in the Orders tab, for
+  // rows where this material was consumed in production against a sale.
+  onViewSalesOrder?: (salesHeaderId: string) => void;
 }
 
 /**
  * Drill-down "detail page" for a single Material: its own info card (with
- * edit/delete) plus a read-only purchase history section, sorted newest
- * first. Split out of MaterialView.tsx to keep that file focused on the
- * catalog listing/search/create flow.
+ * edit/delete) plus a read-only inventory list section (purchases plus any
+ * other stock movement — production consumption, adjustments), sorted
+ * newest first. Split out of MaterialView.tsx to keep that file focused on
+ * the catalog listing/search/create flow.
  */
-export default function MaterialDetailView({ material, onBack, onMaterialUpdated, onMaterialDeleted, onViewPurchaseOrder }: MaterialDetailViewProps) {
+export default function MaterialDetailView({ material, onBack, onMaterialUpdated, onMaterialDeleted, onViewPurchaseOrder, onViewSalesOrder }: MaterialDetailViewProps) {
+  const toast = useToast();
+  const confirm = useConfirm();
   // ─── Material categories (reference data for the edit form) ─────────────
   const [materialCategories, setMaterialCategories] = useState<MaterialCategory[]>([]);
   useEffect(() => {
@@ -40,13 +47,13 @@ export default function MaterialDetailView({ material, onBack, onMaterialUpdated
     [materialCategories]
   );
 
-  // ─── Purchase history for this material ──────────────────────────────────
-  const [purchaseHistory, setPurchaseHistory] = useState<MaterialPurchaseHistoryItem[]>([]);
+  // ─── Inventory list for this material ────────────────────────────────────
+  const [purchaseHistory, setPurchaseHistory] = useState<InventoryListItem[]>([]);
   const [purchaseHistoryLoading, setPurchaseHistoryLoading] = useState(true);
 
   useEffect(() => {
     setPurchaseHistoryLoading(true);
-    CallAPI(() => getMaterialPurchaseHistory(material.id), {
+    CallAPI(() => getMaterialInventoryList(material.id), {
       onCompleted: (data) => { setPurchaseHistory(data); setPurchaseHistoryLoading(false); },
       onError: (err) => { console.error(err); setPurchaseHistoryLoading(false); },
     });
@@ -98,19 +105,19 @@ export default function MaterialDetailView({ material, onBack, onMaterialUpdated
     };
 
     await CallAPI(() => saveMaterial(updated), {
-      onCompleted: () => onMaterialUpdated(updated),
-      onError: console.error,
+      onCompleted: () => { onMaterialUpdated(updated); toast.success('Material updated.'); },
+      onError: (err) => { console.error(err); toast.error('Failed to update material.'); },
     });
 
     setShowMaterialForm(false);
   };
 
   const handleDeleteMaterial = async () => {
-    if (!confirm(`Delete ${material.name}? This cannot be undone.`)) return;
+    if (!(await confirm(`Delete ${material.name}? This cannot be undone.`))) return;
 
     await CallAPI(() => deleteMaterial(material.id), {
-      onCompleted: onMaterialDeleted,
-      onError: console.error,
+      onCompleted: () => { onMaterialDeleted(); toast.success(`${material.name} deleted.`); },
+      onError: (err) => { console.error(err); toast.error('Failed to delete material.'); },
     });
   };
 
@@ -214,62 +221,83 @@ export default function MaterialDetailView({ material, onBack, onMaterialUpdated
         </div>
       </Card>
 
-      {/* Purchase history section */}
+      {/* Inventory list section */}
       <div className="flex items-center gap-2">
         <ShoppingBag className="w-4 h-4 text-slate-500" />
-        <h3 className="font-sans font-bold text-slate-900 text-sm">Purchase History</h3>
+        <h3 className="font-sans font-bold text-slate-900 text-sm">Inventory List</h3>
       </div>
 
       <Card className="overflow-hidden">
         {purchaseHistoryLoading ? (
-          <div className="p-12 text-center text-xs text-slate-400">Loading purchase history...</div>
+          <div className="p-12 text-center text-xs text-slate-400">Loading inventory list...</div>
         ) : purchaseHistory.length === 0 ? (
-          <div className="p-12 text-center text-xs text-slate-400">No purchase history yet.</div>
+          <div className="p-12 text-center text-xs text-slate-400">No inventory transactions yet.</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-xs text-left">
               <thead className="bg-slate-50 text-slate-500 border-b border-slate-100">
                 <tr>
-                  <th className="px-4 py-2 font-semibold">Purchase No.</th>
+                  <th className="px-4 py-2 font-semibold">Type</th>
+                  <th className="px-4 py-2 font-semibold">Ref No.</th>
+                  <th className="px-4 py-2 font-semibold">Vendor / Client</th>
                   <th className="px-4 py-2 font-semibold">Order Date</th>
                   <th className="px-4 py-2 font-semibold">Quantity</th>
                   <th className="px-4 py-2 font-semibold">Unit Cost</th>
                   <th className="px-4 py-2 font-semibold">Total Price</th>
-                  <th className="px-4 py-2 font-semibold">Received Qty</th>
                   <th className="px-4 py-2 font-semibold">Status</th>
-                  {onViewPurchaseOrder && <th className="px-4 py-2 font-semibold"></th>}
+                  {(onViewPurchaseOrder || onViewSalesOrder) && <th className="px-4 py-2 font-semibold"></th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {purchaseHistory.map((item) => (
-                  <tr key={item.detailId} className="hover:bg-slate-50/50 transition-colors">
-                    <td className="px-4 py-2.5 font-mono text-slate-700">{item.purchaseNo || '-'}</td>
-                    <td className="px-4 py-2.5 text-slate-600">{item.orderDate || item.quotationDate || '-'}</td>
-                    <td className="px-4 py-2.5 text-slate-600">{item.quantity}</td>
-                    <td className="px-4 py-2.5 text-slate-600">{item.unitCost.toFixed(2)}</td>
-                    <td className="px-4 py-2.5 text-slate-600">{item.totalPrice.toFixed(2)}</td>
-                    <td className="px-4 py-2.5 text-slate-600">{item.receivedQuantity}</td>
-                    <td className="px-4 py-2.5">
-                      {item.status && (
-                        <span className="px-1.5 py-0.5 bg-slate-50 text-slate-600 border border-slate-200 rounded text-[10px] font-mono">
-                          {item.status}
+                {purchaseHistory.map((item) => {
+                  const badge = TRANSACTION_TYPE_BADGE[item.transactionType];
+                  return (
+                    <tr key={item.id} className="hover:bg-slate-50/50 transition-colors">
+                      <td className="px-4 py-2.5">
+                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-mono border ${badge.className}`}>
+                          {badge.label}
                         </span>
-                      )}
-                    </td>
-                    {onViewPurchaseOrder && (
-                      <td className="px-4 py-2.5 text-right">
-                        <button
-                          onClick={() => onViewPurchaseOrder(item.headerId)}
-                          className="inline-flex items-center gap-0.5 text-[11px] font-medium text-blue-600 hover:text-blue-800"
-                          title="View purchase order"
-                        >
-                          <span>View</span>
-                          <ChevronRight className="w-3 h-3" />
-                        </button>
                       </td>
-                    )}
-                  </tr>
-                ))}
+                      <td className="px-4 py-2.5 font-mono text-slate-700">{item.refNo || '-'}</td>
+                      <td className="px-4 py-2.5 text-slate-600">{item.counterpartyName || '-'}</td>
+                      <td className="px-4 py-2.5 text-slate-600">{item.orderDate || '-'}</td>
+                      <td className="px-4 py-2.5 text-slate-600">{item.quantity}</td>
+                      <td className="px-4 py-2.5 text-slate-600">{item.unitCost != null ? item.unitCost.toFixed(2) : '-'}</td>
+                      <td className="px-4 py-2.5 text-slate-600">{item.totalPrice != null ? item.totalPrice.toFixed(2) : '-'}</td>
+                      <td className="px-4 py-2.5">
+                        {item.status && (
+                          <span className="px-1.5 py-0.5 bg-slate-50 text-slate-600 border border-slate-200 rounded text-[10px] font-mono">
+                            {item.status}
+                          </span>
+                        )}
+                      </td>
+                      {(onViewPurchaseOrder || onViewSalesOrder) && (
+                        <td className="px-4 py-2.5 text-right">
+                          {onViewPurchaseOrder && item.purchaseHeaderId && (
+                            <button
+                              onClick={() => onViewPurchaseOrder(item.purchaseHeaderId!)}
+                              className="inline-flex items-center gap-0.5 text-[11px] font-medium text-blue-600 hover:text-blue-800"
+                              title="View purchase order"
+                            >
+                              <span>View</span>
+                              <ChevronRight className="w-3 h-3" />
+                            </button>
+                          )}
+                          {onViewSalesOrder && item.salesHeaderId && (
+                            <button
+                              onClick={() => onViewSalesOrder(item.salesHeaderId!)}
+                              className="inline-flex items-center gap-0.5 text-[11px] font-medium text-blue-600 hover:text-blue-800"
+                              title="View sales order"
+                            >
+                              <span>View</span>
+                              <ChevronRight className="w-3 h-3" />
+                            </button>
+                          )}
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

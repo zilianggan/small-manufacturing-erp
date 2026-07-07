@@ -8,7 +8,7 @@
  */
 import { supabase } from "./supabase";
 import { upsertRecord } from "../helper";
-import { InventoryTransaction } from "../types";
+import { InventoryListItem, InventoryTransaction, InventoryTransactionType } from "../types";
 import { getMaterials } from "./MaterialService";
 import { getProducts } from "./ProductService";
 
@@ -83,3 +83,59 @@ export const getInventoryTransactions = async (params: {
 
 export const saveInventoryTransaction = (tx: InventoryTransaction): Promise<void> =>
   upsertRecord('erp_inventory_transaction', tx);
+
+const mapMovementRow = (row: any): InventoryListItem => {
+  const purchaseHeader = row.purchase_detail?.purchase_header;
+  const salesHeader = row.production_material_usage?.sales_detail?.sales_header;
+  const isAdjustment = row.transaction_type === 'ADJUSTMENT';
+  const quantity = Number(row.quantity) || 0;
+  const unitCost = row.unit_cost != null ? Number(row.unit_cost) : undefined;
+
+  return {
+    id: row.id,
+    transactionType: row.transaction_type,
+    refNo: isAdjustment ? undefined : (purchaseHeader?.purchase_no || salesHeader?.sales_no),
+    counterpartyName: isAdjustment ? undefined : (purchaseHeader?.vendors?.company_name || salesHeader?.clients?.company_name),
+    orderDate: row.transaction_date?.slice(0, 10),
+    quantity,
+    unitCost,
+    totalPrice: unitCost != null ? Math.abs(quantity) * unitCost : undefined,
+    status: isAdjustment ? undefined : (purchaseHeader?.status || salesHeader?.status),
+    purchaseHeaderId: isAdjustment ? undefined : purchaseHeader?.id,
+    salesHeaderId: isAdjustment ? undefined : salesHeader?.id,
+  };
+};
+
+// Read-only side of the ledger for MaterialDetailView's/ProductDetailView's
+// "Inventory List": movements against one material/product, joined out to
+// whichever order header generated them (purchase_detail -> purchase_header
+// for PURCHASE/PURCHASE_RETURN, production_material_usage -> sales_detail ->
+// sales_header for SALES/SALES_RETURN). ADJUSTMENT rows have no order header
+// to join, so refNo/counterpartyName/status/*HeaderId stay unset for them.
+// excludeTypes lets callers drop the type they already source from the
+// order-detail tables directly (richer/earlier data than the ledger alone).
+export const getInventoryMovements = async (
+  filter: { materialId?: string; productId?: string },
+  excludeTypes: InventoryTransactionType[] = []
+): Promise<InventoryListItem[]> => {
+  let query = supabase
+    .from('inventory_transaction')
+    .select(`
+      id, transaction_type, quantity, unit_cost, transaction_date,
+      purchase_detail(purchase_header(id, purchase_no, status, vendors(company_name))),
+      production_material_usage(sales_detail(sales_header(id, sales_no, status, clients(company_name))))
+    `)
+    .order('transaction_date', { ascending: false })
+    .order('created_at', { ascending: false });
+
+  if (filter.materialId) query = query.eq('material_id', filter.materialId);
+  if (filter.productId) query = query.eq('product_id', filter.productId);
+  if (excludeTypes.length > 0) query = query.not('transaction_type', 'in', `(${excludeTypes.join(',')})`);
+
+  const { data, error } = await query;
+  if (error) {
+    console.error('getInventoryMovements', error);
+    return [];
+  }
+  return (data || []).map(mapMovementRow);
+};

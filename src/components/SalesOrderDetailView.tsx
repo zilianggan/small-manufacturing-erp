@@ -14,6 +14,11 @@ import { Card } from './ui';
 interface SalesOrderDetailViewProps {
   order: SalesHeader;
   onBack: () => void;
+  // Label for the Back button — defaults to "Back to Sales Contracts" for a
+  // plain in-tab drill-in, but the caller overrides it (e.g. "Back to
+  // Product"/"Back to Material") when this page was opened via a cross-tab
+  // link so onBack actually returns to that origin instead of this tab's list.
+  backLabel?: string;
   transitioningId: string | null;
   onEdit: (order: SalesHeader) => void;
   onConvert: (order: SalesHeader) => void;
@@ -35,7 +40,7 @@ interface SalesOrderDetailViewProps {
  * down as callbacks so there's a single source of truth for each transition.
  */
 export default function SalesOrderDetailView({
-  order, onBack, transitioningId,
+  order, onBack, backLabel = 'Back to Sales Contracts', transitioningId,
   onEdit, onConvert, onDelete, onStartProduction, onProductionCompletion,
   onMarkDelivered, onCancel, onOpenQuotationDoc, onOpenInvoiceDoc,
 }: SalesOrderDetailViewProps) {
@@ -58,7 +63,7 @@ export default function SalesOrderDetailView({
         className="flex items-center space-x-1.5 text-xs font-medium text-slate-500 hover:text-slate-800 transition-colors"
       >
         <ArrowLeft className="w-3.5 h-3.5" />
-        <span>Back to Sales Contracts</span>
+        <span>{backLabel}</span>
       </button>
 
       {/* Header summary card */}

@@ -312,41 +312,6 @@ export interface Product {
   updatedAt?: string;
 }
 
-// purchase_detail joined to purchase_header, read-only, for MaterialDetailView's purchase history.
-export interface MaterialPurchaseHistoryItem {
-  detailId: string;
-  headerId: string;
-  materialId: string;
-  quantity: number;
-  unitCost: number;
-  totalPrice: number;
-  receivedQuantity: number;
-  purchaseNo?: string;
-  quotationDate?: string;
-  orderDate?: string;
-  receivedDate?: string;
-  status?: string;
-  vendorId?: string;
-  createdAt?: string;
-}
-
-// sales_detail joined to sales_header, read-only, for ProductDetailView's order history.
-export interface ProductSalesHistoryItem {
-  detailId: string;
-  headerId: string;
-  productId: string;
-  quantity: number;
-  unitPrice: number;
-  totalPrice: number;
-  remark?: string;
-  salesNo?: string;
-  orderDate?: string;
-  deliveryDate?: string;
-  status?: string;
-  clientId?: string;
-  createdAt?: string;
-}
-
 export type InventoryTransactionType = 'PURCHASE' | 'SALES' | 'PURCHASE_RETURN' | 'SALES_RETURN' | 'ADJUSTMENT';
 
 // A single stock movement row (inventory_transaction). Insert-only — the
@@ -367,6 +332,26 @@ export interface InventoryTransaction {
   productionMaterialUsageId?: string; // FK -> production_material_usage.id, set when a production reservation/reconciliation generated this row
   transactionDate: string;
   createdAt?: string;
+}
+
+// Unified row for MaterialDetailView's/ProductDetailView's "Inventory List":
+// order-level rows (purchase_detail for materials, sales_detail for products)
+// merged with any other inventory_transaction movements against the same
+// item (e.g. a material consumed in production against a sales order, or a
+// product's extra-produced adjustment). ADJUSTMENT rows have no order header
+// to join, so refNo/counterpartyName/status/*HeaderId stay unset for them.
+export interface InventoryListItem {
+  id: string;
+  transactionType: InventoryTransactionType;
+  refNo?: string; // purchase_no or sales_no
+  counterpartyName?: string; // vendor (purchase) or client (sales) company name
+  orderDate?: string;
+  quantity: number;
+  unitCost?: number;
+  totalPrice?: number;
+  status?: string;
+  purchaseHeaderId?: string; // set for PURCHASE/PURCHASE_RETURN rows -> Purchases tab
+  salesHeaderId?: string; // set for SALES/SALES_RETURN rows -> Orders tab
 }
 
 export interface SystemAdminData {

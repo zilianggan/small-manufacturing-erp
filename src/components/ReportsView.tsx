@@ -10,8 +10,10 @@ import { WorkflowTask } from '../types';
 import { Sparkles, AlertTriangle, RefreshCw, ChevronRight, FileText, BrainCircuit, Play, ShoppingCart } from 'lucide-react';
 import Markdown from 'react-markdown';
 import LoadingSpinner from './LoadingSpinner';
+import { useToast } from './ui';
 
 export default function ReportsView() {
+  const toast = useToast();
   const [stats, setStats] = useState(() => getDashboardStats());
   const [inventory, setInventory] = useState(() => getInventory());
   const [salesOrders, setSalesOrders] = useState(() => getSalesOrders());
@@ -56,13 +58,13 @@ export default function ReportsView() {
     });
 
     if (poCreatedCount > 0) {
-      alert(`Successfully generated ${poCreatedCount} Purchase Orders for critical raw materials! Check the Purchase Orders tab.`);
+      toast.success(`Successfully generated ${poCreatedCount} Purchase Orders for critical raw materials! Check the Purchase Orders tab.`);
       // Refresh local states
       setInventory(getInventory());
       setPurchaseOrders(getPurchaseOrders());
       setStats(getDashboardStats());
     } else {
-      alert('Could not find suppliers assigned to low-stock items to auto-generate POs.');
+      toast.warning('Could not find suppliers assigned to low-stock items to auto-generate POs.');
     }
   };
 

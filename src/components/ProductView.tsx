@@ -12,7 +12,7 @@ import { Plus, Paperclip, Edit, Trash2, ChevronRight, FileText, Tag } from 'luci
 import LoadingSpinner from './LoadingSpinner';
 import ProductFormFields from './ProductFormFields';
 import ProductDetailView from './ProductDetailView';
-import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, SearchInput } from './ui';
+import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, SearchInput, useToast, useConfirm } from './ui';
 import { CallAPI } from './UIHelper';
 import { debounce } from 'lodash'
 
@@ -34,6 +34,8 @@ interface ProductViewProps {
  * into ProductDetailView (product summary + order/sales history).
  */
 export default function ProductView({ onViewSalesOrder, initialProductId, onInitialProductHandled }: ProductViewProps = {}) {
+  const toast = useToast();
+  const confirm = useConfirm();
   const [searchQuery, setSearchQuery] = useState('');
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
@@ -147,8 +149,8 @@ export default function ProductView({ onViewSalesOrder, initialProductId, onInit
     };
 
     await CallAPI(() => saveProduct(record), {
-      onCompleted: () => loadProducts(),
-      onError: console.error,
+      onCompleted: () => { loadProducts(); toast.success(editProductId ? 'Product updated.' : 'Product added.'); },
+      onError: (err) => { console.error(err); toast.error('Failed to save product.'); },
     });
 
     resetForm();
@@ -156,11 +158,11 @@ export default function ProductView({ onViewSalesOrder, initialProductId, onInit
   };
 
   const handleDeleteProduct = async (item: Product) => {
-    if (!confirm(`Delete ${item.name}? This cannot be undone.`)) return;
+    if (!(await confirm(`Delete ${item.name}? This cannot be undone.`))) return;
 
     await CallAPI(() => deleteProduct(item.id), {
-      onCompleted: () => loadProducts(),
-      onError: console.error,
+      onCompleted: () => { loadProducts(); toast.success(`${item.name} deleted.`); },
+      onError: (err) => { console.error(err); toast.error('Failed to delete product.'); },
     });
   };
 
@@ -329,7 +331,7 @@ function ProductCard({
           onClick={onOpen}
           className="flex items-center space-x-1 text-[11px] font-medium text-blue-600 hover:text-blue-800"
         >
-          <span>View Order History</span>
+          <span>View Inventory List</span>
         </button>
 
         <div className="flex items-center space-x-1.5 opacity-0 group-hover:opacity-100 transition-opacity">

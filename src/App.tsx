@@ -34,6 +34,7 @@ import {
 import { useSyncStore } from './services/db';
 import { CompanyProfile } from './types';
 import SignaturePad from './components/SignaturePad';
+import { useToast, useConfirm } from './components/ui';
 
 import DashboardView from './components/DashboardView';
 import InventoryView from './components/InventoryView';
@@ -54,28 +55,35 @@ import { CallAPI } from './components/UIHelper';
 type TabType = 'DASHBOARD' | 'INVENTORY' | 'MATERIAL' | 'PRODUCT' | 'CONTACTS' | 'EMPLOYEES' | 'ORDERS' | 'PURCHASES' | 'WORKFLOWS' | 'SYSTEM_ADMIN' | 'REPORTS' | 'EXPORT_GUIDE';
 
 export default function App() {
+  const toast = useToast();
+  const confirm = useConfirm();
   const [activeTab, setActiveTab] = useState<TabType>('DASHBOARD');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  // Cross-tab drill-in: ProductDetailView.tsx's order history / MaterialDetailView.tsx's
-  // purchase history links jump here — switch tabs and tell the destination view which
-  // header to open, since these are separate top-level tabs with no shared router. The
-  // "return to" id is remembered so the detail page's Back button can restore the
-  // originating Product/Material detail page instead of just showing that tab's list.
+  // Cross-tab drill-in: ProductDetailView.tsx's/MaterialDetailView.tsx's inventory
+  // list links jump here — switch tabs and tell the destination view which header
+  // to open, since these are separate top-level tabs with no shared router. The
+  // "return to" origin is remembered so the detail page's Back button can restore
+  // the originating Product/Material detail page instead of just showing that
+  // tab's list. A material row can link to a sales order too (production
+  // consumption against that sale), hence the two possible origins here.
   const [pendingSalesOrderId, setPendingSalesOrderId] = useState<string | null>(null);
-  const [salesOrderReturnToProductId, setSalesOrderReturnToProductId] = useState<string | null>(null);
-  const navigateToSalesOrder = (salesHeaderId: string, fromProductId?: string) => {
+  const [salesOrderReturnTo, setSalesOrderReturnTo] = useState<{ type: 'PRODUCT' | 'MATERIAL'; id: string } | null>(null);
+  const navigateToSalesOrder = (salesHeaderId: string, fromProductId?: string, fromMaterialId?: string) => {
     setPendingSalesOrderId(salesHeaderId);
-    setSalesOrderReturnToProductId(fromProductId || null);
+    setSalesOrderReturnTo(fromMaterialId ? { type: 'MATERIAL', id: fromMaterialId } : fromProductId ? { type: 'PRODUCT', id: fromProductId } : null);
     setActiveTab('ORDERS');
   };
   const [pendingProductId, setPendingProductId] = useState<string | null>(null);
   const returnFromSalesOrder = () => {
-    const productId = salesOrderReturnToProductId;
-    setSalesOrderReturnToProductId(null);
-    if (productId) {
-      setPendingProductId(productId);
+    const returnTo = salesOrderReturnTo;
+    setSalesOrderReturnTo(null);
+    if (returnTo?.type === 'PRODUCT') {
+      setPendingProductId(returnTo.id);
       setActiveTab('PRODUCT');
+    } else if (returnTo?.type === 'MATERIAL') {
+      setPendingMaterialId(returnTo.id);
+      setActiveTab('MATERIAL');
     }
   };
 
@@ -239,14 +247,15 @@ export default function App() {
 
     if (hasData) {
       XLSX.writeFile(wb, `ERP_Backup_${new Date().toISOString().split('T')[0]}.xlsx`);
+      toast.success('Backup file downloaded.');
     } else {
-      alert("No data found to export.");
+      toast.warning('No data found to export.');
     }
   };
 
   // Reset local storage to seed defaults
-  const resetDatabase = () => {
-    if (confirm('WARNING: This will reset all current changes back to seed default data. Proceed?')) {
+  const resetDatabase = async () => {
+    if (await confirm('WARNING: This will reset all current changes back to seed default data. Proceed?', { title: 'Reset Database' })) {
       localStorage.clear();
       window.location.reload();
     }
@@ -519,6 +528,7 @@ export default function App() {
             <MaterialView
               key={refreshKey}
               onViewPurchaseOrder={navigateToPurchaseOrder}
+              onViewSalesOrder={navigateToSalesOrder}
               initialMaterialId={pendingMaterialId}
               onInitialMaterialHandled={() => setPendingMaterialId(null)}
             />
@@ -538,6 +548,7 @@ export default function App() {
               key={refreshKey}
               initialOrderId={pendingSalesOrderId}
               onInitialOrderHandled={() => setPendingSalesOrderId(null)}
+              initialOrderOrigin={salesOrderReturnTo?.type}
               onReturnToOrigin={returnFromSalesOrder}
             />
           )}

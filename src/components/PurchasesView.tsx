@@ -21,7 +21,7 @@ import InvoiceModal from './InvoiceModal';
 import PurchaseOrderDetailView from './PurchaseOrderDetailView';
 import LoadingSpinner from './LoadingSpinner';
 import ComboBox from './ComboBox';
-import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, FormField, SearchInput } from './ui';
+import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, FormField, SearchInput, useToast, useConfirm } from './ui';
 import { CallAPI } from './UIHelper';
 import { debounce } from 'lodash'
 
@@ -41,6 +41,8 @@ interface PurchasesViewProps {
 }
 
 export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHandled, onReturnToOrigin }: PurchasesViewProps = {}) {
+  const toast = useToast();
+  const confirm = useConfirm();
   const [activeTab, setActiveTab] = useState<PurchaseTab>('QUOTATION');
   const [searchQuery, setSearchQuery] = useState([{ search: '' }, { search: '' }]);
   const [purchases, setPurchases] = useState<PurchaseHeader[]>([]);
@@ -283,7 +285,7 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
     }
 
     if (finalDetails.length === 0) {
-      alert('Please add at least one material item to this purchase.');
+      toast.warning('Please add at least one material item to this purchase.');
       return;
     }
 
@@ -296,18 +298,18 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
 
     if (formMode === 'CREATE') {
       await CallAPI(() => createPurchaseQuotation(input), {
-        onCompleted: () => loadPurchases(activeTab),
-        onError: console.error,
+        onCompleted: () => { loadPurchases(activeTab); toast.success('Purchase quotation created.'); },
+        onError: (err) => { console.error(err); toast.error('Failed to create purchase quotation.'); },
       });
     } else if (formMode === 'EDIT' && editHeaderId) {
       await CallAPI(() => updatePurchase(editHeaderId, input), {
-        onCompleted: () => { loadPurchases(activeTab); refreshSelectedPurchase(editHeaderId); },
-        onError: console.error,
+        onCompleted: () => { loadPurchases(activeTab); refreshSelectedPurchase(editHeaderId); toast.success('Purchase updated.'); },
+        onError: (err) => { console.error(err); toast.error('Failed to update purchase.'); },
       });
     } else if (formMode === 'CONVERT' && editHeaderId) {
       await CallAPI(() => convertToPurchaseOrder(editHeaderId, input, formOrderDate || todayStr()), {
-        onCompleted: () => { loadPurchases(activeTab); refreshSelectedPurchase(editHeaderId); },
-        onError: console.error,
+        onCompleted: () => { loadPurchases(activeTab); refreshSelectedPurchase(editHeaderId); toast.success('Purchase order confirmed.'); },
+        onError: (err) => { console.error(err); toast.error('Failed to confirm purchase order.'); },
       });
     }
 
@@ -316,13 +318,14 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this purchase?')) return;
+    if (!(await confirm('Are you sure you want to delete this purchase?'))) return;
     await CallAPI(() => deletePurchase(id), {
       onCompleted: () => {
         loadPurchases(activeTab);
         setSelectedPurchase((prev) => (prev?.id === id ? null : prev));
+        toast.success('Purchase deleted.');
       },
-      onError: console.error,
+      onError: (err) => { console.error(err); toast.error('Failed to delete purchase.'); },
     });
   };
 
@@ -334,19 +337,21 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
         setReceivingId(null);
         loadPurchases(activeTab);
         refreshSelectedPurchase(purchase.id);
+        toast.success('Material package marked as received.');
       },
       onError: (err) => {
         setReceivingId(null);
         console.error(err);
+        toast.error('Failed to mark purchase as received.');
       },
     });
   };
 
   const handleCancel = async (id: string) => {
-    if (!confirm('Cancel this Purchase Order?')) return;
+    if (!(await confirm('Cancel this Purchase Order?', { title: 'Cancel Purchase Order' }))) return;
     await CallAPI(() => cancelPurchaseOrder(id), {
-      onCompleted: () => { loadPurchases(activeTab); refreshSelectedPurchase(id); },
-      onError: console.error,
+      onCompleted: () => { loadPurchases(activeTab); refreshSelectedPurchase(id); toast.success('Purchase order cancelled.'); },
+      onError: (err) => { console.error(err); toast.error('Failed to cancel purchase order.'); },
     });
   };
 
@@ -371,6 +376,7 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
         <PurchaseOrderDetailView
           purchase={selectedPurchase}
           onBack={handlePurchaseDetailBack}
+          backLabel={detailOpenedExternally ? 'Back to Material' : 'Back to Purchases'}
           receivingId={receivingId}
           onEdit={openEditForm}
           onConvert={openConvertForm}
