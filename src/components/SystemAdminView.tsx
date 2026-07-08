@@ -4,21 +4,24 @@ import {
   BriefcaseBusiness,
   Clock,
   Edit,
+  Hash,
   PackageCheck,
   Plus,
   Search,
   Settings,
   Trash2
 } from 'lucide-react';
-import { JobPosition, MaterialCategory, ProductCategory } from '../types';
+import { CompanyProfile, JobPosition, MaterialCategory, ProductCategory } from '../types';
 import {
   generateId,
 } from '../services/db';
 import { Card, Dialog, DialogCancelButton, DialogFooter, DialogSubmitButton, FormField, fieldInputClassName, useToast, useConfirm } from './ui';
 import { getJobPositions, getMaterialCategories, getProductCategories, loadSystemAdminData, saveJobPositions, saveMaterialCategories, saveProductCategories } from '../services/SystemAdminService';
+import { getCompanyProfile, saveCompanyProfile } from '../services/CompanyProfileService';
 import { CallAPI } from './UIHelper';
 
-type ParameterKind = 'JOB_POSITION' | 'MATERIAL_CATEGORY' | 'PRODUCT_CATEGORY';
+type CrudKind = 'JOB_POSITION' | 'MATERIAL_CATEGORY' | 'PRODUCT_CATEGORY';
+type ParameterKind = CrudKind | 'NUMBERING';
 // All parameter kinds now share the exact same minimal shape:
 type ParameterRecord = JobPosition | MaterialCategory | ProductCategory;
 
@@ -34,7 +37,15 @@ const SECTIONS: SectionConfig[] = [
   { kind: 'JOB_POSITION', title: 'Job Position', shortTitle: 'Positions', icon: BriefcaseBusiness, accentClassName: 'bg-blue-50 text-blue-700 border-blue-100' },
   { kind: 'MATERIAL_CATEGORY', title: 'Material Category', shortTitle: 'Materials', icon: Boxes, accentClassName: 'bg-amber-50 text-amber-800 border-amber-100' },
   { kind: 'PRODUCT_CATEGORY', title: 'Product Category', shortTitle: 'Products', icon: PackageCheck, accentClassName: 'bg-emerald-50 text-emerald-700 border-emerald-100' },
+  { kind: 'NUMBERING', title: 'Document Numbering', shortTitle: 'Numbering', icon: Hash, accentClassName: 'bg-slate-50 text-slate-700 border-slate-200' },
 ];
+
+const emptyNumberingForm = {
+  so_number_format: 'SO-0000',
+  so_next_number: 1,
+  po_number_format: 'PO-0000',
+  po_next_number: 1,
+};
 
 const emptyFormState = {
   id: '',
@@ -54,6 +65,9 @@ export default function SystemAdminView() {
   const [editing, setEditing] = useState<ParameterRecord | null>(null);
   const [form, setForm] = useState(emptyFormState);
   const [formError, setFormError] = useState('');
+  const [companyProfile, setCompanyProfile] = useState<CompanyProfile | null>(null);
+  const [numberingForm, setNumberingForm] = useState(emptyNumberingForm);
+  const [numberingSaving, setNumberingSaving] = useState(false);
 
   const loaders = {
     JOB_POSITION: {
@@ -92,14 +106,14 @@ export default function SystemAdminView() {
   }
 
   const saveRecords = async (kind: ParameterKind, items: ParameterRecord[], changed?: ParameterRecord, deletedId?: string, successMessage?: string) => {
-    const loader = loaders[kind];
+    const loader = loaders[kind as CrudKind];
     await CallAPI(() => loader.setApi(
       items as any[],
       changed as any | undefined,
       deletedId
     ),
       {
-        onCompleted: () => { loadData(kind); if (successMessage) toast.success(successMessage); },
+        onCompleted: () => { loadData(kind as CrudKind); if (successMessage) toast.success(successMessage); },
         onError: (err) => { console.error(err); toast.error('Failed to save changes.'); },
       }
     );
@@ -107,7 +121,30 @@ export default function SystemAdminView() {
 
   useEffect(() => {
     loadData('all');
+    CallAPI(getCompanyProfile, {
+      onCompleted: (profile: CompanyProfile | null) => {
+        setCompanyProfile(profile);
+        if (profile) setNumberingForm({
+          so_number_format: profile.so_number_format ?? emptyNumberingForm.so_number_format,
+          so_next_number: profile.so_next_number ?? emptyNumberingForm.so_next_number,
+          po_number_format: profile.po_number_format ?? emptyNumberingForm.po_number_format,
+          po_next_number: profile.po_next_number ?? emptyNumberingForm.po_next_number,
+        });
+      },
+      onError: console.error,
+    });
   }, []);
+
+  const handleSaveNumbering = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!companyProfile) return;
+    setNumberingSaving(true);
+    await CallAPI(() => saveCompanyProfile({ ...companyProfile, ...numberingForm }), {
+      onCompleted: (profile: CompanyProfile) => { setCompanyProfile(profile); toast.success('Numbering settings updated.'); },
+      onError: (err) => { console.error(err); toast.error('Failed to save numbering settings.'); },
+    });
+    setNumberingSaving(false);
+  };
 
   const activeSection = SECTIONS.find(s => s.kind === activeKind) || SECTIONS[0];
   const ActiveIcon = activeSection.icon;
@@ -199,18 +236,22 @@ export default function SystemAdminView() {
           </span>
           <div>
             <h2 className="font-sans font-bold text-slate-900 text-lg">System Admin</h2>
-            <p className="text-xs text-slate-500 mt-1">Parameters · {activeCount} active of {records.length} total</p>
+            <p className="text-xs text-slate-500 mt-1">
+              {activeKind === 'NUMBERING' ? 'Document numbering' : `Parameters · ${activeCount} active of ${records.length} total`}
+            </p>
           </div>
         </div>
 
-        <button
-          type="button"
-          onClick={openCreateDialog}
-          className="inline-flex items-center justify-center space-x-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold transition-colors shadow-sm"
-        >
-          <Plus className="w-4 h-4" />
-          <span>Add {activeSection.title}</span>
-        </button>
+        {activeKind !== 'NUMBERING' && (
+          <button
+            type="button"
+            onClick={openCreateDialog}
+            className="inline-flex items-center justify-center space-x-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold transition-colors shadow-sm"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Add {activeSection.title}</span>
+          </button>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-[220px_1fr] gap-5">
@@ -223,7 +264,9 @@ export default function SystemAdminView() {
               ? jobPositions.length
               : section.kind === 'MATERIAL_CATEGORY'
                 ? materialCategories.length
-                : productCategories.length;
+                : section.kind === 'PRODUCT_CATEGORY'
+                  ? productCategories.length
+                  : null;
 
             return (
               <button
@@ -247,6 +290,74 @@ export default function SystemAdminView() {
 
         {/* Main Content */}
         <div className="space-y-4 min-w-0">
+          {activeKind === 'NUMBERING' ? (
+          <Card className="p-5">
+            <div className="flex items-center space-x-3 mb-4">
+              <span className={`p-2 rounded-lg border ${activeSection.accentClassName}`}>
+                <ActiveIcon className="w-4 h-4" />
+              </span>
+              <div>
+                <h3 className="font-sans font-bold text-slate-900 text-sm">Document Numbering</h3>
+                <p className="text-[10px] text-slate-500 mt-0.5">Format uses a run of zeros to mark the padded number, e.g. SO-0000 → SO-0001</p>
+              </div>
+            </div>
+
+            {!companyProfile ? (
+              <p className="text-xs text-slate-400">Loading...</p>
+            ) : (
+              <form onSubmit={handleSaveNumbering} className="space-y-5 text-xs text-slate-600">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <FormField label="Sales Order Format" labelClassName="font-semibold text-slate-700 block">
+                    <input
+                      type="text"
+                      value={numberingForm.so_number_format}
+                      onChange={(e) => setNumberingForm(p => ({ ...p, so_number_format: e.target.value }))}
+                      placeholder="SO-0000"
+                      className={`${fieldInputClassName} text-slate-800 font-mono`}
+                    />
+                  </FormField>
+                  <FormField label="Sales Order Start Number" labelClassName="font-semibold text-slate-700 block">
+                    <input
+                      type="number"
+                      min={1}
+                      value={numberingForm.so_next_number}
+                      onChange={(e) => setNumberingForm(p => ({ ...p, so_next_number: Number(e.target.value) || 1 }))}
+                      className={`${fieldInputClassName} text-slate-800`}
+                    />
+                  </FormField>
+                  <FormField label="Purchase Order Format" labelClassName="font-semibold text-slate-700 block">
+                    <input
+                      type="text"
+                      value={numberingForm.po_number_format}
+                      onChange={(e) => setNumberingForm(p => ({ ...p, po_number_format: e.target.value }))}
+                      placeholder="PO-0000"
+                      className={`${fieldInputClassName} text-slate-800 font-mono`}
+                    />
+                  </FormField>
+                  <FormField label="Purchase Order Start Number" labelClassName="font-semibold text-slate-700 block">
+                    <input
+                      type="number"
+                      min={1}
+                      value={numberingForm.po_next_number}
+                      onChange={(e) => setNumberingForm(p => ({ ...p, po_next_number: Number(e.target.value) || 1 }))}
+                      className={`${fieldInputClassName} text-slate-800`}
+                    />
+                  </FormField>
+                </div>
+                <div className="flex justify-end">
+                  <button
+                    type="submit"
+                    disabled={numberingSaving}
+                    className="inline-flex items-center justify-center px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-xs font-semibold transition-colors shadow-sm"
+                  >
+                    {numberingSaving ? 'Saving...' : 'Save Numbering'}
+                  </button>
+                </div>
+              </form>
+            )}
+          </Card>
+          ) : (
+          <>
           {/* Search Bar */}
           <Card className="p-4">
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
@@ -351,6 +462,8 @@ export default function SystemAdminView() {
               </div>
             )}
           </Card>
+          </>
+          )}
         </div>
       </div>
 

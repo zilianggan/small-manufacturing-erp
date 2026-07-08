@@ -11,6 +11,7 @@ import {
 import { Vendor, Client, Contact, JobPosition, Attachment } from '../types';
 import { Plus, Mail, Phone, MapPin, Paperclip, Edit, Trash2, ArrowLeft, Users, FileText } from 'lucide-react';
 import AttachmentSection from './AttachmentSection';
+import CompanyLogo from './CompanyLogo';
 import ComboBox from './ComboBox';
 import CompanyFormFields from './CompanyFormFields';
 import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, FormField, fieldInputClassName, SearchInput, useToast, useConfirm } from './ui';
@@ -199,6 +200,8 @@ export default function ContactDetailView({ company, companyType, onBack, onComp
       {/* Company summary card */}
       <Card className="p-5">
         <div className="flex items-start justify-between gap-4">
+          <div className="flex items-start gap-4 min-w-0">
+          <CompanyLogo attachment={company.attachments?.[0]} size="md" />
           <div className="space-y-2.5 min-w-0">
             <div>
               <h2 className="font-sans font-bold text-slate-900 text-lg leading-snug truncate">{company.companyName}</h2>
@@ -237,6 +240,7 @@ export default function ContactDetailView({ company, companyType, onBack, onComp
                 <span className="truncate max-w-[200px]">{company.attachments[0].name}</span>
               </a>
             )}
+          </div>
           </div>
           <div className="flex items-center space-x-1.5 shrink-0">
             <button

@@ -189,9 +189,15 @@ export const createPurchaseQuotation = async (input: PurchaseFormInput): Promise
   const totalPrice = input.details.reduce((sum, d) => sum + d.totalPrice, 0);
   const today = new Date().toISOString().split('T')[0];
 
+  const { data: purchaseNo, error: numberError } = await supabase.rpc('next_document_number', { p_kind: 'PO' });
+  if (numberError) {
+    console.error('createPurchaseQuotation(number)', numberError);
+    throw numberError;
+  }
+
   const { error: headerError } = await supabase.from('purchase_header').insert({
     id,
-    purchase_no: `PO-${id.slice(0, 8).toUpperCase()}`,
+    purchase_no: purchaseNo,
     quotation_date: today,
     status: 'QUOTATION',
     vendor_id: input.vendorId,

@@ -228,9 +228,15 @@ export const createSalesQuotation = async (input: SalesFormInput): Promise<void>
   const totalAmount = input.details.reduce((sum, d) => sum + d.totalPrice, 0);
   const today = new Date().toISOString().split('T')[0];
 
+  const { data: salesNo, error: numberError } = await supabase.rpc('next_document_number', { p_kind: 'SO' });
+  if (numberError) {
+    console.error('createSalesQuotation(number)', numberError);
+    throw numberError;
+  }
+
   const { error: headerError } = await supabase.from('sales_header').insert({
     id,
-    sales_no: `SO-${id.slice(0, 8).toUpperCase()}`,
+    sales_no: salesNo,
     order_date: today,
     status: 'QUOTATION',
     client_id: input.clientId,

@@ -378,3 +378,46 @@ BEGIN
     USING p_search, p_ids, p_offset, p_limit;
 END;
 $$;
+
+-- PO/SO auto numbering (System Admin > Document Numbering). Format + start
+-- number live on company_profile (existing config singleton). Run for
+-- existing DBs; schema.sql already has these columns for fresh installs.
+ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS so_number_format TEXT NOT NULL DEFAULT 'SO-0000';
+ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS so_next_number INT NOT NULL DEFAULT 1;
+ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS po_number_format TEXT NOT NULL DEFAULT 'PO-0000';
+ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS po_next_number INT NOT NULL DEFAULT 1;
+
+-- Atomically claims the next sales/purchase number and formats it.
+-- Format must contain exactly one run of zeros marking the padded number
+-- position (e.g. 'SO-0000' -> 'SO-0001'); no zero run = number appended as-is.
+-- ponytail: single leftmost-zero-run parse, no date tokens/suffixes — add if needed.
+CREATE OR REPLACE FUNCTION next_document_number(p_kind text)
+RETURNS text
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_format text;
+    v_used int;
+    v_pad text;
+BEGIN
+    IF p_kind = 'SO' THEN
+        UPDATE company_profile
+        SET so_next_number = so_next_number + 1
+        WHERE true
+        RETURNING so_number_format, so_next_number - 1 INTO v_format, v_used;
+    ELSIF p_kind = 'PO' THEN
+        UPDATE company_profile
+        SET po_next_number = po_next_number + 1
+        WHERE true
+        RETURNING po_number_format, po_next_number - 1 INTO v_format, v_used;
+    ELSE
+        RAISE EXCEPTION 'unknown document kind %', p_kind;
+    END IF;
+
+    v_pad := substring(v_format from '0+');
+    IF v_pad IS NULL THEN
+        RETURN v_format || v_used::text;
+    END IF;
+    RETURN regexp_replace(v_format, '0+', lpad(v_used::text, length(v_pad), '0'));
+END;
+$$;

@@ -1,3 +1,8 @@
+Version 1.0.4
+--------------------
+- Add company logo in vendor and client
+- Add auto numbering for sales and purchase
+
 Version 1.0.3
 --------------------
 - Restructure sales, inventory, employee, import export feature, dashboard.

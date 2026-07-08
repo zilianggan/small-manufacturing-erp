@@ -11,6 +11,11 @@ CREATE TABLE company_profile (
   bank_name TEXT,
   bank_account TEXT,
   signature_url TEXT,
+  chop_url TEXT,
+  so_number_format TEXT NOT NULL DEFAULT 'SO-0000',
+  so_next_number INT NOT NULL DEFAULT 1,
+  po_number_format TEXT NOT NULL DEFAULT 'PO-0000',
+  po_next_number INT NOT NULL DEFAULT 1,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

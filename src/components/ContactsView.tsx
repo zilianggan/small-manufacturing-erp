@@ -6,11 +6,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { getVendors, getClients, saveVendor, saveClient, deleteVendor, deleteClient, generateId } from '../services/ContactsService';
 import { Vendor, Client, Attachment } from '../types';
-import { Plus, Mail, Phone, MapPin, Briefcase, Users, Paperclip, Edit, Trash2, ChevronRight, FileText } from 'lucide-react';
+import { Plus, Mail, Phone, MapPin, Briefcase, Users, Paperclip, Edit, Trash2, ChevronRight, FileText, Image as ImageIcon } from 'lucide-react';
 import LoadingSpinner from './LoadingSpinner';
 import CompanyFormFields from './CompanyFormFields';
 import ContactDetailView from './ContactDetailView';
 import SortMenu, { SortOption } from './SortMenu';
+import CompanyLogo from './CompanyLogo';
 import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, SearchInput, useToast, useConfirm } from './ui';
 import { CallAPI } from './UIHelper';
 import { sortByField } from '../utils/sortRows';
@@ -19,6 +20,13 @@ import { debounce } from 'lodash'
 type CompanyType = 'VENDORS' | 'CLIENTS';
 type Company = Vendor | Client;
 type CompanySortField = 'companyName' | 'email' | 'createdAt';
+
+// Attachment badge icon by mime type — image vs PDF vs generic file.
+const attachmentIcon = (type: string) => {
+  if (type.startsWith('image/')) return ImageIcon;
+  if (type === 'application/pdf') return FileText;
+  return Paperclip;
+};
 
 const SORT_OPTIONS: SortOption[] = [
   { value: 'companyName', label: 'Name' },
@@ -149,7 +157,15 @@ export default function ContactsView() {
     setSelectedCompany(item);
   };
 
+  const companies = useMemo(
+    () => sortByField(activeTab === 'VENDORS' ? vendors : clients, sortField, sortDir),
+    [vendors, clients, activeTab, sortField, sortDir]
+  );
+
   // ─── Drill-down detail page ─────────────────────────────────────────────
+  // (kept after all hooks above — an early return before a hook call means
+  // this component renders a different hook count than the list view, which
+  // React's rules of hooks forbid.)
   if (selectedCompany) {
     return (
       <ContactDetailView
@@ -161,11 +177,6 @@ export default function ContactsView() {
       />
     );
   }
-
-  const companies = useMemo(
-    () => sortByField(activeTab === 'VENDORS' ? vendors : clients, sortField, sortDir),
-    [vendors, clients, activeTab, sortField, sortDir]
-  );
 
   // ─── Company listing view ──────────────────────────────────────────────
   return (
@@ -283,11 +294,16 @@ function CompanyCard({
   onEdit: () => void;
   onDelete: () => void;
 }) {
+  const AttachmentIcon = company.attachments?.[0] ? attachmentIcon(company.attachments[0].type) : Paperclip;
+
   return (
     <Card className="group p-5 hover:shadow-md transition-shadow flex flex-col justify-between space-y-4 cursor-pointer">
       <div className="space-y-2.5" onClick={onOpen}>
         <div className="flex items-start justify-between">
-          <h4 className="font-sans font-semibold text-slate-900 text-sm leading-snug">{company.companyName}</h4>
+          <div className="flex items-center gap-2.5 min-w-0">
+            <CompanyLogo attachment={company.attachments?.[0]} size="sm" />
+            <h4 className="font-sans font-semibold text-slate-900 text-sm leading-snug truncate">{company.companyName}</h4>
+          </div>
           <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-slate-500 transition-colors shrink-0" />
         </div>
 
@@ -325,7 +341,7 @@ function CompanyCard({
                 className="inline-flex items-center space-x-1 px-1.5 py-0.5 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded text-[10px] font-mono transition-colors"
                 title="Download attachment"
               >
-                <Paperclip className="w-2.5 h-2.5 text-blue-500 shrink-0" />
+                <AttachmentIcon className="w-2.5 h-2.5 text-blue-500 shrink-0" />
                 <span className="truncate max-w-[150px]">{company.attachments[0].name}</span>
               </a>
             </div>

@@ -263,6 +263,10 @@ export interface CompanyProfile {
   bank_account?: string;
   signature_url?: string; // Stored base64 representation of a signature image
   chop_url?: string; // Stored base64 representation of a rubber stamp/chop image
+  so_number_format?: string; // e.g. "SO-0000" — the run of zeros marks the zero-padded number position
+  so_next_number?: number;
+  po_number_format?: string; // e.g. "PO-0000"
+  po_next_number?: number;
 }
 
 // Minimal parameter shape shared by Job Position and Material/Product Category.
