@@ -8,12 +8,14 @@ Version 1.0.3
 - Workflows tab migrated to a pattern-A production kanban: WorkflowsService talks to Supabase directly (getWorkflowTasks/updateWorkflowStage/assignEmployee), replacing the db.ts wrapper; WorkflowTask now carries a separate shop-floor `stage` (PREPARATION|ASSEMBLY|QUALITY_CONTROL|PACKAGING|COMPLETED) alongside its order-lifecycle `status`, joined off sales_detail/sales_header/employees; old TaskCard.tsx component removed
 - Schema: workflow_tasks gains a `stage` column (with check constraint), decoupled from its existing `status` column
 - Various view polish: ComboBox, LoadingSpinner, ReportsView, MaterialView, ProductView, ContactsView, EmployeesView, DashboardView, OrderAccordion
-- Fix loading load twice
-- Fix search causing multiple call api
-- Fix combobox got weird animation
 - Add redirect from material, product to sale order or purchase order
 - Add toast message
 - Remove alert use dialog box instead
+- Add limit offset to the listing
+- Fix loading load twice
+- Fix search causing multiple call api
+- Fix combobox got weird animation
+- Add filter and sort to the listing and table
 
 Version 1.0.2
 --------------------

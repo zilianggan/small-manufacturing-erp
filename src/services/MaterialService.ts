@@ -52,6 +52,57 @@ export const getMaterials = async (search = ''): Promise<Material[]> => {
   return (data || []).map(mapMaterialRow);
 };
 
+export type MaterialSortField = 'name' | 'code' | 'stock' | 'restock' | 'latestPurchase' | 'oldestPurchase';
+export type SortDir = 'asc' | 'desc';
+
+const SORT_FIELD_TO_RPC: Record<MaterialSortField, string> = {
+  name: 'name',
+  code: 'code',
+  stock: 'stock',
+  restock: 'restock',
+  latestPurchase: 'latest_purchase',
+  oldestPurchase: 'oldest_purchase',
+};
+
+// Paginated, filterable, sortable material catalog for MaterialView.tsx — via
+// the get_materials_page() RPC (supabase/function_trigger.sql), since sorting
+// by aggregated purchase history dates needs a DB-side join that plain
+// PostgREST .order() can't express. getMaterials() above stays as-is for the
+// unpaginated ComboBox/lookup callers (InventoryView, InventoryTransactionService).
+export const getMaterialsPage = async (params: {
+  search?: string;
+  materialIds?: string[]; // FilterDialog's ticked-record picker, AND'd with search
+  sortField?: MaterialSortField;
+  sortDir?: SortDir;
+  offset: number;
+  limit: number;
+}): Promise<{ rows: Material[]; hasMore: boolean }> => {
+  const { search = '', materialIds, sortField = 'name', sortDir = 'asc', offset, limit } = params;
+
+  const { data, error } = await supabase.rpc('get_materials_page', {
+    p_search: search.trim() || null,
+    p_ids: materialIds && materialIds.length > 0 ? materialIds : null,
+    p_sort_field: SORT_FIELD_TO_RPC[sortField],
+    p_sort_dir: sortDir,
+    p_offset: offset,
+    p_limit: limit,
+  });
+
+  if (error) {
+    console.error('getMaterialsPage', error);
+    return { rows: [], hasMore: false };
+  }
+
+  const rows = (data || []).map((row: any) => ({
+    ...mapMaterialRow(row),
+    latestPurchaseDate: row.latest_purchase_date || undefined,
+    oldestPurchaseDate: row.oldest_purchase_date || undefined,
+  }));
+  const total = data?.[0]?.total_count ?? 0;
+  const hasMore = offset + rows.length < total;
+  return { rows, hasMore };
+};
+
 export const saveMaterial = (material: Material): Promise<void> => upsertRecord('erp_material', material);
 export const deleteMaterial = (id: string): Promise<void> => deleteRecord('erp_material', id);
 

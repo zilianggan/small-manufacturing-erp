@@ -63,11 +63,35 @@ const mapPurchaseHeaderRow = (row: any): PurchaseHeader => ({
   updatedAt: row.updated_at,
 });
 
-export const getPurchases = async (tab: 'QUOTATION' | 'PO', search = ''): Promise<PurchaseHeader[]> => {
+export type PurchaseSortField = 'reference' | 'supplier' | 'date' | 'totalCost';
+export type SortDir = 'asc' | 'desc';
+
+export interface PurchaseFilters {
+  vendorIds?: string[];
+  materialIds?: string[];
+  // Applied against quotation_date (QUOTATION tab) or order_date (PO tab) —
+  // whichever column the list's own "Date" column shows for that tab.
+  dateFrom?: string;
+  dateTo?: string;
+}
+
+export const getPurchases = async (
+  tab: 'QUOTATION' | 'PO',
+  search = '',
+  options: { filters?: PurchaseFilters; sortField?: PurchaseSortField; sortDir?: SortDir } = {}
+): Promise<PurchaseHeader[]> => {
+  const { filters = {}, sortField = 'date', sortDir = 'desc' } = options;
+  const dateColumn = tab === 'QUOTATION' ? 'quotation_date' : 'order_date';
+  // A parent row must only come back when it has a matching detail line, so
+  // the material filter uses the !inner embed modifier (PostgREST's "parent
+  // requires matching child" pattern) instead of the plain left-join embed.
+  const useMaterialFilter = !!(filters.materialIds && filters.materialIds.length > 0);
+
   let query = supabase
     .from('purchase_header')
-    .select('*, vendors(company_name), purchase_detail(*, material(name, code, dimension))')
-    .order('created_at', { ascending: false });
+    .select(useMaterialFilter
+      ? '*, vendors(company_name), purchase_detail!inner(*, material(name, code, dimension))'
+      : '*, vendors(company_name), purchase_detail(*, material(name, code, dimension))');
 
   query = tab === 'QUOTATION'
     ? query.eq('status', 'QUOTATION')
@@ -84,6 +108,32 @@ export const getPurchases = async (tab: 'QUOTATION' | 'PO', search = ''): Promis
     if (vendorIds.length > 0) orParts.push(`vendor_id.in.(${vendorIds.join(',')})`);
     query = query.or(orParts.join(','));
   }
+
+  if (filters.vendorIds && filters.vendorIds.length > 0) {
+    query = query.in('vendor_id', filters.vendorIds);
+  }
+  if (useMaterialFilter) {
+    query = query.in('purchase_detail.material_id', filters.materialIds!);
+  }
+  if (filters.dateFrom) query = query.gte(dateColumn, filters.dateFrom);
+  if (filters.dateTo) query = query.lte(dateColumn, filters.dateTo);
+
+  switch (sortField) {
+    case 'reference':
+      query = query.order('purchase_no', { ascending: sortDir === 'asc' });
+      break;
+    case 'supplier':
+      query = query.order('company_name', { ascending: sortDir === 'asc', foreignTable: 'vendors' });
+      break;
+    case 'totalCost':
+      query = query.order('total_price', { ascending: sortDir === 'asc' });
+      break;
+    case 'date':
+    default:
+      query = query.order(dateColumn, { ascending: sortDir === 'asc' });
+      break;
+  }
+  query = query.order('created_at', { ascending: false });
 
   const { data, error } = await query;
   if (error) {

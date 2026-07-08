@@ -10,12 +10,21 @@ import { Plus, Mail, Phone, MapPin, Briefcase, Users, Paperclip, Edit, Trash2, C
 import LoadingSpinner from './LoadingSpinner';
 import CompanyFormFields from './CompanyFormFields';
 import ContactDetailView from './ContactDetailView';
+import SortMenu, { SortOption } from './SortMenu';
 import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, SearchInput, useToast, useConfirm } from './ui';
 import { CallAPI } from './UIHelper';
+import { sortByField } from '../utils/sortRows';
 import { debounce } from 'lodash'
 
 type CompanyType = 'VENDORS' | 'CLIENTS';
 type Company = Vendor | Client;
+type CompanySortField = 'companyName' | 'email' | 'createdAt';
+
+const SORT_OPTIONS: SortOption[] = [
+  { value: 'companyName', label: 'Name' },
+  { value: 'email', label: 'Email' },
+  { value: 'createdAt', label: 'Date Added' },
+];
 
 /**
  * Company (Vendor/Client) listing: tabs, search, create/edit/delete, and the
@@ -56,6 +65,10 @@ export default function ContactsView() {
       }, 500),
     [activeTab]
   );
+
+  // ─── Sort ─────────────────────────────────────────────────────────────
+  const [sortField, setSortField] = useState<CompanySortField>('companyName');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
 
   // Drill-down: selected company (shows ContactDetailView instead of the grid)
   const [selectedType, setSelectedType] = useState<CompanyType>('VENDORS');
@@ -149,7 +162,10 @@ export default function ContactsView() {
     );
   }
 
-  const companies = activeTab === 'VENDORS' ? vendors : clients;
+  const companies = useMemo(
+    () => sortByField(activeTab === 'VENDORS' ? vendors : clients, sortField, sortDir),
+    [vendors, clients, activeTab, sortField, sortDir]
+  );
 
   // ─── Company listing view ──────────────────────────────────────────────
   return (
@@ -199,6 +215,8 @@ export default function ContactsView() {
             placeholder={`Search ${activeTab === 'VENDORS' ? 'suppliers' : 'clients'}...`}
             className="relative flex-1 sm:w-64"
           />
+
+          <SortMenu options={SORT_OPTIONS} sortField={sortField} sortDir={sortDir} onChange={(f, d) => { setSortField(f as CompanySortField); setSortDir(d); }} />
 
           <button
             onClick={openAddCompany}

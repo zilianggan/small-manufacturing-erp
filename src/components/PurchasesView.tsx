@@ -8,19 +8,21 @@ import {
   getPurchases, createPurchaseQuotation, updatePurchase, convertToPurchaseOrder,
   receivePurchaseOrder, cancelPurchaseOrder, deletePurchase, getMaterialCategories,
   getPurchaseById,
-  PurchaseDetailInput,
+  PurchaseDetailInput, PurchaseFilters, PurchaseSortField, SortDir,
 } from '../services/PurchasesService';
 import { getMaterials } from '../services/MaterialService';
 import { getVendors } from '../services/ContactsService';
 import { getSalesOrdersForLinking, SalesOrderLinkOption, getSalesOrderMaterialRequirements, SalesOrderMaterialRequirement } from '../services/OrdersService';
 import { PurchaseHeader, Vendor, Material, Attachment, MaterialCategory } from '../types';
-import { Plus, Calendar, Check, Paperclip, Trash2, Edit, FileText, ArrowRightCircle, Eye } from 'lucide-react';
+import { Plus, Calendar, Check, Paperclip, Trash2, Edit, FileText, ArrowRightCircle, Eye, Filter } from 'lucide-react';
 import AttachmentSection from './AttachmentSection';
 import QuotationModal from './QuotationModal';
 import InvoiceModal from './InvoiceModal';
 import PurchaseOrderDetailView from './PurchaseOrderDetailView';
 import LoadingSpinner from './LoadingSpinner';
 import ComboBox from './ComboBox';
+import FilterDialog from './FilterDialog';
+import SortableTh from './SortableTh';
 import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, FormField, SearchInput, useToast, useConfirm } from './ui';
 import { CallAPI } from './UIHelper';
 import { debounce } from 'lodash'
@@ -113,9 +115,23 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
     [materialCategories]
   );
 
+  // ─── Filter dialog: vendor + material record pickers, date range ────────
+  const [appliedFilters, setAppliedFilters] = useState<PurchaseFilters>({});
+  const [showFilterDialog, setShowFilterDialog] = useState(false);
+  const [filterDraftVendorIds, setFilterDraftVendorIds] = useState<string[]>([]);
+  const [filterDraftMaterialIds, setFilterDraftMaterialIds] = useState<string[]>([]);
+  const [filterDraftDateFrom, setFilterDraftDateFrom] = useState('');
+  const [filterDraftDateTo, setFilterDraftDateTo] = useState('');
+  const [filterVendorSearch, setFilterVendorSearch] = useState('');
+  const [filterMaterialSearch, setFilterMaterialSearch] = useState('');
+
+  // ─── Sort ─────────────────────────────────────────────────────────────
+  const [sortField, setSortField] = useState<PurchaseSortField>('date');
+  const [sortDir, setSortDir] = useState<SortDir>('desc');
+
   const loadPurchases = (tab: PurchaseTab, search: string = '') => {
     setLoading(true);
-    CallAPI(() => getPurchases(tab === 'QUOTATION' ? 'QUOTATION' : 'PO', search), {
+    CallAPI(() => getPurchases(tab === 'QUOTATION' ? 'QUOTATION' : 'PO', search, { filters: appliedFilters, sortField, sortDir }), {
       onCompleted: (data) => { setPurchases(data); setLoading(false); },
       onError: (err) => { console.error(err); setLoading(false); },
     });
@@ -123,7 +139,8 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
 
   useEffect(() => {
     loadPurchases(activeTab, searchQuery[activeTab === 'QUOTATION' ? 0 : 1]?.search);
-  }, [activeTab]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, appliedFilters, sortField, sortDir]);
 
   // Debounced search-as-you-type
   const search = useMemo(
@@ -131,8 +148,46 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
       debounce((text: string) => {
         loadPurchases(activeTab, text);
       }, 500),
-    [activeTab]
+    [activeTab, appliedFilters, sortField, sortDir]
   );
+
+  const openFilterDialog = () => {
+    setFilterDraftVendorIds(appliedFilters.vendorIds || []);
+    setFilterDraftMaterialIds(appliedFilters.materialIds || []);
+    setFilterDraftDateFrom(appliedFilters.dateFrom || '');
+    setFilterDraftDateTo(appliedFilters.dateTo || '');
+    setFilterVendorSearch('');
+    setFilterMaterialSearch('');
+    setShowFilterDialog(true);
+  };
+
+  const toggleFilterDraftVendor = (id: string) => {
+    setFilterDraftVendorIds(prev => (prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]));
+  };
+  const toggleFilterDraftMaterial = (id: string) => {
+    setFilterDraftMaterialIds(prev => (prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]));
+  };
+
+  const filterVendorItems = useMemo(() => {
+    const q = filterVendorSearch.trim().toLowerCase();
+    return vendors
+      .filter(v => !q || v.companyName.toLowerCase().includes(q))
+      .map(v => ({ id: v.id, label: v.companyName }));
+  }, [vendors, filterVendorSearch]);
+
+  const filterMaterialItems = useMemo(() => {
+    const q = filterMaterialSearch.trim().toLowerCase();
+    return materials
+      .filter(m => !q || m.name.toLowerCase().includes(q) || (m.code || '').toLowerCase().includes(q))
+      .map(m => ({ id: m.id, label: m.name, sublabel: m.code }));
+  }, [materials, filterMaterialSearch]);
+
+  const hasActiveFilters = !!(appliedFilters.vendorIds?.length || appliedFilters.materialIds?.length || appliedFilters.dateFrom || appliedFilters.dateTo);
+
+  const toggleSort = (key: PurchaseSortField) => {
+    if (key === sortField) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
+    else { setSortField(key); setSortDir('asc'); }
+  };
 
   // Quotation print modal
   const [selectedQuotation, setSelectedQuotation] = useState<PurchaseHeader | null>(null);
@@ -423,6 +478,14 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
             }}
             placeholder="Search by supplier or reference no..."
           />
+          <button
+            onClick={openFilterDialog}
+            className={`relative flex items-center space-x-1.5 px-3 py-2 border rounded-lg text-xs font-medium transition-colors ${hasActiveFilters ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-600'}`}
+          >
+            <Filter className="w-3.5 h-3.5" />
+            <span>Filter</span>
+            {hasActiveFilters && <span className="absolute -top-1 -right-1 w-2 h-2 bg-blue-600 rounded-full" />}
+          </button>
           {activeTab === 'QUOTATION' && (
             <button
               onClick={openCreateForm}
@@ -434,6 +497,57 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
           )}
         </div>
       </div>
+
+      {/* Filter dialog */}
+      <FilterDialog
+        open={showFilterDialog}
+        onClose={() => setShowFilterDialog(false)}
+        title="Filter Purchases"
+        sections={[
+          {
+            type: 'checklist',
+            key: 'vendors',
+            label: 'Supplier',
+            searchPlaceholder: 'Search suppliers...',
+            searchQuery: filterVendorSearch,
+            onSearchChange: setFilterVendorSearch,
+            items: filterVendorItems,
+            selectedIds: filterDraftVendorIds,
+            onToggle: toggleFilterDraftVendor,
+          },
+          {
+            type: 'checklist',
+            key: 'materials',
+            label: 'Material',
+            searchPlaceholder: 'Search materials...',
+            searchQuery: filterMaterialSearch,
+            onSearchChange: setFilterMaterialSearch,
+            items: filterMaterialItems,
+            selectedIds: filterDraftMaterialIds,
+            onToggle: toggleFilterDraftMaterial,
+          },
+          {
+            type: 'dateRange',
+            key: 'dateRange',
+            label: activeTab === 'QUOTATION' ? 'Quotation Date Range' : 'Order Date Range',
+            from: filterDraftDateFrom,
+            to: filterDraftDateTo,
+            onFromChange: setFilterDraftDateFrom,
+            onToChange: setFilterDraftDateTo,
+          },
+        ]}
+        onApply={() => setAppliedFilters({
+          vendorIds: filterDraftVendorIds,
+          materialIds: filterDraftMaterialIds,
+          dateFrom: filterDraftDateFrom || undefined,
+          dateTo: filterDraftDateTo || undefined,
+        })}
+        onClear={() => {
+          setFilterDraftVendorIds([]); setFilterDraftMaterialIds([]);
+          setFilterDraftDateFrom(''); setFilterDraftDateTo('');
+          setAppliedFilters({});
+        }}
+      />
 
       {/* Creation/Edit/Convert form as Dialog Modal */}
       <Dialog
@@ -625,11 +739,11 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
           <table className="w-full text-left text-xs border-collapse">
             <thead>
               <tr className="bg-slate-50/75 border-b border-slate-200 text-slate-500 uppercase font-mono tracking-wider dark:bg-slate-800/80 dark:border-slate-700 dark:text-slate-400">
-                <th className="p-4">Reference</th>
-                <th className="p-4">Supplier</th>
+                <SortableTh label="Reference" sortKey="reference" activeKey={sortField} dir={sortDir} onClick={toggleSort} thClassName="p-4" />
+                <SortableTh label="Supplier" sortKey="supplier" activeKey={sortField} dir={sortDir} onClick={toggleSort} thClassName="p-4" />
                 <th className="p-4">Material Details</th>
-                <th className="p-4">{activeTab === 'QUOTATION' ? 'Quotation Date' : 'Order Date'}</th>
-                <th className="p-4">Total Cost</th>
+                <SortableTh label={activeTab === 'QUOTATION' ? 'Quotation Date' : 'Order Date'} sortKey="date" activeKey={sortField} dir={sortDir} onClick={toggleSort} thClassName="p-4" />
+                <SortableTh label="Total Cost" sortKey="totalCost" activeKey={sortField} dir={sortDir} onClick={toggleSort} thClassName="p-4" />
                 {activeTab === 'PO' && <th className="p-4">Status</th>}
                 <th className="p-4 text-right">Actions</th>
               </tr>

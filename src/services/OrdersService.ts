@@ -80,11 +80,35 @@ const mapSalesHeaderRow = (row: any): SalesHeader => ({
   updatedAt: row.updated_at,
 });
 
-export const getSalesOrders = async (tab: 'QUOTATION' | 'SO', search = ''): Promise<SalesHeader[]> => {
+export type SalesSortField = 'reference' | 'client' | 'date' | 'totalAmount';
+export type SortDir = 'asc' | 'desc';
+
+export interface SalesFilters {
+  clientIds?: string[];
+  productIds?: string[];
+  // Applied against order_date (QUOTATION tab) or delivery_date (SO tab) —
+  // whichever column the list's own "Date" column shows for that tab.
+  dateFrom?: string;
+  dateTo?: string;
+}
+
+export const getSalesOrders = async (
+  tab: 'QUOTATION' | 'SO',
+  search = '',
+  options: { filters?: SalesFilters; sortField?: SalesSortField; sortDir?: SortDir } = {}
+): Promise<SalesHeader[]> => {
+  const { filters = {}, sortField = 'date', sortDir = 'desc' } = options;
+  const dateColumn = tab === 'QUOTATION' ? 'order_date' : 'delivery_date';
+  // A parent row must only come back when it has a matching detail line, so
+  // the product filter uses the !inner embed modifier (PostgREST's "parent
+  // requires matching child" pattern) instead of the plain left-join embed.
+  const useProductFilter = !!(filters.productIds && filters.productIds.length > 0);
+
   let query = supabase
     .from('sales_header')
-    .select('*, clients(company_name), sales_detail(*, product(name, code, dimension), production_material_usage(*, material(name, code)))')
-    .order('created_at', { ascending: false });
+    .select(useProductFilter
+      ? '*, clients(company_name), sales_detail!inner(*, product(name, code, dimension), production_material_usage(*, material(name, code)))'
+      : '*, clients(company_name), sales_detail(*, product(name, code, dimension), production_material_usage(*, material(name, code)))');
 
   query = tab === 'QUOTATION'
     ? query.eq('status', 'QUOTATION')
@@ -101,6 +125,32 @@ export const getSalesOrders = async (tab: 'QUOTATION' | 'SO', search = ''): Prom
     if (clientIds.length > 0) orParts.push(`client_id.in.(${clientIds.join(',')})`);
     query = query.or(orParts.join(','));
   }
+
+  if (filters.clientIds && filters.clientIds.length > 0) {
+    query = query.in('client_id', filters.clientIds);
+  }
+  if (useProductFilter) {
+    query = query.in('sales_detail.product_id', filters.productIds!);
+  }
+  if (filters.dateFrom) query = query.gte(dateColumn, filters.dateFrom);
+  if (filters.dateTo) query = query.lte(dateColumn, filters.dateTo);
+
+  switch (sortField) {
+    case 'reference':
+      query = query.order('sales_no', { ascending: sortDir === 'asc' });
+      break;
+    case 'client':
+      query = query.order('company_name', { ascending: sortDir === 'asc', foreignTable: 'clients' });
+      break;
+    case 'totalAmount':
+      query = query.order('total_amount', { ascending: sortDir === 'asc' });
+      break;
+    case 'date':
+    default:
+      query = query.order(dateColumn, { ascending: sortDir === 'asc' });
+      break;
+  }
+  query = query.order('created_at', { ascending: false });
 
   const { data, error } = await query;
   if (error) {

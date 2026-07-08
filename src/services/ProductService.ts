@@ -49,6 +49,56 @@ export const getProducts = async (search = ''): Promise<Product[]> => {
   return (data || []).map(mapProductRow);
 };
 
+export type ProductSortField = 'name' | 'code' | 'stock' | 'latestSale' | 'oldestSale';
+export type SortDir = 'asc' | 'desc';
+
+const SORT_FIELD_TO_RPC: Record<ProductSortField, string> = {
+  name: 'name',
+  code: 'code',
+  stock: 'stock',
+  latestSale: 'latest_sale',
+  oldestSale: 'oldest_sale',
+};
+
+// Paginated, filterable, sortable product catalog for ProductView.tsx — via
+// the get_products_page() RPC (supabase/function_trigger.sql), mirroring
+// MaterialService.getMaterialsPage(). getProducts() above stays as-is for
+// unpaginated lookups elsewhere (e.g. OrdersView's product ComboBox).
+export const getProductsPage = async (params: {
+  search?: string;
+  productIds?: string[]; // FilterDialog's ticked-record picker, AND'd with search
+  sortField?: ProductSortField;
+  sortDir?: SortDir;
+  offset: number;
+  limit: number;
+}): Promise<{ rows: Product[]; hasMore: boolean }> => {
+  const { search = '', productIds, sortField = 'name', sortDir = 'asc', offset, limit } = params;
+
+  const { data, error } = await supabase.rpc('get_products_page', {
+    p_search: search.trim() || null,
+    p_ids: productIds && productIds.length > 0 ? productIds : null,
+    p_sort_field: SORT_FIELD_TO_RPC[sortField],
+    p_sort_dir: sortDir,
+    p_offset: offset,
+    p_limit: limit,
+  });
+
+  if (error) {
+    console.error('getProductsPage', error);
+    return { rows: [], hasMore: false };
+  }
+
+  const rows = (data || []).map((row: any) => ({
+    ...mapProductRow(row),
+    quantity: Number(row.quantity) || 0,
+    latestSaleDate: row.latest_sale_date || undefined,
+    oldestSaleDate: row.oldest_sale_date || undefined,
+  }));
+  const total = data?.[0]?.total_count ?? 0;
+  const hasMore = offset + rows.length < total;
+  return { rows, hasMore };
+};
+
 export const saveProduct = (product: Product): Promise<void> => upsertRecord('erp_product', product);
 export const deleteProduct = (id: string): Promise<void> => deleteRecord('erp_product', id);
 

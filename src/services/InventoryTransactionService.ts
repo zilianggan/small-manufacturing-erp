@@ -28,22 +28,36 @@ const mapTransactionRow = (row: any): InventoryTransaction => ({
   createdAt: row.created_at,
 });
 
+export type InventoryLedgerSortField = 'date' | 'type' | 'quantity' | 'unitCost';
+export type SortDir = 'asc' | 'desc';
+
+const SORT_COLUMN: Record<InventoryLedgerSortField, string> = {
+  date: 'transaction_date',
+  type: 'transaction_type',
+  quantity: 'quantity',
+  unitCost: 'unit_cost',
+};
+
 export const getInventoryTransactions = async (params: {
   search?: string;
-  typeFilter?: string; // 'ALL' or one of InventoryTransactionType
+  typeFilters?: InventoryTransactionType[]; // empty/undefined = all types
+  materialIds?: string[]; // FilterDialog's ticked-record picker, OR'd with productIds, AND'd with search
+  productIds?: string[];
+  sortField?: InventoryLedgerSortField;
+  sortDir?: SortDir;
   offset: number;
   limit: number;
 }): Promise<{ rows: InventoryTransaction[]; hasMore: boolean }> => {
-  const { search = '', typeFilter = 'ALL', offset, limit } = params;
+  const { search = '', typeFilters, materialIds, productIds, sortField = 'date', sortDir = 'desc', offset, limit } = params;
 
   let query = supabase
     .from('inventory_transaction')
     .select('*, material(name), product(name)', { count: 'exact' })
-    .order('transaction_date', { ascending: false })
+    .order(SORT_COLUMN[sortField], { ascending: sortDir === 'asc' })
     .order('created_at', { ascending: false });
 
-  if (typeFilter !== 'ALL') {
-    query = query.eq('transaction_type', typeFilter);
+  if (typeFilters && typeFilters.length > 0) {
+    query = query.in('transaction_type', typeFilters);
   }
 
   const q = search.trim();
@@ -55,16 +69,27 @@ export const getInventoryTransactions = async (params: {
       getMaterials(q),
       getProducts(q),
     ]);
-    const materialIds = matchedMaterials.map(m => m.id);
-    const productIds = matchedProducts.map(p => p.id);
+    const searchMaterialIds = matchedMaterials.map(m => m.id);
+    const searchProductIds = matchedProducts.map(p => p.id);
 
-    if (materialIds.length === 0 && productIds.length === 0) {
+    if (searchMaterialIds.length === 0 && searchProductIds.length === 0) {
       return { rows: [], hasMore: false };
     }
 
     const orParts: string[] = [];
-    if (materialIds.length > 0) orParts.push(`material_id.in.(${materialIds.join(',')})`);
-    if (productIds.length > 0) orParts.push(`product_id.in.(${productIds.join(',')})`);
+    if (searchMaterialIds.length > 0) orParts.push(`material_id.in.(${searchMaterialIds.join(',')})`);
+    if (searchProductIds.length > 0) orParts.push(`product_id.in.(${searchProductIds.join(',')})`);
+    query = query.or(orParts.join(','));
+  }
+
+  // A row only ever has one of material_id/product_id set, so the item
+  // filter is an OR of the two id sets (a second, separately AND'd .or()
+  // group — chained postgrest filters combine with AND, matching the search
+  // .or() above).
+  if ((materialIds && materialIds.length > 0) || (productIds && productIds.length > 0)) {
+    const orParts: string[] = [];
+    if (materialIds && materialIds.length > 0) orParts.push(`material_id.in.(${materialIds.join(',')})`);
+    if (productIds && productIds.length > 0) orParts.push(`product_id.in.(${productIds.join(',')})`);
     query = query.or(orParts.join(','));
   }
 

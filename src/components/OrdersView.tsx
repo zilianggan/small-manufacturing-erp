@@ -9,13 +9,14 @@ import {
   startProduction, confirmProductionDone, markDelivered, cancelSalesOrder, deleteSalesOrder,
   getSalesOrderById,
   SalesDetailInput, MaterialUsageInput, MaterialReconciliationInput, LeftoverMaterialInput, ExtraProducedInput,
+  SalesFilters, SalesSortField, SortDir,
 } from '../services/OrdersService';
 import { getProducts } from '../services/ProductService';
 import { getMaterials } from '../services/MaterialService';
 import { getMaterialCategories } from '../services/SystemAdminService';
 import { getClients } from '../services/ContactsService';
 import { SalesHeader, Client, Product, Material, MaterialCategory, Attachment } from '../types';
-import { Plus, Calendar, Check, CheckCheck, Factory, Paperclip, Trash2, Edit, FileText, ArrowRightCircle, Eye } from 'lucide-react';
+import { Plus, Calendar, Check, CheckCheck, Factory, Paperclip, Trash2, Edit, FileText, ArrowRightCircle, Eye, Filter } from 'lucide-react';
 import AttachmentSection from './AttachmentSection';
 import SalesQuotationModal from './SalesQuotationModal';
 import InvoiceModal from './InvoiceModal';
@@ -23,6 +24,8 @@ import ProductionCompletionModal from './ProductionCompletionModal';
 import SalesOrderDetailView from './SalesOrderDetailView';
 import LoadingSpinner from './LoadingSpinner';
 import ComboBox from './ComboBox';
+import FilterDialog from './FilterDialog';
+import SortableTh from './SortableTh';
 import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, FormField, SearchInput, useToast, useConfirm } from './ui';
 import { CallAPI } from './UIHelper';
 import { debounce } from 'lodash'
@@ -122,15 +125,32 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, init
     [materialCategories]
   );
 
+  // ─── Filter dialog: client + product record pickers, date range ─────────
+  const [appliedFilters, setAppliedFilters] = useState<SalesFilters>({});
+  const [showFilterDialog, setShowFilterDialog] = useState(false);
+  const [filterDraftClientIds, setFilterDraftClientIds] = useState<string[]>([]);
+  const [filterDraftProductIds, setFilterDraftProductIds] = useState<string[]>([]);
+  const [filterDraftDateFrom, setFilterDraftDateFrom] = useState('');
+  const [filterDraftDateTo, setFilterDraftDateTo] = useState('');
+  const [filterClientSearch, setFilterClientSearch] = useState('');
+  const [filterProductSearch, setFilterProductSearch] = useState('');
+
+  // ─── Sort ─────────────────────────────────────────────────────────────
+  const [sortField, setSortField] = useState<SalesSortField>('date');
+  const [sortDir, setSortDir] = useState<SortDir>('desc');
+
   const loadOrders = (tab: OrderTab, search: string = '') => {
     setLoading(true);
-    CallAPI(() => getSalesOrders(tab === 'QUOTATION' ? 'QUOTATION' : 'SO', search), {
+    CallAPI(() => getSalesOrders(tab === 'QUOTATION' ? 'QUOTATION' : 'SO', search, { filters: appliedFilters, sortField, sortDir }), {
       onCompleted: (data) => { setOrders(data); setLoading(false); },
       onError: (err) => { console.error(err); setLoading(false); },
     });
   };
 
-  useEffect(() => { loadOrders(activeTab, searchQuery[activeTab === 'QUOTATION' ? 0 : 1]?.search); }, [activeTab]);
+  useEffect(() => {
+    loadOrders(activeTab, searchQuery[activeTab === 'QUOTATION' ? 0 : 1]?.search);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, appliedFilters, sortField, sortDir]);
 
   // Keeps the open detail page's data in sync after an edit/transition —
   // loadOrders() only refreshes the list underneath it.
@@ -143,8 +163,46 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, init
       debounce((text: string) => {
         loadOrders(activeTab, text);
       }, 500),
-    [activeTab]
+    [activeTab, appliedFilters, sortField, sortDir]
   );
+
+  const openFilterDialog = () => {
+    setFilterDraftClientIds(appliedFilters.clientIds || []);
+    setFilterDraftProductIds(appliedFilters.productIds || []);
+    setFilterDraftDateFrom(appliedFilters.dateFrom || '');
+    setFilterDraftDateTo(appliedFilters.dateTo || '');
+    setFilterClientSearch('');
+    setFilterProductSearch('');
+    setShowFilterDialog(true);
+  };
+
+  const toggleFilterDraftClient = (id: string) => {
+    setFilterDraftClientIds(prev => (prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]));
+  };
+  const toggleFilterDraftProduct = (id: string) => {
+    setFilterDraftProductIds(prev => (prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]));
+  };
+
+  const filterClientItems = useMemo(() => {
+    const q = filterClientSearch.trim().toLowerCase();
+    return clients
+      .filter(c => !q || c.companyName.toLowerCase().includes(q))
+      .map(c => ({ id: c.id, label: c.companyName }));
+  }, [clients, filterClientSearch]);
+
+  const filterProductItems = useMemo(() => {
+    const q = filterProductSearch.trim().toLowerCase();
+    return products
+      .filter(p => !q || p.name.toLowerCase().includes(q) || (p.code || '').toLowerCase().includes(q))
+      .map(p => ({ id: p.id, label: p.name, sublabel: p.code }));
+  }, [products, filterProductSearch]);
+
+  const hasActiveFilters = !!(appliedFilters.clientIds?.length || appliedFilters.productIds?.length || appliedFilters.dateFrom || appliedFilters.dateTo);
+
+  const toggleSort = (key: SalesSortField) => {
+    if (key === sortField) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
+    else { setSortField(key); setSortDir('asc'); }
+  };
 
   // Quotation print modal
   const [selectedQuotation, setSelectedQuotation] = useState<SalesHeader | null>(null);
@@ -530,6 +588,14 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, init
             }}
             placeholder="Search by client or reference no..."
           />
+          <button
+            onClick={openFilterDialog}
+            className={`relative flex items-center space-x-1.5 px-3 py-2 border rounded-lg text-xs font-medium transition-colors ${hasActiveFilters ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-600'}`}
+          >
+            <Filter className="w-3.5 h-3.5" />
+            <span>Filter</span>
+            {hasActiveFilters && <span className="absolute -top-1 -right-1 w-2 h-2 bg-blue-600 rounded-full" />}
+          </button>
           {activeTab === 'QUOTATION' && (
             <button
               onClick={openCreateForm}
@@ -541,6 +607,57 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, init
           )}
         </div>
       </div>
+
+      {/* Filter dialog */}
+      <FilterDialog
+        open={showFilterDialog}
+        onClose={() => setShowFilterDialog(false)}
+        title="Filter Sales Contracts"
+        sections={[
+          {
+            type: 'checklist',
+            key: 'clients',
+            label: 'Client',
+            searchPlaceholder: 'Search clients...',
+            searchQuery: filterClientSearch,
+            onSearchChange: setFilterClientSearch,
+            items: filterClientItems,
+            selectedIds: filterDraftClientIds,
+            onToggle: toggleFilterDraftClient,
+          },
+          {
+            type: 'checklist',
+            key: 'products',
+            label: 'Product',
+            searchPlaceholder: 'Search products...',
+            searchQuery: filterProductSearch,
+            onSearchChange: setFilterProductSearch,
+            items: filterProductItems,
+            selectedIds: filterDraftProductIds,
+            onToggle: toggleFilterDraftProduct,
+          },
+          {
+            type: 'dateRange',
+            key: 'dateRange',
+            label: activeTab === 'QUOTATION' ? 'Order Date Range' : 'Delivery Date Range',
+            from: filterDraftDateFrom,
+            to: filterDraftDateTo,
+            onFromChange: setFilterDraftDateFrom,
+            onToChange: setFilterDraftDateTo,
+          },
+        ]}
+        onApply={() => setAppliedFilters({
+          clientIds: filterDraftClientIds,
+          productIds: filterDraftProductIds,
+          dateFrom: filterDraftDateFrom || undefined,
+          dateTo: filterDraftDateTo || undefined,
+        })}
+        onClear={() => {
+          setFilterDraftClientIds([]); setFilterDraftProductIds([]);
+          setFilterDraftDateFrom(''); setFilterDraftDateTo('');
+          setAppliedFilters({});
+        }}
+      />
 
       {/* Creation/Edit/Convert form as Dialog Modal */}
       <Dialog
@@ -773,11 +890,11 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, init
           <table className="w-full text-left text-xs border-collapse">
             <thead>
               <tr className="bg-slate-50/75 border-b border-slate-200 text-slate-500 uppercase font-mono tracking-wider dark:bg-slate-800/80 dark:border-slate-700 dark:text-slate-400">
-                <th className="p-4">Contract ID</th>
-                <th className="p-4">Client</th>
+                <SortableTh label="Contract ID" sortKey="reference" activeKey={sortField} dir={sortDir} onClick={toggleSort} thClassName="p-4" />
+                <SortableTh label="Client" sortKey="client" activeKey={sortField} dir={sortDir} onClick={toggleSort} thClassName="p-4" />
                 <th className="p-4">Product & Quantity</th>
-                <th className="p-4">{activeTab === 'QUOTATION' ? 'Order Date' : 'Delivery Due'}</th>
-                <th className="p-4">Contract Total</th>
+                <SortableTh label={activeTab === 'QUOTATION' ? 'Order Date' : 'Delivery Due'} sortKey="date" activeKey={sortField} dir={sortDir} onClick={toggleSort} thClassName="p-4" />
+                <SortableTh label="Contract Total" sortKey="totalAmount" activeKey={sortField} dir={sortDir} onClick={toggleSort} thClassName="p-4" />
                 {activeTab === 'SO' && <th className="p-4">Status</th>}
                 <th className="p-4 text-right">Actions</th>
               </tr>

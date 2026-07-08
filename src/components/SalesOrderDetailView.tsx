@@ -3,13 +3,18 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React from 'react';
+import React, { useMemo, useState } from 'react';
 import { SalesHeader } from '../types';
 import {
   ArrowLeft, Calendar, Paperclip, Trash2, Edit, FileText, ArrowRightCircle,
   Check, CheckCheck, Factory, Boxes,
 } from 'lucide-react';
 import { Card } from './ui';
+import SortableTh from './SortableTh';
+import { sortByField } from '../utils/sortRows';
+
+type LineItemSortKey = 'productName' | 'quantity' | 'unitPrice' | 'totalPrice';
+const NUMERIC_KEYS: LineItemSortKey[] = ['quantity', 'unitPrice', 'totalPrice'];
 
 interface SalesOrderDetailViewProps {
   order: SalesHeader;
@@ -55,6 +60,19 @@ export default function SalesOrderDetailView({
     : order.status === 'IN_PRODUCTION' ? 'In Production'
       : order.status === 'DONE_IN_PRODUCTION' ? 'Done in Production'
         : order.status;
+
+  // Click-to-sort table headers. Whole list is already loaded (one order's
+  // line items, never heavy), so this sorts client-side rather than re-fetching.
+  const [sortKey, setSortKey] = useState<LineItemSortKey>('productName');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+  const toggleSort = (key: LineItemSortKey) => {
+    if (key === sortKey) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
+    else { setSortKey(key); setSortDir('asc'); }
+  };
+  const sortedDetails = useMemo(
+    () => sortByField(order.details, sortKey, sortDir, NUMERIC_KEYS),
+    [order.details, sortKey, sortDir]
+  );
 
   return (
     <div className="space-y-6" id="sales-order-detail-view">
@@ -222,34 +240,49 @@ export default function SalesOrderDetailView({
         <h3 className="font-sans font-bold text-slate-900 text-sm">Contract Line Items</h3>
       </div>
 
-      <div className="space-y-2">
-        {order.details.map((item, idx) => (
-          <Card key={item.detailId || idx} className="p-3.5">
-            <div className="flex items-center justify-between gap-3">
-              <span className="font-sans font-semibold text-slate-800 text-xs">{item.productName}</span>
-              <span className="text-[11px] text-slate-500 font-mono">
-                Qty: {item.quantity} @ RM {item.unitPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} = RM {item.totalPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </span>
-            </div>
-            {item.materials.length > 0 && (
-              <div className="mt-2 pl-3 border-l-2 border-slate-100 space-y-1">
-                {item.materials.map((m, midx) => (
-                  <div key={midx} className="text-[10px] text-slate-500 font-mono flex items-center gap-3">
-                    <span>{m.materialName}</span>
-                    <span>planned {m.plannedQuantity}</span>
-                    {(m.actualQuantity > 0 || m.returnedQuantity > 0) && (
-                      <>
-                        <span>actual {m.actualQuantity}</span>
-                        <span>returned {m.returnedQuantity}</span>
-                      </>
+      <Card className="overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs text-left">
+            <thead className="bg-slate-50 text-slate-500 border-b border-slate-100">
+              <tr>
+                <SortableTh label="Product" sortKey="productName" activeKey={sortKey} dir={sortDir} onClick={toggleSort} />
+                <SortableTh label="Quantity" sortKey="quantity" activeKey={sortKey} dir={sortDir} onClick={toggleSort} align="right" />
+                <SortableTh label="Unit Price" sortKey="unitPrice" activeKey={sortKey} dir={sortDir} onClick={toggleSort} align="right" />
+                <SortableTh label="Total Price" sortKey="totalPrice" activeKey={sortKey} dir={sortDir} onClick={toggleSort} align="right" />
+                <th className="px-4 py-2 font-semibold">Materials Used</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {sortedDetails.map((item, idx) => (
+                <tr key={item.detailId || idx} className="hover:bg-slate-50/50 transition-colors">
+                  <td className="px-4 py-2.5 font-semibold text-slate-800">{item.productName}</td>
+                  <td className="px-4 py-2.5 text-right font-mono text-slate-600">{item.quantity}</td>
+                  <td className="px-4 py-2.5 text-right font-mono text-slate-600">RM {item.unitPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                  <td className="px-4 py-2.5 text-right font-mono font-semibold text-slate-800">RM {item.totalPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                  <td className="px-4 py-2.5">
+                    {item.materials.length > 0 && (
+                      <div className="space-y-1">
+                        {item.materials.map((m, midx) => (
+                          <div key={midx} className="text-[10px] text-slate-500 font-mono flex items-center gap-3">
+                            <span>{m.materialName}</span>
+                            <span>planned {m.plannedQuantity}</span>
+                            {(m.actualQuantity > 0 || m.returnedQuantity > 0) && (
+                              <>
+                                <span>actual {m.actualQuantity}</span>
+                                <span>returned {m.returnedQuantity}</span>
+                              </>
+                            )}
+                          </div>
+                        ))}
+                      </div>
                     )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </Card>
-        ))}
-      </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
     </div>
   );
 }

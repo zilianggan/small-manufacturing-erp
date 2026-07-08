@@ -3,12 +3,17 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React from 'react';
+import React, { useMemo, useState } from 'react';
 import { PurchaseHeader } from '../types';
 import {
   ArrowLeft, Calendar, Paperclip, Trash2, Edit, FileText, ArrowRightCircle, Check, Boxes,
 } from 'lucide-react';
 import { Card } from './ui';
+import SortableTh from './SortableTh';
+import { sortByField } from '../utils/sortRows';
+
+type LineItemSortKey = 'materialName' | 'quantity' | 'unitCost' | 'totalPrice' | 'receivedQuantity';
+const NUMERIC_KEYS: LineItemSortKey[] = ['quantity', 'unitCost', 'totalPrice', 'receivedQuantity'];
 
 interface PurchaseOrderDetailViewProps {
   purchase: PurchaseHeader;
@@ -43,6 +48,19 @@ export default function PurchaseOrderDetailView({
     : purchase.status === 'RECEIVED' ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
       : purchase.status === 'CANCELLED' ? 'bg-red-50 text-red-800 border-red-200'
         : 'bg-slate-50 text-slate-600 border-slate-200';
+
+  // Click-to-sort table headers. Whole list is already loaded (one order's
+  // line items, never heavy), so this sorts client-side rather than re-fetching.
+  const [sortKey, setSortKey] = useState<LineItemSortKey>('materialName');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+  const toggleSort = (key: LineItemSortKey) => {
+    if (key === sortKey) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
+    else { setSortKey(key); setSortDir('asc'); }
+  };
+  const sortedDetails = useMemo(
+    () => sortByField(purchase.details, sortKey, sortDir, NUMERIC_KEYS),
+    [purchase.details, sortKey, sortDir]
+  );
 
   return (
     <div className="space-y-6" id="purchase-order-detail-view">
@@ -175,15 +193,15 @@ export default function PurchaseOrderDetailView({
           <table className="w-full text-xs text-left">
             <thead className="bg-slate-50 text-slate-500 border-b border-slate-100">
               <tr>
-                <th className="px-4 py-2 font-semibold">Material</th>
-                <th className="px-4 py-2 font-semibold text-right">Quantity</th>
-                <th className="px-4 py-2 font-semibold text-right">Unit Cost</th>
-                <th className="px-4 py-2 font-semibold text-right">Total Price</th>
-                <th className="px-4 py-2 font-semibold text-right">Received Qty</th>
+                <SortableTh label="Material" sortKey="materialName" activeKey={sortKey} dir={sortDir} onClick={toggleSort} />
+                <SortableTh label="Quantity" sortKey="quantity" activeKey={sortKey} dir={sortDir} onClick={toggleSort} align="right" />
+                <SortableTh label="Unit Cost" sortKey="unitCost" activeKey={sortKey} dir={sortDir} onClick={toggleSort} align="right" />
+                <SortableTh label="Total Price" sortKey="totalPrice" activeKey={sortKey} dir={sortDir} onClick={toggleSort} align="right" />
+                <SortableTh label="Received Qty" sortKey="receivedQuantity" activeKey={sortKey} dir={sortDir} onClick={toggleSort} align="right" />
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {purchase.details.map((item, idx) => (
+              {sortedDetails.map((item, idx) => (
                 <tr key={item.detailId || idx} className="hover:bg-slate-50/50 transition-colors">
                   <td className="px-4 py-2.5 font-semibold text-slate-800">{item.materialName}</td>
                   <td className="px-4 py-2.5 text-right font-mono text-slate-600">{item.quantity}</td>

@@ -3,18 +3,33 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
-  getMaterials, saveMaterial, deleteMaterial, generateId, getMaterialCategories, getMaterialById
+  getMaterials, getMaterialsPage, saveMaterial, deleteMaterial, generateId, getMaterialCategories, getMaterialById,
+  MaterialSortField, SortDir
 } from '../services/MaterialService';
 import { Material, MaterialCategory, MaterialType, Attachment } from '../types';
-import { Plus, Paperclip, Edit, Trash2, ChevronRight, FileText, Boxes, AlertTriangle } from 'lucide-react';
+import { Plus, Paperclip, Edit, Trash2, ChevronRight, FileText, Boxes, AlertTriangle, Filter, CalendarClock } from 'lucide-react';
 import LoadingSpinner from './LoadingSpinner';
 import MaterialFormFields from './MaterialFormFields';
 import MaterialDetailView from './MaterialDetailView';
+import FilterDialog from './FilterDialog';
+import SortMenu, { SortOption } from './SortMenu';
+import InfiniteScrollSentinel from './InfiniteScrollSentinel';
 import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, SearchInput, useToast, useConfirm } from './ui';
 import { CallAPI } from './UIHelper';
 import { debounce } from 'lodash'
+
+const PAGE_SIZE = 24;
+
+const SORT_OPTIONS: SortOption[] = [
+  { value: 'name', label: 'Name' },
+  { value: 'code', label: 'Code' },
+  { value: 'stock', label: 'Stock Qty' },
+  { value: 'restock', label: 'Restock Urgency' },
+  { value: 'latestPurchase', label: 'Latest Purchase Date' },
+  { value: 'oldestPurchase', label: 'Oldest Purchase Date' },
+];
 
 interface MaterialViewProps {
   // Cross-tab drill-in: passed through to MaterialDetailView's inventory list
@@ -42,24 +57,86 @@ export default function MaterialView({ onViewPurchaseOrder, onViewSalesOrder, in
   const [searchQuery, setSearchQuery] = useState('');
   const [materials, setMaterials] = useState<Material[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
+  const [offset, setOffset] = useState(0);
 
-  const loadMaterials = (search: string = '') => {
-    setLoading(true);
-    CallAPI(() => getMaterials(search), {
-      onCompleted: (data) => { setMaterials(data); setLoading(false); },
-      onError: (err) => { console.error(err); setLoading(false); },
-    });
-  };
+  // ─── Filter dialog: search by name/code keyword, tick multiple materials ──
+  const [appliedMaterialIds, setAppliedMaterialIds] = useState<string[]>([]);
+  const [showFilterDialog, setShowFilterDialog] = useState(false);
+  const [filterDraftIds, setFilterDraftIds] = useState<string[]>([]);
+  const [filterSearchQuery, setFilterSearchQuery] = useState('');
+  const [filterOptions, setFilterOptions] = useState<Material[]>([]);
+  const [filterOptionsLoading, setFilterOptionsLoading] = useState(false);
 
-  useEffect(() => { loadMaterials(''); }, []);
+  // ─── Sort ─────────────────────────────────────────────────────────────
+  const [sortField, setSortField] = useState<MaterialSortField>('name');
+  const [sortDir, setSortDir] = useState<SortDir>('asc');
+
+  const loadMaterials = useCallback((nextOffset: number, append: boolean, search: string) => {
+    const setBusy = append ? setLoadingMore : setLoading;
+    setBusy(true);
+
+    CallAPI(
+      () => getMaterialsPage({ search, materialIds: appliedMaterialIds, sortField, sortDir, offset: nextOffset, limit: PAGE_SIZE }),
+      {
+        onCompleted: ({ rows, hasMore: more }) => {
+          setMaterials(prev => (append ? [...prev, ...rows] : rows));
+          setHasMore(more);
+          setOffset(nextOffset + rows.length);
+          setBusy(false);
+        },
+        onError: (err) => { console.error(err); setBusy(false); },
+      }
+    );
+  }, [appliedMaterialIds, sortField, sortDir]);
+
+  useEffect(() => { loadMaterials(0, false, searchQuery); }, []);
+
+  // Filters or sort changing both restart from page 1
+  useEffect(() => {
+    loadMaterials(0, false, searchQuery);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appliedMaterialIds, sortField, sortDir]);
 
   const search = useMemo(
     () =>
       debounce((text: string) => {
-        loadMaterials(text);
+        loadMaterials(0, false, text);
       }, 500),
+    [loadMaterials]
+  );
+
+  const handleLoadMore = () => {
+    if (loadingMore || !hasMore) return;
+    loadMaterials(offset, true, searchQuery);
+  };
+
+  const loadFilterOptions = useMemo(
+    () =>
+      debounce((query: string) => {
+        setFilterOptionsLoading(true);
+        CallAPI(() => getMaterials(query), {
+          onCompleted: (data) => { setFilterOptions(data); setFilterOptionsLoading(false); },
+          onError: (err) => { console.error(err); setFilterOptionsLoading(false); },
+        });
+      }, 300),
     []
   );
+
+  const openFilterDialog = () => {
+    setFilterDraftIds(appliedMaterialIds);
+    setFilterSearchQuery('');
+    setFilterOptions([]);
+    setShowFilterDialog(true);
+    loadFilterOptions('');
+  };
+
+  const toggleFilterDraftId = (id: string) => {
+    setFilterDraftIds(prev => (prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]));
+  };
+
+  const hasActiveFilters = appliedMaterialIds.length > 0;
 
   // ─── Material categories (reference data for the form) ──────────────────
   const [materialCategories, setMaterialCategories] = useState<MaterialCategory[]>([]);
@@ -156,7 +233,7 @@ export default function MaterialView({ onViewPurchaseOrder, onViewSalesOrder, in
     };
 
     await CallAPI(() => saveMaterial(record), {
-      onCompleted: () => { loadMaterials(); toast.success(editMaterialId ? 'Material updated.' : 'Material added.'); },
+      onCompleted: () => { loadMaterials(0, false, searchQuery); toast.success(editMaterialId ? 'Material updated.' : 'Material added.'); },
       onError: (err) => { console.error(err); toast.error('Failed to save material.'); },
     });
 
@@ -168,7 +245,7 @@ export default function MaterialView({ onViewPurchaseOrder, onViewSalesOrder, in
     if (!(await confirm(`Delete ${item.name}? This cannot be undone.`))) return;
 
     await CallAPI(() => deleteMaterial(item.id), {
-      onCompleted: () => { loadMaterials(); toast.success(`${item.name} deleted.`); },
+      onCompleted: () => { loadMaterials(0, false, searchQuery); toast.success(`${item.name} deleted.`); },
       onError: (err) => { console.error(err); toast.error('Failed to delete material.'); },
     });
   };
@@ -178,9 +255,9 @@ export default function MaterialView({ onViewPurchaseOrder, onViewSalesOrder, in
     return (
       <MaterialDetailView
         material={selectedMaterial}
-        onBack={() => { setSelectedMaterial(null); loadMaterials(); }}
+        onBack={() => { setSelectedMaterial(null); loadMaterials(0, false, searchQuery); }}
         onMaterialUpdated={(updated) => setSelectedMaterial(updated)}
-        onMaterialDeleted={() => { setSelectedMaterial(null); loadMaterials(); }}
+        onMaterialDeleted={() => { setSelectedMaterial(null); loadMaterials(0, false, searchQuery); }}
         onViewPurchaseOrder={(purchaseHeaderId) => onViewPurchaseOrder?.(purchaseHeaderId, selectedMaterial.id)}
         onViewSalesOrder={(salesHeaderId) => onViewSalesOrder?.(salesHeaderId, undefined, selectedMaterial.id)}
       />
@@ -208,6 +285,15 @@ export default function MaterialView({ onViewPurchaseOrder, onViewSalesOrder, in
             className="relative flex-1 sm:w-64"
           />
           <button
+            onClick={openFilterDialog}
+            className={`relative flex items-center space-x-1.5 px-3 py-2 border rounded-lg text-xs font-medium transition-colors ${hasActiveFilters ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-600'}`}
+          >
+            <Filter className="w-3.5 h-3.5" />
+            <span>Filter</span>
+            {hasActiveFilters && <span className="absolute -top-1 -right-1 w-2 h-2 bg-blue-600 rounded-full" />}
+          </button>
+          <SortMenu options={SORT_OPTIONS} sortField={sortField} sortDir={sortDir} onChange={(f, d) => { setSortField(f as MaterialSortField); setSortDir(d); }} />
+          <button
             onClick={openAddMaterial}
             className="flex items-center space-x-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium transition-colors font-sans shadow-sm"
           >
@@ -216,6 +302,27 @@ export default function MaterialView({ onViewPurchaseOrder, onViewSalesOrder, in
           </button>
         </div>
       </div>
+
+      {/* Filter dialog */}
+      <FilterDialog
+        open={showFilterDialog}
+        onClose={() => setShowFilterDialog(false)}
+        title="Filter Materials"
+        sections={[{
+          type: 'checklist',
+          key: 'materials',
+          label: 'Materials',
+          searchPlaceholder: 'Search by name or code...',
+          searchQuery: filterSearchQuery,
+          onSearchChange: (q) => { setFilterSearchQuery(q); loadFilterOptions(q); },
+          items: filterOptions.map(m => ({ id: m.id, label: m.name, sublabel: m.code })),
+          loading: filterOptionsLoading,
+          selectedIds: filterDraftIds,
+          onToggle: toggleFilterDraftId,
+        }]}
+        onApply={() => setAppliedMaterialIds(filterDraftIds)}
+        onClear={() => { setFilterDraftIds([]); setAppliedMaterialIds([]); }}
+      />
 
       {/* Creation/Edit form as Dialog Modal */}
       <Dialog
@@ -256,6 +363,7 @@ export default function MaterialView({ onViewPurchaseOrder, onViewSalesOrder, in
               key={material.id}
               material={material}
               categoryName={material.materialCategoryId ? materialCategoryMap.get(material.materialCategoryId) : undefined}
+              sortField={sortField}
               onOpen={() => setSelectedMaterial(material)}
               onEdit={() => openEditMaterial(material)}
               onDelete={() => handleDeleteMaterial(material)}
@@ -263,6 +371,7 @@ export default function MaterialView({ onViewPurchaseOrder, onViewSalesOrder, in
           ))
         )}
       </div>
+      <InfiniteScrollSentinel onLoadMore={handleLoadMore} hasMore={hasMore} loading={loadingMore} />
 
     </div>
   );
@@ -270,15 +379,21 @@ export default function MaterialView({ onViewPurchaseOrder, onViewSalesOrder, in
 
 // Material summary card used in the catalog grid
 function MaterialCard({
-  material, categoryName, onOpen, onEdit, onDelete
+  material, categoryName, sortField, onOpen, onEdit, onDelete
 }: {
   material: Material;
   categoryName?: string;
+  sortField?: MaterialSortField;
   onOpen: () => void;
   onEdit: () => void;
   onDelete: () => void;
 }) {
   const belowMinimum = material.quantity < material.minimumStock;
+  const purchaseDateLabel = sortField === 'latestPurchase'
+    ? { label: 'Last purchased:', date: material.latestPurchaseDate }
+    : sortField === 'oldestPurchase'
+      ? { label: 'First purchased:', date: material.oldestPurchaseDate }
+      : null;
 
   return (
     <Card className="group p-5 hover:shadow-md transition-shadow flex flex-col justify-between space-y-4 cursor-pointer">
@@ -318,6 +433,13 @@ function MaterialCard({
               {material.quantity} (min {material.minimumStock})
             </span>
           </div>
+          {purchaseDateLabel && (
+            <div className="flex items-center space-x-2">
+              <CalendarClock className="w-3.5 h-3.5 shrink-0 text-slate-400" />
+              <span className="text-slate-400 shrink-0">{purchaseDateLabel.label}</span>
+              <span>{purchaseDateLabel.date || '—'}</span>
+            </div>
+          )}
           {material.description && (
             <div className="flex items-start space-x-2">
               <FileText className="w-3.5 h-3.5 shrink-0 text-slate-400 mt-0.5" />

@@ -296,6 +296,10 @@ export interface Material {
   materialCategoryId?: string; // FK -> material_categories.id
   createdAt?: string;
   updatedAt?: string;
+  // Only populated by getMaterialsPage() (aggregated from purchase_detail/purchase_header
+  // via the get_materials_page() RPC) — undefined when fetched through getMaterials().
+  latestPurchaseDate?: string;
+  oldestPurchaseDate?: string;
 }
 
 export interface Product {
@@ -310,6 +314,13 @@ export interface Product {
   productCategoryId?: string; // FK -> product_categories.id
   createdAt?: string;
   updatedAt?: string;
+  // Only populated by getProductsPage() (quantity is trigger-maintained same as
+  // Material.quantity; latest/oldestSaleDate aggregated from sales_detail/
+  // sales_header via the get_products_page() RPC) — all undefined when
+  // fetched through getProducts().
+  quantity?: number;
+  latestSaleDate?: string;
+  oldestSaleDate?: string;
 }
 
 export type InventoryTransactionType = 'PURCHASE' | 'SALES' | 'PURCHASE_RETURN' | 'SALES_RETURN' | 'ADJUSTMENT';

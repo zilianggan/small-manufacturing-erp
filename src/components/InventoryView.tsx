@@ -5,16 +5,18 @@
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
-  generateId, getInventoryTransactions, saveInventoryTransaction
+  generateId, getInventoryTransactions, saveInventoryTransaction, InventoryLedgerSortField, SortDir
 } from '../services/InventoryTransactionService';
 import { getMaterials } from '../services/MaterialService';
 import { getProducts } from '../services/ProductService';
 import { InventoryTransaction, InventoryTransactionType, Material, Product } from '../types';
-import { Plus, Calendar } from 'lucide-react';
+import { Plus, Calendar, Filter } from 'lucide-react';
 import LoadingSpinner from './LoadingSpinner';
 import ComboBox from './ComboBox';
 import SegmentedControl from './SegmentedControl';
 import InfiniteScrollSentinel from './InfiniteScrollSentinel';
+import FilterDialog from './FilterDialog';
+import SortableTh from './SortableTh';
 import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, FormField, fieldInputClassName, SearchInput } from './ui';
 import { CallAPI } from './UIHelper';
 import { debounce } from 'lodash'
@@ -42,12 +44,31 @@ const today = (): string => new Date().toISOString().split('T')[0];
 export default function InventoryView() {
   // ─── Ledger list ──────────────────────────────────────────────────────────
   const [searchQuery, setSearchQuery] = useState('');
-  const [typeFilter, setTypeFilter] = useState<'ALL' | InventoryTransactionType>('ALL');
   const [transactions, setTransactions] = useState<InventoryTransaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(false);
   const [offset, setOffset] = useState(0);
+
+  // ─── Filter dialog: tick multiple transaction types, materials, products ──
+  const [appliedTypeFilters, setAppliedTypeFilters] = useState<InventoryTransactionType[]>([]);
+  const [appliedMaterialIds, setAppliedMaterialIds] = useState<string[]>([]);
+  const [appliedProductIds, setAppliedProductIds] = useState<string[]>([]);
+  const [showFilterDialog, setShowFilterDialog] = useState(false);
+  const [filterDraftTypes, setFilterDraftTypes] = useState<InventoryTransactionType[]>([]);
+  const [filterDraftMaterialIds, setFilterDraftMaterialIds] = useState<string[]>([]);
+  const [filterDraftProductIds, setFilterDraftProductIds] = useState<string[]>([]);
+  const [filterSearchQuery, setFilterSearchQuery] = useState('');
+  const [filterMaterialSearch, setFilterMaterialSearch] = useState('');
+  const [filterProductSearch, setFilterProductSearch] = useState('');
+  const [filterMaterialOptions, setFilterMaterialOptions] = useState<Material[]>([]);
+  const [filterProductOptions, setFilterProductOptions] = useState<Product[]>([]);
+  const [filterMaterialOptionsLoading, setFilterMaterialOptionsLoading] = useState(false);
+  const [filterProductOptionsLoading, setFilterProductOptionsLoading] = useState(false);
+
+  // ─── Sort ─────────────────────────────────────────────────────────────
+  const [sortField, setSortField] = useState<InventoryLedgerSortField>('date');
+  const [sortDir, setSortDir] = useState<SortDir>('desc');
 
   const loadTransactions = useCallback((
     nextOffset: number,
@@ -62,7 +83,11 @@ export default function InventoryView() {
       () =>
         getInventoryTransactions({
           search,
-          typeFilter,
+          typeFilters: appliedTypeFilters,
+          materialIds: appliedMaterialIds,
+          productIds: appliedProductIds,
+          sortField,
+          sortDir,
           offset: nextOffset,
           limit: PAGE_SIZE,
         }),
@@ -79,14 +104,15 @@ export default function InventoryView() {
         },
       }
     );
-  }, [typeFilter]);
+  }, [appliedTypeFilters, appliedMaterialIds, appliedProductIds, sortField, sortDir]);
 
   useEffect(() => { loadTransactions(0, false, searchQuery); }, []);
 
-  // Debounced: search text or type filter changing both restart from page 1
+  // Filters or sort changing both restart from page 1
   useEffect(() => {
     loadTransactions(0, false, searchQuery);
-  }, [typeFilter]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appliedTypeFilters, appliedMaterialIds, appliedProductIds, sortField, sortDir]);
 
   const search = useMemo(
     () =>
@@ -99,6 +125,71 @@ export default function InventoryView() {
   const handleLoadMore = () => {
     if (loadingMore || !hasMore) return;
     loadTransactions(offset, true, searchQuery);
+  };
+
+  const loadFilterMaterialOptions = useMemo(
+    () =>
+      debounce((query: string) => {
+        setFilterMaterialOptionsLoading(true);
+        CallAPI(() => getMaterials(query), {
+          onCompleted: (data) => { setFilterMaterialOptions(data); setFilterMaterialOptionsLoading(false); },
+          onError: (err) => { console.error(err); setFilterMaterialOptionsLoading(false); },
+        });
+      }, 300),
+    []
+  );
+
+  const loadFilterProductOptions = useMemo(
+    () =>
+      debounce((query: string) => {
+        setFilterProductOptionsLoading(true);
+        CallAPI(() => getProducts(query), {
+          onCompleted: (data) => { setFilterProductOptions(data); setFilterProductOptionsLoading(false); },
+          onError: (err) => { console.error(err); setFilterProductOptionsLoading(false); },
+        });
+      }, 300),
+    []
+  );
+
+  const openFilterDialog = () => {
+    setFilterDraftTypes(appliedTypeFilters);
+    setFilterDraftMaterialIds(appliedMaterialIds);
+    setFilterDraftProductIds(appliedProductIds);
+    setFilterSearchQuery('');
+    setFilterMaterialSearch('');
+    setFilterProductSearch('');
+    setFilterMaterialOptions([]);
+    setFilterProductOptions([]);
+    setShowFilterDialog(true);
+    loadFilterMaterialOptions('');
+    loadFilterProductOptions('');
+  };
+
+  const toggleFilterDraftType = (id: string) => {
+    const type = id as InventoryTransactionType;
+    setFilterDraftTypes(prev => (prev.includes(type) ? prev.filter(x => x !== type) : [...prev, type]));
+  };
+
+  const toggleFilterDraftMaterial = (id: string) => {
+    setFilterDraftMaterialIds(prev => (prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]));
+  };
+
+  const toggleFilterDraftProduct = (id: string) => {
+    setFilterDraftProductIds(prev => (prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]));
+  };
+
+  const filterTypeItems = useMemo(() => {
+    const q = filterSearchQuery.trim().toLowerCase();
+    return TRANSACTION_TYPES
+      .filter(t => !q || t.label.toLowerCase().includes(q))
+      .map(t => ({ id: t.value, label: t.label }));
+  }, [filterSearchQuery]);
+
+  const hasActiveFilters = appliedTypeFilters.length > 0 || appliedMaterialIds.length > 0 || appliedProductIds.length > 0;
+
+  const toggleSort = (key: InventoryLedgerSortField) => {
+    if (key === sortField) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
+    else { setSortField(key); setSortDir('asc'); }
   };
 
   // ─── Add Transaction form ────────────────────────────────────────────────
@@ -212,12 +303,14 @@ export default function InventoryView() {
         />
 
         <div className="flex items-center space-x-2">
-          <ComboBox
-            value={typeFilter}
-            onChange={(v) => setTypeFilter(v as 'ALL' | InventoryTransactionType)}
-            options={[{ value: 'ALL', label: 'All Types' }, ...TRANSACTION_TYPES]}
-            className="w-44"
-          />
+          <button
+            onClick={openFilterDialog}
+            className={`relative flex items-center space-x-1.5 px-3 py-2 border rounded-lg text-xs font-medium transition-colors ${hasActiveFilters ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-600'}`}
+          >
+            <Filter className="w-3.5 h-3.5" />
+            <span>Filter</span>
+            {hasActiveFilters && <span className="absolute -top-1 -right-1 w-2 h-2 bg-blue-600 rounded-full" />}
+          </button>
 
           <button
             onClick={openAddForm}
@@ -228,6 +321,59 @@ export default function InventoryView() {
           </button>
         </div>
       </div>
+
+      {/* Filter dialog */}
+      <FilterDialog
+        open={showFilterDialog}
+        onClose={() => setShowFilterDialog(false)}
+        title="Filter Inventory"
+        sections={[
+          {
+            type: 'checklist',
+            key: 'types',
+            label: 'Transaction Types',
+            searchPlaceholder: 'Search types...',
+            searchQuery: filterSearchQuery,
+            onSearchChange: setFilterSearchQuery,
+            items: filterTypeItems,
+            selectedIds: filterDraftTypes,
+            onToggle: toggleFilterDraftType,
+          },
+          {
+            type: 'checklist',
+            key: 'materials',
+            label: 'Material',
+            searchPlaceholder: 'Search materials...',
+            searchQuery: filterMaterialSearch,
+            onSearchChange: (q) => { setFilterMaterialSearch(q); loadFilterMaterialOptions(q); },
+            items: filterMaterialOptions.map(m => ({ id: m.id, label: m.name, sublabel: m.code })),
+            loading: filterMaterialOptionsLoading,
+            selectedIds: filterDraftMaterialIds,
+            onToggle: toggleFilterDraftMaterial,
+          },
+          {
+            type: 'checklist',
+            key: 'products',
+            label: 'Product',
+            searchPlaceholder: 'Search products...',
+            searchQuery: filterProductSearch,
+            onSearchChange: (q) => { setFilterProductSearch(q); loadFilterProductOptions(q); },
+            items: filterProductOptions.map(p => ({ id: p.id, label: p.name, sublabel: p.code })),
+            loading: filterProductOptionsLoading,
+            selectedIds: filterDraftProductIds,
+            onToggle: toggleFilterDraftProduct,
+          },
+        ]}
+        onApply={() => {
+          setAppliedTypeFilters(filterDraftTypes);
+          setAppliedMaterialIds(filterDraftMaterialIds);
+          setAppliedProductIds(filterDraftProductIds);
+        }}
+        onClear={() => {
+          setFilterDraftTypes([]); setFilterDraftMaterialIds([]); setFilterDraftProductIds([]);
+          setAppliedTypeFilters([]); setAppliedMaterialIds([]); setAppliedProductIds([]);
+        }}
+      />
 
       {/* Add Transaction Dialog */}
       <Dialog open={showAddForm} onClose={() => setShowAddForm(false)} title="Add Inventory Transaction">
@@ -338,11 +484,11 @@ export default function InventoryView() {
           <table className="w-full text-left text-xs border-collapse">
             <thead>
               <tr className="bg-slate-50/75 border-b border-slate-200 text-slate-500 uppercase font-mono tracking-wider dark:bg-slate-800/80 dark:border-slate-700 dark:text-slate-400">
-                <th className="p-4">Date</th>
-                <th className="p-4">Type</th>
+                <SortableTh label="Date" sortKey="date" activeKey={sortField} dir={sortDir} onClick={toggleSort} thClassName="p-4" />
+                <SortableTh label="Type" sortKey="type" activeKey={sortField} dir={sortDir} onClick={toggleSort} thClassName="p-4" />
                 <th className="p-4">Item</th>
-                <th className="p-4 text-right">Quantity</th>
-                <th className="p-4 text-right">Unit Cost</th>
+                <SortableTh label="Quantity" sortKey="quantity" activeKey={sortField} dir={sortDir} onClick={toggleSort} thClassName="p-4" align="right" />
+                <SortableTh label="Unit Cost" sortKey="unitCost" activeKey={sortField} dir={sortDir} onClick={toggleSort} thClassName="p-4" align="right" />
                 <th className="p-4">Remark</th>
               </tr>
             </thead>

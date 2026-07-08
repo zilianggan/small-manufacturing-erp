@@ -227,3 +227,154 @@ SELECT
     (SELECT jsonb_agg(t) FROM low_stock t),
     (SELECT COUNT(*)::int FROM material WHERE quantity <= minimum_stock);
 $$;
+
+-- Paginated + sortable + filterable material catalog for MaterialView.tsx.
+-- p_search matches the existing free-text search box (name OR code). p_ids is
+-- the FilterDialog's ticked-record picker (search name/code, tick multiple,
+-- apply) — when set, only those material ids are returned. p_sort_field is
+-- one of: name, code, stock, restock, latest_purchase, oldest_purchase —
+-- resolved via a whitelist CASE (not string-interpolated) so it's
+-- injection-safe even though the ORDER BY clause is built with
+-- format()/EXECUTE. total_count is a window count so callers get hasMore
+-- without a second round trip.
+CREATE OR REPLACE FUNCTION get_materials_page(
+    p_search text DEFAULT NULL,
+    p_ids uuid[] DEFAULT NULL,
+    p_sort_field text DEFAULT 'name',
+    p_sort_dir text DEFAULT 'asc',
+    p_offset int DEFAULT 0,
+    p_limit int DEFAULT 20
+)
+RETURNS TABLE (
+    id uuid,
+    name text,
+    code text,
+    material_type text,
+    dimension text,
+    quantity numeric,
+    description text,
+    attachments jsonb,
+    status text,
+    minimum_stock numeric,
+    reorder_quantity numeric,
+    material_category_id uuid,
+    created_at timestamptz,
+    updated_at timestamptz,
+    latest_purchase_date date,
+    oldest_purchase_date date,
+    total_count bigint
+)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_order text;
+BEGIN
+    v_order := CASE p_sort_field || ':' || p_sort_dir
+        WHEN 'name:asc' THEN 'm.name ASC'
+        WHEN 'name:desc' THEN 'm.name DESC'
+        WHEN 'code:asc' THEN 'm.code ASC NULLS LAST'
+        WHEN 'code:desc' THEN 'm.code DESC NULLS LAST'
+        WHEN 'stock:asc' THEN 'm.quantity ASC'
+        WHEN 'stock:desc' THEN 'm.quantity DESC'
+        WHEN 'restock:asc' THEN '(m.quantity - m.minimum_stock) ASC'
+        WHEN 'restock:desc' THEN '(m.quantity - m.minimum_stock) DESC'
+        WHEN 'latest_purchase:asc' THEN 'pdate.latest_date ASC NULLS LAST'
+        WHEN 'latest_purchase:desc' THEN 'pdate.latest_date DESC NULLS LAST'
+        WHEN 'oldest_purchase:asc' THEN 'pdate.oldest_date ASC NULLS LAST'
+        WHEN 'oldest_purchase:desc' THEN 'pdate.oldest_date DESC NULLS LAST'
+        ELSE 'm.name ASC'
+    END;
+
+    RETURN QUERY EXECUTE format($f$
+        SELECT m.id, m.name, m.code, m.material_type, m.dimension, m.quantity,
+               m.description, m.attachments, m.status, m.minimum_stock, m.reorder_quantity,
+               m.material_category_id, m.created_at, m.updated_at,
+               pdate.latest_date, pdate.oldest_date,
+               count(*) OVER() AS total_count
+        FROM material m
+        LEFT JOIN (
+            SELECT pd.material_id, MAX(ph.order_date) AS latest_date, MIN(ph.order_date) AS oldest_date
+            FROM purchase_detail pd
+            JOIN purchase_header ph ON ph.id = pd.header_id
+            GROUP BY pd.material_id
+        ) pdate ON pdate.material_id = m.id
+        WHERE ($1 IS NULL OR m.name ILIKE '%%' || $1 || '%%' OR m.code ILIKE '%%' || $1 || '%%')
+          AND ($2 IS NULL OR m.id = ANY($2))
+        ORDER BY %s, m.created_at ASC
+        OFFSET $3 LIMIT $4
+    $f$, v_order)
+    USING p_search, p_ids, p_offset, p_limit;
+END;
+$$;
+
+-- Product-module sibling of get_materials_page(): paginated + sortable +
+-- filterable product catalog for ProductView.tsx. No restock-urgency sort
+-- (Product has no minimum_stock/reorder_quantity columns) — latest/oldest
+-- sale date is the product-module equivalent of Material's purchase-date
+-- sort, aggregated from sales_detail/sales_header instead of
+-- purchase_detail/purchase_header.
+CREATE OR REPLACE FUNCTION get_products_page(
+    p_search text DEFAULT NULL,
+    p_ids uuid[] DEFAULT NULL,
+    p_sort_field text DEFAULT 'name',
+    p_sort_dir text DEFAULT 'asc',
+    p_offset int DEFAULT 0,
+    p_limit int DEFAULT 20
+)
+RETURNS TABLE (
+    id uuid,
+    name text,
+    code text,
+    dimension text,
+    quantity numeric,
+    description text,
+    attachments jsonb,
+    status text,
+    selling_price numeric,
+    product_category_id uuid,
+    created_at timestamptz,
+    updated_at timestamptz,
+    latest_sale_date date,
+    oldest_sale_date date,
+    total_count bigint
+)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_order text;
+BEGIN
+    v_order := CASE p_sort_field || ':' || p_sort_dir
+        WHEN 'name:asc' THEN 'p.name ASC'
+        WHEN 'name:desc' THEN 'p.name DESC'
+        WHEN 'code:asc' THEN 'p.code ASC NULLS LAST'
+        WHEN 'code:desc' THEN 'p.code DESC NULLS LAST'
+        WHEN 'stock:asc' THEN 'p.quantity ASC'
+        WHEN 'stock:desc' THEN 'p.quantity DESC'
+        WHEN 'latest_sale:asc' THEN 'sdate.latest_date ASC NULLS LAST'
+        WHEN 'latest_sale:desc' THEN 'sdate.latest_date DESC NULLS LAST'
+        WHEN 'oldest_sale:asc' THEN 'sdate.oldest_date ASC NULLS LAST'
+        WHEN 'oldest_sale:desc' THEN 'sdate.oldest_date DESC NULLS LAST'
+        ELSE 'p.name ASC'
+    END;
+
+    RETURN QUERY EXECUTE format($f$
+        SELECT p.id, p.name, p.code, p.dimension, p.quantity,
+               p.description, p.attachments, p.status, p.selling_price,
+               p.product_category_id, p.created_at, p.updated_at,
+               sdate.latest_date, sdate.oldest_date,
+               count(*) OVER() AS total_count
+        FROM product p
+        LEFT JOIN (
+            SELECT sd.product_id, MAX(sh.order_date) AS latest_date, MIN(sh.order_date) AS oldest_date
+            FROM sales_detail sd
+            JOIN sales_header sh ON sh.id = sd.header_id
+            GROUP BY sd.product_id
+        ) sdate ON sdate.product_id = p.id
+        WHERE ($1 IS NULL OR p.name ILIKE '%%' || $1 || '%%' OR p.code ILIKE '%%' || $1 || '%%')
+          AND ($2 IS NULL OR p.id = ANY($2))
+        ORDER BY %s, p.created_at ASC
+        OFFSET $3 LIMIT $4
+    $f$, v_order)
+    USING p_search, p_ids, p_offset, p_limit;
+END;
+$$;

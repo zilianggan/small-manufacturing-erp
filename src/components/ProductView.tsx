@@ -3,18 +3,32 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
-  getProducts, saveProduct, deleteProduct, generateId, getProductCategories, getProductById
+  getProducts, getProductsPage, saveProduct, deleteProduct, generateId, getProductCategories, getProductById,
+  ProductSortField, SortDir
 } from '../services/ProductService';
 import { Product, ProductCategory, Attachment } from '../types';
-import { Plus, Paperclip, Edit, Trash2, ChevronRight, FileText, Tag } from 'lucide-react';
+import { Plus, Paperclip, Edit, Trash2, ChevronRight, FileText, Tag, Filter, CalendarClock } from 'lucide-react';
 import LoadingSpinner from './LoadingSpinner';
 import ProductFormFields from './ProductFormFields';
 import ProductDetailView from './ProductDetailView';
+import FilterDialog from './FilterDialog';
+import SortMenu, { SortOption } from './SortMenu';
+import InfiniteScrollSentinel from './InfiniteScrollSentinel';
 import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, SearchInput, useToast, useConfirm } from './ui';
 import { CallAPI } from './UIHelper';
 import { debounce } from 'lodash'
+
+const PAGE_SIZE = 20;
+
+const SORT_OPTIONS: SortOption[] = [
+  { value: 'name', label: 'Name' },
+  { value: 'code', label: 'Code' },
+  { value: 'stock', label: 'Stock Qty' },
+  { value: 'latestSale', label: 'Latest Sale Date' },
+  { value: 'oldestSale', label: 'Oldest Sale Date' },
+];
 
 interface ProductViewProps {
   // Cross-tab drill-in: passed through to ProductDetailView's order history
@@ -39,29 +53,86 @@ export default function ProductView({ onViewSalesOrder, initialProductId, onInit
   const [searchQuery, setSearchQuery] = useState('');
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
+  const [offset, setOffset] = useState(0);
 
-  const loadProducts = (search: string = '') => {
-    setLoading(true);
-    CallAPI(() => getProducts(search), {
-      onCompleted: (data) => { setProducts(data); setLoading(false); },
-      onError: (err) => { console.error(err); setLoading(false); },
-    });
-  };
+  // ─── Filter dialog: search by name/code keyword, tick multiple products ──
+  const [appliedProductIds, setAppliedProductIds] = useState<string[]>([]);
+  const [showFilterDialog, setShowFilterDialog] = useState(false);
+  const [filterDraftIds, setFilterDraftIds] = useState<string[]>([]);
+  const [filterSearchQuery, setFilterSearchQuery] = useState('');
+  const [filterOptions, setFilterOptions] = useState<Product[]>([]);
+  const [filterOptionsLoading, setFilterOptionsLoading] = useState(false);
+
+  // ─── Sort ─────────────────────────────────────────────────────────────
+  const [sortField, setSortField] = useState<ProductSortField>('name');
+  const [sortDir, setSortDir] = useState<SortDir>('asc');
+
+  const loadProducts = useCallback((nextOffset: number, append: boolean, search: string) => {
+    const setBusy = append ? setLoadingMore : setLoading;
+    setBusy(true);
+
+    CallAPI(
+      () => getProductsPage({ search, productIds: appliedProductIds, sortField, sortDir, offset: nextOffset, limit: PAGE_SIZE }),
+      {
+        onCompleted: ({ rows, hasMore: more }) => {
+          setProducts(prev => (append ? [...prev, ...rows] : rows));
+          setHasMore(more);
+          setOffset(nextOffset + rows.length);
+          setBusy(false);
+        },
+        onError: (err) => { console.error(err); setBusy(false); },
+      }
+    );
+  }, [appliedProductIds, sortField, sortDir]);
+
+  useEffect(() => { loadProducts(0, false, searchQuery); }, []);
+
+  // Filters or sort changing both restart from page 1
+  useEffect(() => {
+    loadProducts(0, false, searchQuery);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appliedProductIds, sortField, sortDir]);
 
   const search = useMemo(
     () =>
       debounce((text: string) => {
-        loadProducts(text);
+        loadProducts(0, false, text);
       }, 500),
+    [loadProducts]
+  );
+
+  const handleLoadMore = () => {
+    if (loadingMore || !hasMore) return;
+    loadProducts(offset, true, searchQuery);
+  };
+
+  const loadFilterOptions = useMemo(
+    () =>
+      debounce((query: string) => {
+        setFilterOptionsLoading(true);
+        CallAPI(() => getProducts(query), {
+          onCompleted: (data) => { setFilterOptions(data); setFilterOptionsLoading(false); },
+          onError: (err) => { console.error(err); setFilterOptionsLoading(false); },
+        });
+      }, 300),
     []
   );
 
-  // Debounced search-as-you-type
-  useEffect(() => {
-    const t = setTimeout(() => loadProducts(searchQuery), 300);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchQuery]);
+  const openFilterDialog = () => {
+    setFilterDraftIds(appliedProductIds);
+    setFilterSearchQuery('');
+    setFilterOptions([]);
+    setShowFilterDialog(true);
+    loadFilterOptions('');
+  };
+
+  const toggleFilterDraftId = (id: string) => {
+    setFilterDraftIds(prev => (prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]));
+  };
+
+  const hasActiveFilters = appliedProductIds.length > 0;
 
   // ─── Product categories (reference data for the form) ───────────────────
   const [productCategories, setProductCategories] = useState<ProductCategory[]>([]);
@@ -149,7 +220,7 @@ export default function ProductView({ onViewSalesOrder, initialProductId, onInit
     };
 
     await CallAPI(() => saveProduct(record), {
-      onCompleted: () => { loadProducts(); toast.success(editProductId ? 'Product updated.' : 'Product added.'); },
+      onCompleted: () => { loadProducts(0, false, searchQuery); toast.success(editProductId ? 'Product updated.' : 'Product added.'); },
       onError: (err) => { console.error(err); toast.error('Failed to save product.'); },
     });
 
@@ -161,7 +232,7 @@ export default function ProductView({ onViewSalesOrder, initialProductId, onInit
     if (!(await confirm(`Delete ${item.name}? This cannot be undone.`))) return;
 
     await CallAPI(() => deleteProduct(item.id), {
-      onCompleted: () => { loadProducts(); toast.success(`${item.name} deleted.`); },
+      onCompleted: () => { loadProducts(0, false, searchQuery); toast.success(`${item.name} deleted.`); },
       onError: (err) => { console.error(err); toast.error('Failed to delete product.'); },
     });
   };
@@ -171,9 +242,9 @@ export default function ProductView({ onViewSalesOrder, initialProductId, onInit
     return (
       <ProductDetailView
         product={selectedProduct}
-        onBack={() => { setSelectedProduct(null); loadProducts(); }}
+        onBack={() => { setSelectedProduct(null); loadProducts(0, false, searchQuery); }}
         onProductUpdated={(updated) => setSelectedProduct(updated)}
-        onProductDeleted={() => { setSelectedProduct(null); loadProducts(); }}
+        onProductDeleted={() => { setSelectedProduct(null); loadProducts(0, false, searchQuery); }}
         onViewSalesOrder={(salesHeaderId) => onViewSalesOrder?.(salesHeaderId, selectedProduct.id)}
       />
     );
@@ -200,6 +271,15 @@ export default function ProductView({ onViewSalesOrder, initialProductId, onInit
             className="relative flex-1 sm:w-64"
           />
           <button
+            onClick={openFilterDialog}
+            className={`relative flex items-center space-x-1.5 px-3 py-2 border rounded-lg text-xs font-medium transition-colors ${hasActiveFilters ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-600'}`}
+          >
+            <Filter className="w-3.5 h-3.5" />
+            <span>Filter</span>
+            {hasActiveFilters && <span className="absolute -top-1 -right-1 w-2 h-2 bg-blue-600 rounded-full" />}
+          </button>
+          <SortMenu options={SORT_OPTIONS} sortField={sortField} sortDir={sortDir} onChange={(f, d) => { setSortField(f as ProductSortField); setSortDir(d); }} />
+          <button
             onClick={openAddProduct}
             className="flex items-center space-x-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium transition-colors font-sans shadow-sm"
           >
@@ -208,6 +288,27 @@ export default function ProductView({ onViewSalesOrder, initialProductId, onInit
           </button>
         </div>
       </div>
+
+      {/* Filter dialog */}
+      <FilterDialog
+        open={showFilterDialog}
+        onClose={() => setShowFilterDialog(false)}
+        title="Filter Products"
+        sections={[{
+          type: 'checklist',
+          key: 'products',
+          label: 'Products',
+          searchPlaceholder: 'Search by name or code...',
+          searchQuery: filterSearchQuery,
+          onSearchChange: (q) => { setFilterSearchQuery(q); loadFilterOptions(q); },
+          items: filterOptions.map(p => ({ id: p.id, label: p.name, sublabel: p.code })),
+          loading: filterOptionsLoading,
+          selectedIds: filterDraftIds,
+          onToggle: toggleFilterDraftId,
+        }]}
+        onApply={() => setAppliedProductIds(filterDraftIds)}
+        onClear={() => { setFilterDraftIds([]); setAppliedProductIds([]); }}
+      />
 
       {/* Creation/Edit form as Dialog Modal */}
       <Dialog
@@ -246,6 +347,7 @@ export default function ProductView({ onViewSalesOrder, initialProductId, onInit
               key={product.id}
               product={product}
               categoryName={product.productCategoryId ? productCategoryMap.get(product.productCategoryId) : undefined}
+              sortField={sortField}
               onOpen={() => setSelectedProduct(product)}
               onEdit={() => openEditProduct(product)}
               onDelete={() => handleDeleteProduct(product)}
@@ -253,6 +355,7 @@ export default function ProductView({ onViewSalesOrder, initialProductId, onInit
           ))
         )}
       </div>
+      <InfiniteScrollSentinel onLoadMore={handleLoadMore} hasMore={hasMore} loading={loadingMore} />
 
     </div>
   );
@@ -260,14 +363,21 @@ export default function ProductView({ onViewSalesOrder, initialProductId, onInit
 
 // Product summary card used in the catalog grid
 function ProductCard({
-  product, categoryName, onOpen, onEdit, onDelete
+  product, categoryName, sortField, onOpen, onEdit, onDelete
 }: {
   product: Product;
   categoryName?: string;
+  sortField?: ProductSortField;
   onOpen: () => void;
   onEdit: () => void;
   onDelete: () => void;
 }) {
+  const saleDateLabel = sortField === 'latestSale'
+    ? { label: 'Last sold:', date: product.latestSaleDate }
+    : sortField === 'oldestSale'
+      ? { label: 'First sold:', date: product.oldestSaleDate }
+      : null;
+
   return (
     <Card className="group p-5 hover:shadow-md transition-shadow flex flex-col justify-between space-y-4 cursor-pointer">
       <div className="space-y-2.5" onClick={onOpen}>
@@ -303,6 +413,19 @@ function ProductCard({
             <span className="text-slate-400 shrink-0">Selling Price:</span>
             <span>{product.sellingPrice.toFixed(2)}</span>
           </div>
+          {product.quantity != null && (
+            <div className="flex items-center space-x-2">
+              <span className="text-slate-400 shrink-0">Stock:</span>
+              <span>{product.quantity}</span>
+            </div>
+          )}
+          {saleDateLabel && (
+            <div className="flex items-center space-x-2">
+              <CalendarClock className="w-3.5 h-3.5 shrink-0 text-slate-400" />
+              <span className="text-slate-400 shrink-0">{saleDateLabel.label}</span>
+              <span>{saleDateLabel.date || '—'}</span>
+            </div>
+          )}
           {product.description && (
             <div className="flex items-start space-x-2">
               <FileText className="w-3.5 h-3.5 shrink-0 text-slate-400 mt-0.5" />
