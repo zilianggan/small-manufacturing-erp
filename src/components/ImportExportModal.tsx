@@ -5,6 +5,7 @@
 
 import React, { useRef, useState } from 'react';
 import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import {
   UploadCloud, CheckCircle2, AlertTriangle, Download, Clipboard, Info,
   Database, ArrowRight, FileSpreadsheet, Layers, Users, ShoppingBag, Briefcase, Package,
@@ -16,7 +17,7 @@ import {
   validatePurchaseImport, commitPurchaseImport, PurchaseImportPreview, PurchaseImportRow,
   validateSalesImport, commitSalesImport, SalesImportPreview, SalesImportRow,
   getVendorExportRows, getClientExportRows, getMaterialExportRows, getProductExportRows,
-  getPurchaseExportSheets, getSalesExportSheets,
+  getPurchaseExportSheets, getSalesExportSheets, getAllExportSheets,
 } from '../services/ImportExportService';
 import { useToast } from './ui';
 
@@ -69,48 +70,103 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
   const dateStamp = new Date().toISOString().split('T')[0];
   const activeCategoryLabel = CATEGORY_LIST.find(c => c.id === activeCategory)?.label || '';
 
-  const appendRowsSheet = (wb: XLSX.WorkBook, sheetName: string, rows: Record<string, unknown>[]) => {
+  // Attachments are a base64 dataUrl stored on the record. Images get embedded
+  // directly into the "attachment" cell (exceljs supports real image
+  // anchoring, unlike xlsx/SheetJS which is read-only for images); anything
+  // else (PDF, docs, ...) falls back to a hyperlink on the filename text.
+  const IMAGE_EXT: Record<string, ExcelJS.Image['extension']> = { png: 'png', jpg: 'jpeg', jpeg: 'jpeg', gif: 'gif' };
+
+  const appendRowsSheet = (wb: ExcelJS.Workbook, sheetName: string, rows: Record<string, unknown>[], attachmentLinks?: (string | undefined)[]) => {
     const data = rows.length > 0 ? rows : [{ Notice: 'No records found' }];
-    const ws = XLSX.utils.json_to_sheet(data);
-    XLSX.utils.book_append_sheet(wb, ws, sheetName);
+    const columns = Object.keys(data[0]);
+    const ws = wb.addWorksheet(sheetName);
+    ws.columns = columns.map(key => ({ header: key, key, width: key === 'attachment' ? 14 : undefined }));
+    ws.addRows(data);
+
+    if (attachmentLinks && rows.length > 0) {
+      const colIndex = columns.indexOf('attachment');
+      if (colIndex !== -1) {
+        attachmentLinks.forEach((dataUrl, rowIndex) => {
+          if (!dataUrl) return;
+          const sheetRow = rowIndex + 2; // +1 for header row, +1 for 1-based indexing
+          const match = /^data:image\/(png|jpe?g|gif);base64,/i.exec(dataUrl);
+          const ext = match ? IMAGE_EXT[match[1].toLowerCase()] : undefined;
+          if (ext) {
+            const imageId = wb.addImage({ base64: dataUrl, extension: ext });
+            ws.addImage(imageId, { tl: { col: colIndex, row: sheetRow - 1 }, ext: { width: 60, height: 60 } });
+            ws.getRow(sheetRow).height = 46;
+          } else {
+            const cell = ws.getCell(sheetRow, colIndex + 1);
+            cell.value = { text: String(cell.value ?? ''), hyperlink: dataUrl, tooltip: 'Open attachment' };
+          }
+        });
+      }
+    }
+  };
+
+  const downloadWorkbook = async (wb: ExcelJS.Workbook, fileName: string) => {
+    const buffer = await wb.xlsx.writeBuffer();
+    const url = URL.createObjectURL(new Blob([buffer], { type: 'application/octet-stream' }));
+    const a = document.createElement('a');
+    a.href = url; a.download = fileName; a.click();
+    URL.revokeObjectURL(url);
   };
 
   const handleExport = async (category: Category) => {
-    const wb = XLSX.utils.book_new();
+    const wb = new ExcelJS.Workbook();
     const fileName = `ERP_${category}_${dateStamp}.xlsx`;
     let exportedCount = 0;
 
     if (category === 'VENDORS') {
-      const rows = await getVendorExportRows();
-      appendRowsSheet(wb, 'Vendors', rows);
+      const { rows, attachmentLinks } = await getVendorExportRows();
+      appendRowsSheet(wb, 'Vendors', rows, attachmentLinks);
       exportedCount = rows.length;
     } else if (category === 'CLIENTS') {
-      const rows = await getClientExportRows();
-      appendRowsSheet(wb, 'Clients', rows);
+      const { rows, attachmentLinks } = await getClientExportRows();
+      appendRowsSheet(wb, 'Clients', rows, attachmentLinks);
       exportedCount = rows.length;
     } else if (category === 'MATERIAL') {
-      const rows = await getMaterialExportRows();
-      appendRowsSheet(wb, 'Material', rows);
+      const { rows, attachmentLinks } = await getMaterialExportRows();
+      appendRowsSheet(wb, 'Material', rows, attachmentLinks);
       exportedCount = rows.length;
     } else if (category === 'PRODUCT') {
-      const rows = await getProductExportRows();
-      appendRowsSheet(wb, 'Product', rows);
+      const { rows, attachmentLinks } = await getProductExportRows();
+      appendRowsSheet(wb, 'Product', rows, attachmentLinks);
       exportedCount = rows.length;
     } else if (category === 'PURCHASE') {
-      const { headerRows, itemRows } = await getPurchaseExportSheets();
+      const { headerRows, itemRows, attachmentLinks } = await getPurchaseExportSheets();
       appendRowsSheet(wb, 'Purchase_Items', itemRows);
-      appendRowsSheet(wb, 'Purchase_Orders', headerRows);
+      appendRowsSheet(wb, 'Purchase_Orders', headerRows, attachmentLinks);
       exportedCount = headerRows.length;
     } else {
-      const { headerRows, itemRows } = await getSalesExportSheets();
+      const { headerRows, itemRows, attachmentLinks } = await getSalesExportSheets();
       appendRowsSheet(wb, 'Sales_Items', itemRows);
-      appendRowsSheet(wb, 'Sales_Orders', headerRows);
+      appendRowsSheet(wb, 'Sales_Orders', headerRows, attachmentLinks);
       exportedCount = headerRows.length;
     }
 
-    XLSX.writeFile(wb, fileName);
+    await downloadWorkbook(wb, fileName);
     setStatus({ type: 'success', message: `Export file created: ${fileName}`, details: [`Exported ${exportedCount} record(s).`] });
     toast.success(`Exported ${exportedCount} record(s) to ${fileName}.`);
+  };
+
+  const handleExportAll = async () => {
+    const { sheets, attachmentLinksBySheet } = await getAllExportSheets();
+    const wb = new ExcelJS.Workbook();
+    Object.entries(sheets).forEach(([sheetName, rows]) => appendRowsSheet(wb, sheetName, rows, (attachmentLinksBySheet as Record<string, (string | undefined)[]>)[sheetName]));
+    const fileName = `ERP_Export_All_${dateStamp}.xlsx`;
+    await downloadWorkbook(wb, fileName);
+    const totalRows = Object.values(sheets).reduce((sum, rows) => sum + rows.length, 0);
+    setStatus({ type: 'success', message: `Export file created: ${fileName}`, details: [`Exported ${totalRows} record(s) across ${Object.keys(sheets).length} sheets.`] });
+    toast.success(`Exported all categories to ${fileName}.`);
+  };
+
+  const handleDownloadTemplate = (category: Category) => {
+    const ws = XLSX.utils.aoa_to_sheet([EXPECTED_COLUMNS[category].map(c => c.label)]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Template');
+    XLSX.writeFile(wb, `ERP_${category}_Template.xlsx`);
+    toast.success('Template downloaded.');
   };
 
   const getTemplateHeaders = (category: Category): string => {
@@ -396,7 +452,7 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
               <div className="flex items-center justify-between gap-3 mb-3">
                 <div>
                   <h4 className="font-bold text-slate-900 text-xs">Export Data</h4>
-                  <p className="text-[10px] text-slate-400">Download the current {activeCategoryLabel} as Excel.</p>
+                  <p className="text-[10px] text-slate-400">Download the current {activeCategoryLabel} as Excel (attachments, if any, are a link in the sheet).</p>
                 </div>
                 <Download className="w-4 h-4 text-blue-500 shrink-0" />
               </div>
@@ -407,6 +463,14 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
               >
                 <Download className="w-3.5 h-3.5" />
                 <span>Export {activeCategoryLabel}</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleExportAll}
+                className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2.5 border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 hover:border-blue-300 hover:bg-blue-50/50 transition-all"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Export All (6 categories)</span>
               </button>
             </div>
           </div>
@@ -546,17 +610,27 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
                         {getTemplateHeaders(activeCategory)}
                       </pre>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        navigator.clipboard.writeText(getTemplateHeaders(activeCategory));
-                        toast.success('Template copied to clipboard!');
-                      }}
-                      className="mt-3 w-full py-1.5 bg-slate-800 hover:bg-slate-700 hover:text-white rounded text-[10px] text-slate-300 font-sans font-medium transition-colors flex items-center justify-center space-x-1"
-                    >
-                      <Clipboard className="w-3 h-3" />
-                      <span>Copy Blueprint Template</span>
-                    </button>
+                    <div className="mt-3 flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard.writeText(getTemplateHeaders(activeCategory));
+                          toast.success('Template copied to clipboard!');
+                        }}
+                        className="flex-1 py-1.5 bg-slate-800 hover:bg-slate-700 hover:text-white rounded text-[10px] text-slate-300 font-sans font-medium transition-colors flex items-center justify-center space-x-1"
+                      >
+                        <Clipboard className="w-3 h-3" />
+                        <span>Copy Blueprint</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDownloadTemplate(activeCategory)}
+                        className="flex-1 py-1.5 bg-slate-800 hover:bg-slate-700 hover:text-white rounded text-[10px] text-slate-300 font-sans font-medium transition-colors flex items-center justify-center space-x-1"
+                      >
+                        <Download className="w-3 h-3" />
+                        <span>Download .xlsx</span>
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>

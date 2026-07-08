@@ -320,7 +320,6 @@ export const startProduction = async (header: SalesHeader): Promise<void> => {
         id: generateId(),
         transactionType: 'SALES',
         quantity: -material.plannedQuantity,
-        remark: header.salesNo,
         materialId: material.materialId,
         productionMaterialUsageId: material.id,
         transactionDate: today,
@@ -366,14 +365,45 @@ export const confirmProductionDone = async (
 ): Promise<void> => {
   const today = new Date().toISOString().split('T')[0];
 
+  // A leftover entry for a material that's already a planned reservation row
+  // on this sales line must merge into that row's returned_quantity instead
+  // of inserting a second row — otherwise the same material shows twice in
+  // the Materials Used list (one planned/actual row, one leftover-only row).
+  const usageKeyByUsageId = new Map<string, string>();
+  header.details.forEach(d => d.materials.forEach(m => {
+    usageKeyByUsageId.set(m.id, `${d.detailId}:${m.materialId}`);
+  }));
+  const plannedKeys = new Set(usageKeyByUsageId.values());
+  const matchedLeftoverByKey = new Map<string, number>();
+  const unmatchedLeftovers: LeftoverMaterialInput[] = [];
+  for (const l of leftovers) {
+    const key = `${l.salesDetailId}:${l.materialId}`;
+    if (plannedKeys.has(key)) {
+      matchedLeftoverByKey.set(key, (matchedLeftoverByKey.get(key) || 0) + l.quantity);
+    } else {
+      unmatchedLeftovers.push(l);
+    }
+  }
+
   for (const r of reconciliations) {
     const diff = r.plannedQuantity - r.actualQuantity;
+    const leftoverQty = matchedLeftoverByKey.get(usageKeyByUsageId.get(r.usageId) || '') || 0;
+
     if (diff !== 0) {
       await saveInventoryTransaction({
         id: generateId(),
-        transactionType: diff > 0 ? 'SALES_RETURN' : 'SALES',
+        transactionType: diff > 0 ? 'ADJUSTMENT' : 'SALES',
         quantity: diff,
-        remark: header.salesNo,
+        materialId: r.materialId,
+        productionMaterialUsageId: r.usageId,
+        transactionDate: today,
+      });
+    }
+    if (leftoverQty > 0) {
+      await saveInventoryTransaction({
+        id: generateId(),
+        transactionType: 'ADJUSTMENT',
+        quantity: leftoverQty,
         materialId: r.materialId,
         productionMaterialUsageId: r.usageId,
         transactionDate: today,
@@ -382,7 +412,7 @@ export const confirmProductionDone = async (
 
     const { error } = await supabase
       .from('production_material_usage')
-      .update({ actual_quantity: r.actualQuantity, returned_quantity: Math.max(0, diff) })
+      .update({ actual_quantity: r.actualQuantity, returned_quantity: Math.max(0, diff) + leftoverQty })
       .eq('id', r.usageId);
     if (error) {
       console.error('confirmProductionDone(reconciliation)', error);
@@ -390,7 +420,9 @@ export const confirmProductionDone = async (
     }
   }
 
-  for (const l of leftovers) {
+  // Leftovers for a material with no existing reservation row on this sales
+  // line (a genuine unplanned by-product) still need their own row.
+  for (const l of unmatchedLeftovers) {
     const { data: inserted, error: insertError } = await supabase
       .from('production_material_usage')
       .insert({
@@ -410,9 +442,8 @@ export const confirmProductionDone = async (
 
     await saveInventoryTransaction({
       id: generateId(),
-      transactionType: 'SALES_RETURN',
+      transactionType: 'ADJUSTMENT',
       quantity: l.quantity,
-      remark: header.salesNo,
       materialId: l.materialId,
       productionMaterialUsageId: inserted.id,
       transactionDate: today,
@@ -421,12 +452,30 @@ export const confirmProductionDone = async (
 
   for (const p of extraProduced) {
     if (p.quantity <= 0) continue;
+    // Synthetic usage row (material_id left null) so the ADJUSTMENT below
+    // can join back to the sales order, same pattern as the leftover loop.
+    const { data: inserted, error: insertError } = await supabase
+      .from('production_material_usage')
+      .insert({
+        sales_detail_id: p.salesDetailId,
+        planned_quantity: 0,
+        actual_quantity: 0,
+        returned_quantity: 0,
+        remark: 'Extra produced beyond order',
+      })
+      .select('id')
+      .single();
+    if (insertError) {
+      console.error('confirmProductionDone(extraProduced)', insertError);
+      throw insertError;
+    }
+
     await saveInventoryTransaction({
       id: generateId(),
       transactionType: 'ADJUSTMENT',
       quantity: p.quantity,
-      remark: header.salesNo,
       productId: p.productId,
+      productionMaterialUsageId: inserted.id,
       transactionDate: today,
     });
   }
@@ -469,7 +518,6 @@ export const cancelSalesOrder = async (header: SalesHeader): Promise<void> => {
           id: generateId(),
           transactionType: 'SALES_RETURN',
           quantity: material.plannedQuantity,
-          remark: header.salesNo,
           materialId: material.materialId,
           productionMaterialUsageId: material.id,
           transactionDate: today,

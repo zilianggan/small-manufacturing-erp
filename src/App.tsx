@@ -60,18 +60,24 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<TabType>('DASHBOARD');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  // Cross-tab drill-in: ProductDetailView.tsx's/MaterialDetailView.tsx's inventory
-  // list links jump here — switch tabs and tell the destination view which header
-  // to open, since these are separate top-level tabs with no shared router. The
-  // "return to" origin is remembered so the detail page's Back button can restore
-  // the originating Product/Material detail page instead of just showing that
-  // tab's list. A material row can link to a sales order too (production
-  // consumption against that sale), hence the two possible origins here.
+  // Cross-tab drill-in: ProductDetailView.tsx's/MaterialDetailView.tsx's/
+  // InventoryView.tsx's inventory list links jump here — switch tabs and tell
+  // the destination view which header to open, since these are separate
+  // top-level tabs with no shared router. The "return to" origin is
+  // remembered so the detail page's Back button can restore the originating
+  // Product/Material detail page (or the Inventory tab) instead of just
+  // showing that tab's list. A material row can link to a sales order too
+  // (production consumption against that sale), hence the multiple origins.
   const [pendingSalesOrderId, setPendingSalesOrderId] = useState<string | null>(null);
-  const [salesOrderReturnTo, setSalesOrderReturnTo] = useState<{ type: 'PRODUCT' | 'MATERIAL'; id: string } | null>(null);
-  const navigateToSalesOrder = (salesHeaderId: string, fromProductId?: string, fromMaterialId?: string) => {
+  const [salesOrderReturnTo, setSalesOrderReturnTo] = useState<{ type: 'PRODUCT' | 'MATERIAL' | 'INVENTORY'; id: string } | null>(null);
+  const navigateToSalesOrder = (salesHeaderId: string, fromProductId?: string, fromMaterialId?: string, fromInventory?: boolean) => {
     setPendingSalesOrderId(salesHeaderId);
-    setSalesOrderReturnTo(fromMaterialId ? { type: 'MATERIAL', id: fromMaterialId } : fromProductId ? { type: 'PRODUCT', id: fromProductId } : null);
+    setSalesOrderReturnTo(
+      fromMaterialId ? { type: 'MATERIAL', id: fromMaterialId }
+        : fromProductId ? { type: 'PRODUCT', id: fromProductId }
+          : fromInventory ? { type: 'INVENTORY', id: '' }
+            : null
+    );
     setActiveTab('ORDERS');
   };
   const [pendingProductId, setPendingProductId] = useState<string | null>(null);
@@ -84,23 +90,27 @@ export default function App() {
     } else if (returnTo?.type === 'MATERIAL') {
       setPendingMaterialId(returnTo.id);
       setActiveTab('MATERIAL');
+    } else if (returnTo?.type === 'INVENTORY') {
+      setActiveTab('INVENTORY');
     }
   };
 
   const [pendingPurchaseId, setPendingPurchaseId] = useState<string | null>(null);
-  const [purchaseReturnToMaterialId, setPurchaseReturnToMaterialId] = useState<string | null>(null);
-  const navigateToPurchaseOrder = (purchaseHeaderId: string, fromMaterialId?: string) => {
+  const [purchaseReturnTo, setPurchaseReturnTo] = useState<{ type: 'MATERIAL' | 'INVENTORY'; id: string } | null>(null);
+  const navigateToPurchaseOrder = (purchaseHeaderId: string, fromMaterialId?: string, fromInventory?: boolean) => {
     setPendingPurchaseId(purchaseHeaderId);
-    setPurchaseReturnToMaterialId(fromMaterialId || null);
+    setPurchaseReturnTo(fromMaterialId ? { type: 'MATERIAL', id: fromMaterialId } : fromInventory ? { type: 'INVENTORY', id: '' } : null);
     setActiveTab('PURCHASES');
   };
   const [pendingMaterialId, setPendingMaterialId] = useState<string | null>(null);
   const returnFromPurchaseOrder = () => {
-    const materialId = purchaseReturnToMaterialId;
-    setPurchaseReturnToMaterialId(null);
-    if (materialId) {
-      setPendingMaterialId(materialId);
+    const returnTo = purchaseReturnTo;
+    setPurchaseReturnTo(null);
+    if (returnTo?.type === 'MATERIAL') {
+      setPendingMaterialId(returnTo.id);
       setActiveTab('MATERIAL');
+    } else if (returnTo?.type === 'INVENTORY') {
+      setActiveTab('INVENTORY');
     }
   };
 
@@ -523,7 +533,13 @@ export default function App() {
         {/* Render Active Tab View */}
         <div className="p-6 flex-1 min-h-0 min-w-0 overflow-y-auto overscroll-contain">
           {activeTab === 'DASHBOARD' && <DashboardView key={refreshKey} />}
-          {activeTab === 'INVENTORY' && <InventoryView key={refreshKey} />}
+          {activeTab === 'INVENTORY' && (
+            <InventoryView
+              key={refreshKey}
+              onViewPurchaseOrder={(purchaseHeaderId) => navigateToPurchaseOrder(purchaseHeaderId, undefined, true)}
+              onViewSalesOrder={(salesHeaderId) => navigateToSalesOrder(salesHeaderId, undefined, undefined, true)}
+            />
+          )}
           {activeTab === 'MATERIAL' && (
             <MaterialView
               key={refreshKey}
@@ -557,6 +573,7 @@ export default function App() {
               key={refreshKey}
               initialPurchaseId={pendingPurchaseId}
               onInitialPurchaseHandled={() => setPendingPurchaseId(null)}
+              initialPurchaseOrigin={purchaseReturnTo?.type}
               onReturnToOrigin={returnFromPurchaseOrder}
             />
           )}

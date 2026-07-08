@@ -10,7 +10,7 @@ import {
 import { getMaterials } from '../services/MaterialService';
 import { getProducts } from '../services/ProductService';
 import { InventoryTransaction, InventoryTransactionType, Material, Product } from '../types';
-import { Plus, Calendar, Filter } from 'lucide-react';
+import { Plus, Calendar, Filter, ChevronRight } from 'lucide-react';
 import LoadingSpinner from './LoadingSpinner';
 import ComboBox from './ComboBox';
 import SegmentedControl from './SegmentedControl';
@@ -41,7 +41,16 @@ const TYPE_BADGE_CLASSNAME: Record<InventoryTransactionType, string> = {
 
 const today = (): string => new Date().toISOString().split('T')[0];
 
-export default function InventoryView() {
+interface InventoryViewProps {
+  // Cross-tab drill-in: opens the linked purchase/sales order in its own tab,
+  // same mechanism as MaterialDetailView.tsx/ProductDetailView.tsx's inventory
+  // list links (App.tsx passes a pending header id since these are separate
+  // top-level tabs with no shared router).
+  onViewPurchaseOrder?: (purchaseHeaderId: string) => void;
+  onViewSalesOrder?: (salesHeaderId: string) => void;
+}
+
+export default function InventoryView({ onViewPurchaseOrder, onViewSalesOrder }: InventoryViewProps = {}) {
   // ─── Ledger list ──────────────────────────────────────────────────────────
   const [searchQuery, setSearchQuery] = useState('');
   const [transactions, setTransactions] = useState<InventoryTransaction[]>([]);
@@ -486,6 +495,7 @@ export default function InventoryView() {
               <tr className="bg-slate-50/75 border-b border-slate-200 text-slate-500 uppercase font-mono tracking-wider dark:bg-slate-800/80 dark:border-slate-700 dark:text-slate-400">
                 <SortableTh label="Date" sortKey="date" activeKey={sortField} dir={sortDir} onClick={toggleSort} thClassName="p-4" />
                 <SortableTh label="Type" sortKey="type" activeKey={sortField} dir={sortDir} onClick={toggleSort} thClassName="p-4" />
+                <th className="p-4">Ref No.</th>
                 <th className="p-4">Item</th>
                 <SortableTh label="Quantity" sortKey="quantity" activeKey={sortField} dir={sortDir} onClick={toggleSort} thClassName="p-4" align="right" />
                 <SortableTh label="Unit Cost" sortKey="unitCost" activeKey={sortField} dir={sortDir} onClick={toggleSort} thClassName="p-4" align="right" />
@@ -495,7 +505,7 @@ export default function InventoryView() {
             <tbody className="divide-y divide-slate-100 text-slate-700">
               {transactions.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="text-center py-12 text-xs text-slate-400 font-sans">
+                  <td colSpan={7} className="text-center py-12 text-xs text-slate-400 font-sans">
                     No inventory transactions match your filters or search.
                   </td>
                 </tr>
@@ -512,6 +522,29 @@ export default function InventoryView() {
                       <span className={`px-2 py-0.5 rounded-full font-mono text-[10px] font-medium border ${TYPE_BADGE_CLASSNAME[tx.transactionType]}`}>
                         {TRANSACTION_TYPES.find(t => t.value === tx.transactionType)?.label ?? tx.transactionType}
                       </span>
+                    </td>
+                    <td className="p-4 font-mono">
+                      {tx.purchaseHeaderId && onViewPurchaseOrder ? (
+                        <button
+                          onClick={() => onViewPurchaseOrder(tx.purchaseHeaderId!)}
+                          className="inline-flex items-center gap-0.5 text-blue-600 hover:text-blue-800 hover:underline"
+                          title="Go to purchase order"
+                        >
+                          {tx.refNo}
+                          <ChevronRight className="w-3 h-3" />
+                        </button>
+                      ) : tx.salesHeaderId && onViewSalesOrder ? (
+                        <button
+                          onClick={() => onViewSalesOrder(tx.salesHeaderId!)}
+                          className="inline-flex items-center gap-0.5 text-blue-600 hover:text-blue-800 hover:underline"
+                          title="Go to sales order"
+                        >
+                          {tx.refNo}
+                          <ChevronRight className="w-3 h-3" />
+                        </button>
+                      ) : (
+                        <span className="text-slate-700">{tx.refNo || '—'}</span>
+                      )}
                     </td>
                     <td className="p-4">
                       <div className="space-y-0.5">

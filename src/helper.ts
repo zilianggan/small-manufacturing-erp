@@ -141,6 +141,22 @@ export const upsertRecord = async (lsKey: string, item: any): Promise<void> => {
     if (error) console.error(`upsertRecord(${tableName}) error:`, error);
 };
 
+const BATCH_SIZE = 500;
+
+// ponytail: fixed batch size, bump if a single import file regularly exceeds a few thousand rows
+export const upsertRecords = async (lsKey: string, items: any[]): Promise<void> => {
+    const tableName = LS_TO_TABLE[lsKey];
+    if (!tableName) return;
+    const serialiser = ROW_MAPPERS[lsKey];
+    if (!serialiser) return;
+    const rows = items.map(serialiser);
+    for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+        const batch = rows.slice(i, i + BATCH_SIZE);
+        const { error } = await supabase.from(tableName).upsert(batch);
+        if (error) console.error(`upsertRecords(${tableName}) error:`, error);
+    }
+};
+
 /**
  * Delete a SINGLE record from Supabase by id.
  */

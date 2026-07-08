@@ -15,7 +15,7 @@ import { CompanyProfile, JobPosition, MaterialCategory, ProductCategory } from '
 import {
   generateId,
 } from '../services/db';
-import { Card, Dialog, DialogCancelButton, DialogFooter, DialogSubmitButton, FormField, fieldInputClassName, useToast, useConfirm } from './ui';
+import { Card, Dialog, DialogCancelButton, DialogFooter, DialogSubmitButton, FormField, fieldInputClassName, useToast, useConfirm, ActionsMenu } from './ui';
 import { getJobPositions, getMaterialCategories, getProductCategories, loadSystemAdminData, saveJobPositions, saveMaterialCategories, saveProductCategories } from '../services/SystemAdminService';
 import { getCompanyProfile, saveCompanyProfile } from '../services/CompanyProfileService';
 import { CallAPI } from './UIHelper';
@@ -440,22 +440,10 @@ export default function SystemAdminView() {
 
                     {/* Actions */}
                     <div className="flex items-center justify-end gap-1.5">
-                      <button
-                        type="button"
-                        onClick={() => openEditDialog(record)}
-                        className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
-                        title="Edit"
-                      >
-                        <Edit className="w-4 h-4" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleDelete(record)}
-                        className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
-                        title="Delete"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      <ActionsMenu items={[
+                        { label: 'Edit', icon: <Edit className="w-3.5 h-3.5" />, onClick: () => openEditDialog(record) },
+                        { label: 'Delete', icon: <Trash2 className="w-3.5 h-3.5" />, onClick: () => handleDelete(record), danger: true },
+                      ]} />
                     </div>
                   </div>
                 ))}

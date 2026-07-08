@@ -56,7 +56,7 @@ export default function SalesOrderDetailView({
           : order.status === 'CANCELLED' ? 'bg-red-50 text-red-800 border-red-200'
             : 'bg-slate-50 text-slate-600 border-slate-200';
 
-  const statusLabel = order.status === 'ORDERED' ? 'Pending Delivery'
+  const statusLabel = order.status === 'ORDERED' ? 'Pending Production'
     : order.status === 'IN_PRODUCTION' ? 'In Production'
       : order.status === 'DONE_IN_PRODUCTION' ? 'Done in Production'
         : order.status;

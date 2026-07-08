@@ -14,19 +14,26 @@ import { getProducts } from "./ProductService";
 
 export const generateId = (): string => crypto.randomUUID();
 
-const mapTransactionRow = (row: any): InventoryTransaction => ({
-  id: row.id,
-  transactionType: row.transaction_type,
-  quantity: Number(row.quantity) || 0,
-  unitCost: row.unit_cost != null ? Number(row.unit_cost) : undefined,
-  remark: row.remark || undefined,
-  materialId: row.material_id || undefined,
-  materialName: row.material?.name,
-  productId: row.product_id || undefined,
-  productName: row.product?.name,
-  transactionDate: row.transaction_date?.slice(0, 10),
-  createdAt: row.created_at,
-});
+const mapTransactionRow = (row: any): InventoryTransaction => {
+  const purchaseHeader = row.purchase_detail?.purchase_header;
+  const salesHeader = row.production_material_usage?.sales_detail?.sales_header;
+  return {
+    id: row.id,
+    transactionType: row.transaction_type,
+    quantity: Number(row.quantity) || 0,
+    unitCost: row.unit_cost != null ? Number(row.unit_cost) : undefined,
+    remark: row.remark || undefined,
+    materialId: row.material_id || undefined,
+    materialName: row.material?.name,
+    productId: row.product_id || undefined,
+    productName: row.product?.name,
+    refNo: purchaseHeader?.purchase_no || salesHeader?.sales_no,
+    purchaseHeaderId: purchaseHeader?.id,
+    salesHeaderId: salesHeader?.id,
+    transactionDate: row.transaction_date?.slice(0, 10),
+    createdAt: row.created_at,
+  };
+};
 
 export type InventoryLedgerSortField = 'date' | 'type' | 'quantity' | 'unitCost';
 export type SortDir = 'asc' | 'desc';
@@ -52,7 +59,11 @@ export const getInventoryTransactions = async (params: {
 
   let query = supabase
     .from('inventory_transaction')
-    .select('*, material(name), product(name)', { count: 'exact' })
+    .select(`
+      *, material(name), product(name),
+      purchase_detail(purchase_header(id, purchase_no)),
+      production_material_usage(sales_detail(sales_header(id, sales_no)))
+    `, { count: 'exact' })
     .order(SORT_COLUMN[sortField], { ascending: sortDir === 'asc' })
     .order('created_at', { ascending: false });
 
@@ -112,22 +123,21 @@ export const saveInventoryTransaction = (tx: InventoryTransaction): Promise<void
 const mapMovementRow = (row: any): InventoryListItem => {
   const purchaseHeader = row.purchase_detail?.purchase_header;
   const salesHeader = row.production_material_usage?.sales_detail?.sales_header;
-  const isAdjustment = row.transaction_type === 'ADJUSTMENT';
   const quantity = Number(row.quantity) || 0;
   const unitCost = row.unit_cost != null ? Number(row.unit_cost) : undefined;
 
   return {
     id: row.id,
     transactionType: row.transaction_type,
-    refNo: isAdjustment ? undefined : (purchaseHeader?.purchase_no || salesHeader?.sales_no),
-    counterpartyName: isAdjustment ? undefined : (purchaseHeader?.vendors?.company_name || salesHeader?.clients?.company_name),
+    refNo: purchaseHeader?.purchase_no || salesHeader?.sales_no,
+    counterpartyName: purchaseHeader?.vendors?.company_name || salesHeader?.clients?.company_name,
     orderDate: row.transaction_date?.slice(0, 10),
     quantity,
     unitCost,
     totalPrice: unitCost != null ? Math.abs(quantity) * unitCost : undefined,
-    status: isAdjustment ? undefined : (purchaseHeader?.status || salesHeader?.status),
-    purchaseHeaderId: isAdjustment ? undefined : purchaseHeader?.id,
-    salesHeaderId: isAdjustment ? undefined : salesHeader?.id,
+    status: purchaseHeader?.status || salesHeader?.status,
+    purchaseHeaderId: purchaseHeader?.id,
+    salesHeaderId: salesHeader?.id,
   };
 };
 
@@ -135,9 +145,10 @@ const mapMovementRow = (row: any): InventoryListItem => {
 // "Inventory List": movements against one material/product, joined out to
 // whichever order header generated them (purchase_detail -> purchase_header
 // for PURCHASE/PURCHASE_RETURN, production_material_usage -> sales_detail ->
-// sales_header for SALES/SALES_RETURN). ADJUSTMENT rows have no order header
-// to join, so refNo/counterpartyName/status/*HeaderId stay unset for them.
-// excludeTypes lets callers drop the type they already source from the
+// sales_header for SALES/SALES_RETURN/ADJUSTMENT). ADJUSTMENT rows with no
+// production_material_usage link (standalone stock corrections) have no
+// order header to join, so refNo/counterpartyName/status/*HeaderId stay
+// unset for those. excludeTypes lets callers drop the type they already source from the
 // order-detail tables directly (richer/earlier data than the ledger alone).
 export const getInventoryMovements = async (
   filter: { materialId?: string; productId?: string },

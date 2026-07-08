@@ -275,7 +275,6 @@ export const receivePurchaseOrder = async (purchase: PurchaseHeader): Promise<vo
       transactionType: 'PURCHASE',
       quantity: detail.quantity,
       unitCost: detail.unitCost,
-      remark: purchase.purchaseNo,
       materialId: detail.materialId,
       purchaseDetailId: detail.detailId,
       transactionDate: today,

@@ -294,8 +294,6 @@ function CompanyCard({
   onEdit: () => void;
   onDelete: () => void;
 }) {
-  const AttachmentIcon = company.attachments?.[0] ? attachmentIcon(company.attachments[0].type) : Paperclip;
-
   return (
     <Card className="group p-5 hover:shadow-md transition-shadow flex flex-col justify-between space-y-4 cursor-pointer">
       <div className="space-y-2.5" onClick={onOpen}>
@@ -309,15 +307,15 @@ function CompanyCard({
 
         <div className="space-y-1.5 text-xs text-slate-500">
           {company.email && (
-            <div className="flex items-center space-x-2">
+            <div className="flex items-center space-x-2" >
               <Mail className="w-3.5 h-3.5 shrink-0 text-slate-400" />
-              <span className="truncate">{company.email}</span>
+              <span className="truncate link" onClick={(e) => { e.stopPropagation(); window.open(`https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(company.email)}`, "_blank") }}>{company.email}</span>
             </div>
           )}
           {company.officeNo && (
             <div className="flex items-center space-x-2">
               <Phone className="w-3.5 h-3.5 shrink-0 text-slate-400" />
-              <span>{company.officeNo}</span>
+              <span className='link' onClick={(e) => { e.stopPropagation(); window.open(`https://wa.me/${company.officeNo}`, "_blank") }}>{company.officeNo}</span>
             </div>
           )}
           {company.address && (
@@ -332,7 +330,7 @@ function CompanyCard({
               <span className="line-clamp-2">{company.description}</span>
             </div>
           )}
-          {company.attachments?.[0] && (
+          {/* {company.attachments?.[0] && (
             <div className="pt-1 flex items-center">
               <a
                 href={company.attachments[0].dataUrl}
@@ -345,7 +343,7 @@ function CompanyCard({
                 <span className="truncate max-w-[150px]">{company.attachments[0].name}</span>
               </a>
             </div>
-          )}
+          )} */}
         </div>
       </div>
 

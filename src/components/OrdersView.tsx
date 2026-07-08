@@ -26,7 +26,7 @@ import LoadingSpinner from './LoadingSpinner';
 import ComboBox from './ComboBox';
 import FilterDialog from './FilterDialog';
 import SortableTh from './SortableTh';
-import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, FormField, SearchInput, useToast, useConfirm } from './ui';
+import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, FormField, SearchInput, useToast, useConfirm, ActionsMenu } from './ui';
 import { CallAPI } from './UIHelper';
 import { debounce } from 'lodash'
 
@@ -43,7 +43,7 @@ interface OrdersViewProps {
   // Which detail page the cross-tab drill-in came from — a material row can
   // link here too (production consumption against this sale) — used only to
   // word the detail page's Back button correctly.
-  initialOrderOrigin?: 'PRODUCT' | 'MATERIAL';
+  initialOrderOrigin?: 'PRODUCT' | 'MATERIAL' | 'INVENTORY';
   // Called instead of closing locally when the currently open detail page
   // was reached via that cross-tab drill-in — lets App.tsx send the user
   // back to the originating Product/Material detail page rather than this list.
@@ -420,7 +420,7 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, init
       });
     } else if (formMode === 'CONVERT' && editHeaderId) {
       await CallAPI(() => convertToSalesOrder(editHeaderId, input, formDeliveryDate || defaultDeliveryDate()), {
-        onCompleted: () => { loadOrders(activeTab); refreshSelectedOrder(editHeaderId); toast.success('Sales order confirmed.'); },
+        onCompleted: () => { loadOrders(activeTab); setSelectedOrder(null); toast.success('Sales order confirmed.'); },
         onError: (err) => { console.error(err); toast.error('Failed to confirm sales order.'); },
       });
     }
@@ -448,7 +448,7 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, init
       onCompleted: () => {
         setTransitioningId(null);
         loadOrders(activeTab);
-        refreshSelectedOrder(order.id);
+        setSelectedOrder(null);
         toast.success('Production started.');
       },
       onError: (err) => {
@@ -474,7 +474,7 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, init
       onCompleted: () => {
         setTransitioningId(null);
         loadOrders(activeTab);
-        refreshSelectedOrder(completingOrder.id);
+        setSelectedOrder(null);
         setCompletingOrder(null);
         toast.success('Production marked as done.');
       },
@@ -493,7 +493,7 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, init
       onCompleted: () => {
         setTransitioningId(null);
         loadOrders(activeTab);
-        refreshSelectedOrder(id);
+        setSelectedOrder(null);
         toast.success('Order marked as delivered.');
       },
       onError: (err) => {
@@ -538,7 +538,7 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, init
         <SalesOrderDetailView
           order={selectedOrder}
           onBack={handleDetailBack}
-          backLabel={detailOpenedExternally ? (initialOrderOrigin === 'MATERIAL' ? 'Back to Material' : 'Back to Product') : 'Back to Sales Contracts'}
+          backLabel={detailOpenedExternally ? (initialOrderOrigin === 'MATERIAL' ? 'Back to Material' : initialOrderOrigin === 'INVENTORY' ? 'Back to Inventory' : 'Back to Product') : 'Back to Sales Contracts'}
           transitioningId={transitioningId}
           onEdit={openEditForm}
           onConvert={openConvertForm}
@@ -967,7 +967,7 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, init
                               : order.status === 'DELIVERED' ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
                                 : 'bg-red-50 text-red-800 border-red-200'
                           }`}>
-                          {order.status === 'ORDERED' ? 'Pending Delivery'
+                          {order.status === 'ORDERED' ? 'Pending Production'
                             : order.status === 'IN_PRODUCTION' ? 'In Production'
                               : order.status === 'DONE_IN_PRODUCTION' ? 'Done in Production'
                                 : order.status}
@@ -978,102 +978,24 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, init
                     {/* Transition actions */}
                     <td className="p-4 text-right">
                       <div className="flex items-center justify-end space-x-1.5">
-                        <button onClick={() => openOrderDetail(order)} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-slate-50 rounded transition-colors" title="View">
-                          <Eye className="w-3.5 h-3.5" />
-                        </button>
-                        {order.status === 'QUOTATION' && (
-                          <>
-                            <button onClick={() => openEditForm(order)} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-slate-50 rounded transition-colors" title="Edit">
-                              <Edit className="w-3.5 h-3.5" />
-                            </button>
-                            <button onClick={() => handleDelete(order.id)} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-slate-50 rounded transition-colors" title="Delete">
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                            <button onClick={() => openQuotationDoc(order)} className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-50 rounded transition-colors" title="Generate Quotation">
-                              <FileText className="w-3.5 h-3.5" />
-                            </button>
-                            <button onClick={() => openConvertForm(order)} className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded transition-colors" title="Proceed to Sales Order">
-                              <ArrowRightCircle className="w-3.5 h-3.5" />
-                            </button>
-                          </>
-                        )}
-
-                        {order.status === 'ORDERED' && (
-                          <>
-                            <button onClick={() => openEditForm(order)} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-slate-50 rounded transition-colors" title="Edit">
-                              <Edit className="w-3.5 h-3.5" />
-                            </button>
-                            <button onClick={() => openInvoiceDoc(order)} title="Generate Tax Invoice" className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-50 rounded transition-colors">
-                              <FileText className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={() => handleStartProduction(order)}
-                              disabled={transitioningId === order.id}
-                              title="Proceed to production"
-                              className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                            >
-                              <Factory className="w-3.5 h-3.5" />
-                            </button>
-                            <button onClick={() => handleCancel(order)} className="p-1 text-slate-400 hover:text-red-600 rounded transition-colors text-[10px] font-medium">
-                              Cancel
-                            </button>
-                          </>
-                        )}
-
-                        {order.status === 'IN_PRODUCTION' && (
-                          <>
-                            <button onClick={() => openInvoiceDoc(order)} title="Generate Tax Invoice" className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-50 rounded transition-colors">
-                              <FileText className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={() => openProductionCompletion(order)}
-                              disabled={transitioningId === order.id}
-                              title="Mark production as done"
-                              className="p-1.5 text-slate-400 hover:text-violet-600 hover:bg-violet-50 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                            >
-                              <CheckCheck className="w-3.5 h-3.5" />
-                            </button>
-                            <button onClick={() => handleCancel(order)} className="p-1 text-slate-400 hover:text-red-600 rounded transition-colors text-[10px] font-medium">
-                              Cancel
-                            </button>
-                          </>
-                        )}
-
-                        {order.status === 'DONE_IN_PRODUCTION' && (
-                          <>
-                            <button onClick={() => openInvoiceDoc(order)} title="Generate Tax Invoice" className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-50 rounded transition-colors">
-                              <FileText className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={() => handleMarkDelivered(order.id)}
-                              disabled={transitioningId === order.id}
-                              title="Mark as delivered"
-                              className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                            >
-                              <Check className="w-3.5 h-3.5" />
-                            </button>
-                          </>
-                        )}
-
                         {order.status === 'DELIVERED' && (
-                          <>
-                            <button onClick={() => openInvoiceDoc(order)} title="Generate Tax Invoice" className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-50 rounded transition-colors">
-                              <FileText className="w-3.5 h-3.5" />
-                            </button>
-                            <span className="text-[10px] text-emerald-600 font-semibold flex items-center space-x-0.5 font-mono px-1.5">
-                              <span>✓ Delivered</span>
-                            </span>
-                          </>
+                          <span className="text-[10px] text-emerald-600 font-semibold font-mono px-1.5">✓ Delivered</span>
                         )}
-
                         {order.status === 'CANCELLED' && (
-                          <>
-                            <span className="text-[10px] text-slate-400 font-mono italic px-1.5">Cancelled</span>
-                            <button onClick={() => handleDelete(order.id)} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-slate-50 rounded transition-colors" title="Delete">
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </>
+                          <span className="text-[10px] text-slate-400 font-mono italic px-1.5">Cancelled</span>
                         )}
+                        <ActionsMenu items={[
+                          { label: 'View', icon: <Eye className="w-3.5 h-3.5" />, onClick: () => openOrderDetail(order) },
+                          { label: 'Edit', icon: <Edit className="w-3.5 h-3.5" />, onClick: () => openEditForm(order), hidden: !['QUOTATION', 'ORDERED'].includes(order.status) },
+                          { label: 'Delete', icon: <Trash2 className="w-3.5 h-3.5" />, onClick: () => handleDelete(order.id), danger: true, hidden: !['QUOTATION', 'CANCELLED'].includes(order.status) },
+                          { label: 'Generate Quotation', icon: <FileText className="w-3.5 h-3.5" />, onClick: () => openQuotationDoc(order), hidden: order.status !== 'QUOTATION' },
+                          { label: 'Proceed to Sales Order', icon: <ArrowRightCircle className="w-3.5 h-3.5" />, onClick: () => openConvertForm(order), hidden: order.status !== 'QUOTATION' },
+                          { label: 'Generate Tax Invoice', icon: <FileText className="w-3.5 h-3.5" />, onClick: () => openInvoiceDoc(order), hidden: !['ORDERED', 'IN_PRODUCTION', 'DONE_IN_PRODUCTION', 'DELIVERED'].includes(order.status) },
+                          { label: 'Proceed to Production', icon: <Factory className="w-3.5 h-3.5" />, onClick: () => handleStartProduction(order), disabled: transitioningId === order.id, hidden: order.status !== 'ORDERED' },
+                          { label: 'Mark Production Done', icon: <CheckCheck className="w-3.5 h-3.5" />, onClick: () => openProductionCompletion(order), disabled: transitioningId === order.id, hidden: order.status !== 'IN_PRODUCTION' },
+                          { label: 'Mark as Delivered', icon: <Check className="w-3.5 h-3.5" />, onClick: () => handleMarkDelivered(order.id), disabled: transitioningId === order.id, hidden: order.status !== 'DONE_IN_PRODUCTION' },
+                          { label: 'Cancel Order', icon: <Trash2 className="w-3.5 h-3.5" />, onClick: () => handleCancel(order), danger: true, hidden: !['ORDERED', 'IN_PRODUCTION'].includes(order.status) },
+                        ]} />
                       </div>
                     </td>
 

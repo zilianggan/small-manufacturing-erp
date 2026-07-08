@@ -8,14 +8,28 @@
  * dump.
  */
 import { supabase } from "./supabase";
-import { getVendors, getClients, saveVendor, saveClient } from "./ContactsService";
-import { getMaterials, saveMaterial, getMaterialCategories } from "./MaterialService";
-import { getProducts, saveProduct, getProductCategories } from "./ProductService";
+import { upsertRecords } from "../helper";
+import { getVendors, getClients } from "./ContactsService";
+import { getMaterials, getMaterialCategories } from "./MaterialService";
+import { getProducts, getProductCategories } from "./ProductService";
 import { getPurchases } from "./PurchasesService";
 import { getSalesOrders } from "./OrdersService";
-import { Vendor, Client, Material, Product } from "../types";
+import { Vendor, Client, Material, Product, Attachment } from "../types";
+
+// Groups per DB round-trip pair (header insert + detail insert) for
+// Purchase/Sales commit — keeps big files from firing one request per order.
+const COMMIT_CHUNK_SIZE = 25;
 
 export const generateId = (): string => crypto.randomUUID();
+
+// Every record type in this file caps attachments at one (the UI's
+// AttachmentSection/detail views only ever read/write attachments[0]) — export
+// mirrors that: one "attachment" filename column per sheet, hyperlinked to the
+// stored base64 dataUrl. Best-effort: Excel enforces a hyperlink URL length
+// limit, so large attachments' links may not open — the filename is still
+// visible either way.
+const attachmentName = (r: { attachments?: Attachment[] }): string => r.attachments?.[0]?.name || '';
+const attachmentLink = (r: { attachments?: Attachment[] }): string | undefined => r.attachments?.[0]?.dataUrl;
 
 export interface ImportColumn {
   key: string;
@@ -56,12 +70,11 @@ export const importVendors = async (rows: Record<string, any>[]): Promise<RowImp
   const existing = await getVendors('');
   const byName = new Map(existing.map(v => [v.companyName.toLowerCase(), v]));
 
-  for (const item of parsed) {
+  const vendors: Vendor[] = parsed.map(item => {
     const match = byName.get(item.companyName.toLowerCase());
-    const vendor: Vendor = { id: match?.id || generateId(), attachments: match?.attachments, ...item };
-    await saveVendor(vendor);
-    byName.set(item.companyName.toLowerCase(), vendor);
-  }
+    return { id: match?.id || generateId(), attachments: match?.attachments, ...item };
+  });
+  await upsertRecords('erp_vendors', vendors);
 
   return { successCount: parsed.length, logs: [`Imported ${parsed.length} vendors (created or updated by company name).`] };
 };
@@ -82,28 +95,33 @@ export const importClients = async (rows: Record<string, any>[]): Promise<RowImp
   const existing = await getClients('');
   const byName = new Map(existing.map(c => [c.companyName.toLowerCase(), c]));
 
-  for (const item of parsed) {
+  const clients: Client[] = parsed.map(item => {
     const match = byName.get(item.companyName.toLowerCase());
-    const client: Client = { id: match?.id || generateId(), attachments: match?.attachments, ...item };
-    await saveClient(client);
-    byName.set(item.companyName.toLowerCase(), client);
-  }
+    return { id: match?.id || generateId(), attachments: match?.attachments, ...item };
+  });
+  await upsertRecords('erp_clients', clients);
 
   return { successCount: parsed.length, logs: [`Imported ${parsed.length} clients (created or updated by company name).`] };
 };
 
 export const buildVendorExportRows = (vendors: Vendor[]) => vendors.map(v => ({
   id: v.id, companyName: v.companyName, email: v.email, officeNo: v.officeNo,
-  address: v.address, description: v.description || '',
+  address: v.address, description: v.description || '', attachment: attachmentName(v),
 }));
 
 export const buildClientExportRows = (clients: Client[]) => clients.map(c => ({
   id: c.id, companyName: c.companyName, email: c.email, officeNo: c.officeNo,
-  address: c.address, description: c.description || '',
+  address: c.address, description: c.description || '', attachment: attachmentName(c),
 }));
 
-export const getVendorExportRows = async () => buildVendorExportRows(await getVendors(''));
-export const getClientExportRows = async () => buildClientExportRows(await getClients(''));
+export const getVendorExportRows = async () => {
+  const vendors = await getVendors('');
+  return { rows: buildVendorExportRows(vendors), attachmentLinks: vendors.map(attachmentLink) };
+};
+export const getClientExportRows = async () => {
+  const clients = await getClients('');
+  return { rows: buildClientExportRows(clients), attachmentLinks: clients.map(attachmentLink) };
+};
 
 const VALID_MATERIAL_TYPES = ['RAW_MATERIAL', 'FINISHED_GOOD', 'CUSTOMER_STOCK'];
 
@@ -152,16 +170,16 @@ export const importMaterials = async (rows: Record<string, any>[]): Promise<RowI
   const byNameCode = new Map(existing.map(m => [`${m.name.toLowerCase()}::${(m.code || '').toLowerCase()}`, m]));
   const categoryByName = new Map(categories.map(c => [c.name.toLowerCase(), c.id]));
 
-  for (const item of parsed) {
+  const materials: Material[] = parsed.map(item => {
     const key = `${item.name.toLowerCase()}::${item.code.toLowerCase()}`;
     const match = byNameCode.get(key);
-    const material: Material = {
+    return {
       id: match?.id || generateId(),
       name: item.name,
       code: item.code,
       materialType: item.materialType,
       dimension: item.dimension,
-      quantity: match?.quantity ?? 0, // never written — saveMaterial's serializer omits this field
+      quantity: match?.quantity ?? 0, // never written — helper.ts's erp_material serialiser omits this field
       description: item.description,
       attachments: match?.attachments, // preserve existing attachments on update; new records get none
       status: match?.status || 'ACTIVE',
@@ -169,9 +187,8 @@ export const importMaterials = async (rows: Record<string, any>[]): Promise<RowI
       reorderQuantity: item.reorderQuantity,
       materialCategoryId: categoryByName.get(item.categoryName.toLowerCase()) || undefined,
     };
-    await saveMaterial(material);
-    byNameCode.set(key, material);
-  }
+  });
+  await upsertRecords('erp_material', materials);
 
   return { successCount: parsed.length, logs: [`Imported ${parsed.length} materials (created or updated by name+code).`] };
 };
@@ -194,10 +211,10 @@ export const importProducts = async (rows: Record<string, any>[]): Promise<RowIm
   const byNameCode = new Map(existing.map(p => [`${p.name.toLowerCase()}::${(p.code || '').toLowerCase()}`, p]));
   const categoryByName = new Map(categories.map(c => [c.name.toLowerCase(), c.id]));
 
-  for (const item of parsed) {
+  const products: Product[] = parsed.map(item => {
     const key = `${item.name.toLowerCase()}::${item.code.toLowerCase()}`;
     const match = byNameCode.get(key);
-    const product: Product = {
+    return {
       id: match?.id || generateId(),
       name: item.name,
       code: item.code,
@@ -208,9 +225,8 @@ export const importProducts = async (rows: Record<string, any>[]): Promise<RowIm
       sellingPrice: item.sellingPrice,
       productCategoryId: categoryByName.get(item.categoryName.toLowerCase()) || undefined,
     };
-    await saveProduct(product);
-    byNameCode.set(key, product);
-  }
+  });
+  await upsertRecords('erp_product', products);
 
   return { successCount: parsed.length, logs: [`Imported ${parsed.length} products (created or updated by name+code).`] };
 };
@@ -222,12 +238,13 @@ export const buildMaterialExportRows = (materials: Material[], categories: { id:
     dimension: m.dimension || '', quantity: m.quantity, description: m.description || '',
     status: m.status || 'ACTIVE', minimumStock: m.minimumStock, reorderQuantity: m.reorderQuantity,
     category: m.materialCategoryId ? (categoryNameById.get(m.materialCategoryId) || '') : '',
+    attachment: attachmentName(m),
   }));
 };
 
 export const getMaterialExportRows = async () => {
   const [materials, categories] = await Promise.all([getMaterials(''), getMaterialCategories()]);
-  return buildMaterialExportRows(materials, categories);
+  return { rows: buildMaterialExportRows(materials, categories), attachmentLinks: materials.map(attachmentLink) };
 };
 
 export const buildProductExportRows = (products: Product[], categories: { id: string; name: string }[]) => {
@@ -236,12 +253,13 @@ export const buildProductExportRows = (products: Product[], categories: { id: st
     id: p.id, name: p.name, code: p.code || '', dimension: p.dimension || '',
     description: p.description || '', status: p.status || 'ACTIVE', sellingPrice: p.sellingPrice,
     category: p.productCategoryId ? (categoryNameById.get(p.productCategoryId) || '') : '',
+    attachment: attachmentName(p),
   }));
 };
 
 export const getProductExportRows = async () => {
   const [products, categories] = await Promise.all([getProducts(''), getProductCategories()]);
-  return buildProductExportRows(products, categories);
+  return { rows: buildProductExportRows(products, categories), attachmentLinks: products.map(attachmentLink) };
 };
 
 export interface ImportRowError {
@@ -348,51 +366,55 @@ export interface PurchaseImportCommitResult {
   failed?: { purchaseNo: string; message: string };
 }
 
-// Best-effort sequential write (same non-atomic pattern as
-// PurchasesService.createPurchaseQuotation): insert header, then its
-// details. If a group's detail insert fails, the just-inserted header is
-// deleted (avoids an orphan) and the loop stops — later groups are never
-// attempted. Only call this with a PurchaseImportPreview that has zero
+// Best-effort chunked write (same non-atomic intent as
+// PurchasesService.createPurchaseQuotation, batched for import volume):
+// groups are processed COMMIT_CHUNK_SIZE at a time, each chunk writing all
+// its headers in one insert and all its details in one insert — instead of
+// two round trips per order. If a chunk's detail insert fails, that chunk's
+// just-inserted headers are deleted (avoids orphans) and later chunks are
+// never attempted. Only call this with a PurchaseImportPreview that has zero
 // errors.
 export const commitPurchaseImport = async (groups: PurchaseImportGroup[]): Promise<PurchaseImportCommitResult> => {
   const succeeded: string[] = [];
 
-  for (const group of groups) {
-    const totalPrice = group.details.reduce((sum, d) => sum + d.quantity * d.unitCost, 0);
-    const id = generateId();
+  for (let i = 0; i < groups.length; i += COMMIT_CHUNK_SIZE) {
+    const chunk = groups.slice(i, i + COMMIT_CHUNK_SIZE);
+    const ids = chunk.map(() => generateId());
 
-    const { error: headerError } = await supabase.from('purchase_header').insert({
-      id,
-      purchase_no: group.purchaseNo,
-      quotation_date: group.orderDate,
-      order_date: group.orderDate,
-      status: 'ORDERED',
-      vendor_id: group.vendorId,
-      total_price: totalPrice,
-    });
+    const { error: headerError } = await supabase.from('purchase_header').insert(
+      chunk.map((group, idx) => ({
+        id: ids[idx],
+        purchase_no: group.purchaseNo,
+        quotation_date: group.orderDate,
+        order_date: group.orderDate,
+        status: 'ORDERED',
+        vendor_id: group.vendorId,
+        total_price: group.details.reduce((sum, d) => sum + d.quantity * d.unitCost, 0),
+      }))
+    );
     if (headerError) {
       console.error('commitPurchaseImport(header)', headerError);
-      return { succeeded, failed: { purchaseNo: group.purchaseNo, message: headerError.message } };
+      return { succeeded, failed: { purchaseNo: chunk[0].purchaseNo, message: headerError.message } };
     }
 
     const { error: detailError } = await supabase.from('purchase_detail').insert(
-      group.details.map(d => ({
-        header_id: id,
+      chunk.flatMap((group, idx) => group.details.map(d => ({
+        header_id: ids[idx],
         material_id: d.materialId,
         material_name: d.materialName,
         material_code: d.materialCode || null,
         quantity: d.quantity,
         unit_cost: d.unitCost,
         total_price: d.quantity * d.unitCost,
-      }))
+      })))
     );
     if (detailError) {
       console.error('commitPurchaseImport(detail)', detailError);
-      await supabase.from('purchase_header').delete().eq('id', id);
-      return { succeeded, failed: { purchaseNo: group.purchaseNo, message: detailError.message } };
+      await supabase.from('purchase_header').delete().in('id', ids);
+      return { succeeded, failed: { purchaseNo: chunk[0].purchaseNo, message: detailError.message } };
     }
 
-    succeeded.push(group.purchaseNo);
+    succeeded.push(...chunk.map(g => g.purchaseNo));
   }
 
   return { succeeded };
@@ -405,6 +427,7 @@ export const getPurchaseExportSheets = async () => {
   const headerRows = all.map(p => ({
     id: p.id, purchaseNo: p.purchaseNo, quotationDate: p.quotationDate, orderDate: p.orderDate || '',
     receivedDate: p.receivedDate || '', status: p.status, vendorName: p.vendorName, totalPrice: p.totalPrice,
+    attachment: attachmentName(p),
   }));
 
   const itemRows = all.flatMap(p => p.details.map(d => ({
@@ -413,7 +436,7 @@ export const getPurchaseExportSheets = async () => {
     quantity: d.quantity, unitCost: d.unitCost, totalPrice: d.totalPrice, receivedQuantity: d.receivedQuantity,
   })));
 
-  return { headerRows, itemRows };
+  return { headerRows, itemRows, attachmentLinks: all.map(attachmentLink) };
 };
 
 export const SALES_COLUMNS: ImportColumn[] = [
@@ -520,30 +543,33 @@ export interface SalesImportCommitResult {
   failed?: { salesNo: string; message: string };
 }
 
+// Chunked write — see commitPurchaseImport for the batching rationale.
 export const commitSalesImport = async (groups: SalesImportGroup[]): Promise<SalesImportCommitResult> => {
   const succeeded: string[] = [];
 
-  for (const group of groups) {
-    const totalAmount = group.details.reduce((sum, d) => sum + d.quantity * d.unitPrice, 0);
-    const id = generateId();
+  for (let i = 0; i < groups.length; i += COMMIT_CHUNK_SIZE) {
+    const chunk = groups.slice(i, i + COMMIT_CHUNK_SIZE);
+    const ids = chunk.map(() => generateId());
 
-    const { error: headerError } = await supabase.from('sales_header').insert({
-      id,
-      sales_no: group.salesNo,
-      order_date: group.orderDate,
-      delivery_date: group.deliveryDate || null,
-      status: 'ORDERED',
-      client_id: group.clientId,
-      total_amount: totalAmount,
-    });
+    const { error: headerError } = await supabase.from('sales_header').insert(
+      chunk.map((group, idx) => ({
+        id: ids[idx],
+        sales_no: group.salesNo,
+        order_date: group.orderDate,
+        delivery_date: group.deliveryDate || null,
+        status: 'ORDERED',
+        client_id: group.clientId,
+        total_amount: group.details.reduce((sum, d) => sum + d.quantity * d.unitPrice, 0),
+      }))
+    );
     if (headerError) {
       console.error('commitSalesImport(header)', headerError);
-      return { succeeded, failed: { salesNo: group.salesNo, message: headerError.message } };
+      return { succeeded, failed: { salesNo: chunk[0].salesNo, message: headerError.message } };
     }
 
     const { error: detailError } = await supabase.from('sales_detail').insert(
-      group.details.map(d => ({
-        header_id: id,
+      chunk.flatMap((group, idx) => group.details.map(d => ({
+        header_id: ids[idx],
         product_id: d.productId,
         product_name: d.productName,
         product_code: d.productCode || null,
@@ -551,15 +577,15 @@ export const commitSalesImport = async (groups: SalesImportGroup[]): Promise<Sal
         unit_price: d.unitPrice,
         total_price: d.quantity * d.unitPrice,
         remark: d.remark || null,
-      }))
+      })))
     );
     if (detailError) {
       console.error('commitSalesImport(detail)', detailError);
-      await supabase.from('sales_header').delete().eq('id', id);
-      return { succeeded, failed: { salesNo: group.salesNo, message: detailError.message } };
+      await supabase.from('sales_header').delete().in('id', ids);
+      return { succeeded, failed: { salesNo: chunk[0].salesNo, message: detailError.message } };
     }
 
-    succeeded.push(group.salesNo);
+    succeeded.push(...chunk.map(g => g.salesNo));
   }
 
   return { succeeded };
@@ -572,6 +598,7 @@ export const getSalesExportSheets = async () => {
   const headerRows = all.map(s => ({
     id: s.id, salesNo: s.salesNo, orderDate: s.orderDate, deliveryDate: s.deliveryDate || '',
     status: s.status, clientName: s.clientName, totalAmount: s.totalAmount, remark: s.remark || '',
+    attachment: attachmentName(s),
   }));
 
   const itemRows = all.flatMap(s => s.details.map(d => ({
@@ -580,5 +607,38 @@ export const getSalesExportSheets = async () => {
     quantity: d.quantity, unitPrice: d.unitPrice, totalPrice: d.totalPrice, remark: d.remark || '',
   })));
 
-  return { headerRows, itemRows };
+  return { headerRows, itemRows, attachmentLinks: all.map(attachmentLink) };
+};
+
+// "Export All" — one workbook, every category's own sheet builder (same
+// functions the per-category export buttons call), so it's always in sync
+// with whatever those export sheets currently look like. attachmentLinksBySheet
+// only lists sheets that actually carry an "attachment" column (item/detail
+// sheets don't — attachments live at the header/record level).
+export const getAllExportSheets = async () => {
+  const [vendors, clients, materials, products, purchase, sales] = await Promise.all([
+    getVendorExportRows(), getClientExportRows(), getMaterialExportRows(), getProductExportRows(),
+    getPurchaseExportSheets(), getSalesExportSheets(),
+  ]);
+
+  return {
+    sheets: {
+      Vendors: vendors.rows,
+      Clients: clients.rows,
+      Material: materials.rows,
+      Product: products.rows,
+      Purchase_Orders: purchase.headerRows,
+      Purchase_Items: purchase.itemRows,
+      Sales_Orders: sales.headerRows,
+      Sales_Items: sales.itemRows,
+    },
+    attachmentLinksBySheet: {
+      Vendors: vendors.attachmentLinks,
+      Clients: clients.attachmentLinks,
+      Material: materials.attachmentLinks,
+      Product: products.attachmentLinks,
+      Purchase_Orders: purchase.attachmentLinks,
+      Sales_Orders: sales.attachmentLinks,
+    },
+  };
 };

@@ -9,3 +9,5 @@ export { default as FormField, fieldInputClassName } from './FormField';
 export { default as SearchInput } from './SearchInput';
 export { ToastProvider, useToast } from './Toast';
 export { ConfirmProvider, useConfirm } from './ConfirmDialog';
+export { default as ActionsMenu } from './ActionsMenu';
+export type { ActionMenuItem } from './ActionsMenu';

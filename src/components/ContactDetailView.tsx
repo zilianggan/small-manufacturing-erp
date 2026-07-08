@@ -201,35 +201,35 @@ export default function ContactDetailView({ company, companyType, onBack, onComp
       <Card className="p-5">
         <div className="flex items-start justify-between gap-4">
           <div className="flex items-start gap-4 min-w-0">
-          <CompanyLogo attachment={company.attachments?.[0]} size="md" />
-          <div className="space-y-2.5 min-w-0">
-            <div>
-              <h2 className="font-sans font-bold text-slate-900 text-lg leading-snug truncate">{company.companyName}</h2>
-              {company.description && (
-                <p className="text-xs text-slate-500 mt-1 max-w-2xl">{company.description}</p>
-              )}
-            </div>
-            <div className="flex flex-wrap gap-x-5 gap-y-1.5 text-xs text-slate-500">
-              {company.email && (
-                <div className="flex items-center space-x-1.5">
-                  <Mail className="w-3.5 h-3.5 shrink-0 text-slate-400" />
-                  <span>{company.email}</span>
-                </div>
-              )}
-              {company.officeNo && (
-                <div className="flex items-center space-x-1.5">
-                  <Phone className="w-3.5 h-3.5 shrink-0 text-slate-400" />
-                  <span>{company.officeNo}</span>
-                </div>
-              )}
-              {company.address && (
-                <div className="flex items-center space-x-1.5">
-                  <MapPin className="w-3.5 h-3.5 shrink-0 text-slate-400" />
-                  <span>{company.address}</span>
-                </div>
-              )}
-            </div>
-            {company.attachments?.[0] && (
+            <CompanyLogo attachment={company.attachments?.[0]} size="md" />
+            <div className="space-y-2.5 min-w-0">
+              <div>
+                <h2 className="font-sans font-bold text-slate-900 text-lg leading-snug truncate">{company.companyName}</h2>
+                {company.description && (
+                  <p className="text-xs text-slate-500 mt-1 max-w-2xl">{company.description}</p>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-x-5 gap-y-1.5 text-xs text-slate-500">
+                {company.email && (
+                  <div className="flex items-center space-x-1.5 link" onClick={(e) => { e.stopPropagation(); window.open(`https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(company.email)}`, "_blank") }}>
+                    <Mail className="w-3.5 h-3.5 shrink-0 text-slate-400" />
+                    <span>{company.email}</span>
+                  </div>
+                )}
+                {company.officeNo && (
+                  <div className="flex items-center space-x-1.5 link" onClick={(e) => { e.stopPropagation(); window.open(`https://wa.me/${company.officeNo}`, "_blank") }}>
+                    <Phone className="w-3.5 h-3.5 shrink-0 text-slate-400" />
+                    <span>{company.officeNo}</span>
+                  </div>
+                )}
+                {company.address && (
+                  <div className="flex items-center space-x-1.5">
+                    <MapPin className="w-3.5 h-3.5 shrink-0 text-slate-400" />
+                    <span>{company.address}</span>
+                  </div>
+                )}
+              </div>
+              {/* {company.attachments?.[0] && (
               <a
                 href={company.attachments[0].dataUrl}
                 download={company.attachments[0].name}
@@ -239,8 +239,8 @@ export default function ContactDetailView({ company, companyType, onBack, onComp
                 <Paperclip className="w-2.5 h-2.5 text-blue-500 shrink-0" />
                 <span className="truncate max-w-[200px]">{company.attachments[0].name}</span>
               </a>
-            )}
-          </div>
+            )} */}
+            </div>
           </div>
           <div className="flex items-center space-x-1.5 shrink-0">
             <button
@@ -312,7 +312,7 @@ export default function ContactDetailView({ company, companyType, onBack, onComp
                     {contact.email && (
                       <span className="flex items-center space-x-1"><Mail className="w-3 h-3 text-slate-400" /><span>{contact.email}</span></span>
                     )}
-                    {contact.attachments?.[0] && (
+                    {/* {contact.attachments?.[0] && (
                       <a
                         href={contact.attachments[0].dataUrl}
                         download={contact.attachments[0].name}
@@ -322,7 +322,7 @@ export default function ContactDetailView({ company, companyType, onBack, onComp
                         <Paperclip className="w-2.5 h-2.5 text-blue-500 shrink-0" />
                         <span className="truncate max-w-[150px]">{contact.attachments[0].name}</span>
                       </a>
-                    )}
+                    )} */}
                   </div>
                 </div>
                 <div className="flex items-center space-x-1.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity shrink-0">

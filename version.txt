@@ -1,7 +1,13 @@
 Version 1.0.4
 --------------------
 - Add company logo in vendor and client
-- Add auto numbering for sales and purchase
+- Add auto numbering for sales no and purchase no
+- Add whatsapp and email when click on phone number and email in vendor and client page
+- Export update to latest structure (with attachment)
+- Add import template excel file, and import data in chunk
+- Sales enhancement (When newly add to sales order listing, status should be pending production instead of pending delivery ,fix redirect issue only click view button then go to detail page)
+- Inventory add ref no to link sales or purchase
+- For actions, change to morevert, when click show menu of actions
 
 Version 1.0.3
 --------------------

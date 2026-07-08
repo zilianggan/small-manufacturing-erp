@@ -345,6 +345,9 @@ export interface InventoryTransaction {
   productName?: string; // joined, display only
   purchaseDetailId?: string; // FK -> purchase_detail.detail_id, set when a PO receipt generated this row
   productionMaterialUsageId?: string; // FK -> production_material_usage.id, set when a production reservation/reconciliation generated this row
+  refNo?: string; // joined, display only — purchase_no or sales_no of the linked order
+  purchaseHeaderId?: string; // joined, display only — for cross-tab nav to the purchase order
+  salesHeaderId?: string; // joined, display only — for cross-tab nav to the sales order
   transactionDate: string;
   createdAt?: string;
 }
@@ -353,8 +356,10 @@ export interface InventoryTransaction {
 // order-level rows (purchase_detail for materials, sales_detail for products)
 // merged with any other inventory_transaction movements against the same
 // item (e.g. a material consumed in production against a sales order, or a
-// product's extra-produced adjustment). ADJUSTMENT rows have no order header
-// to join, so refNo/counterpartyName/status/*HeaderId stay unset for them.
+// product's extra-produced adjustment — the latter links back to its sales
+// order via a synthetic production_material_usage row). Standalone
+// ADJUSTMENT rows with no such link have no order header to join, so
+// refNo/counterpartyName/status/*HeaderId stay unset for those.
 export interface InventoryListItem {
   id: string;
   transactionType: InventoryTransactionType;

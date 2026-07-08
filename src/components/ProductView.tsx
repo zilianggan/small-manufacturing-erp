@@ -20,7 +20,7 @@ import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, Sea
 import { CallAPI } from './UIHelper';
 import { debounce } from 'lodash'
 
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 24;
 
 const SORT_OPTIONS: SortOption[] = [
   { value: 'name', label: 'Name' },

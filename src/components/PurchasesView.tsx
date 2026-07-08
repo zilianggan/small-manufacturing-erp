@@ -23,7 +23,7 @@ import LoadingSpinner from './LoadingSpinner';
 import ComboBox from './ComboBox';
 import FilterDialog from './FilterDialog';
 import SortableTh from './SortableTh';
-import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, FormField, SearchInput, useToast, useConfirm } from './ui';
+import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, FormField, SearchInput, useToast, useConfirm, ActionsMenu } from './ui';
 import { CallAPI } from './UIHelper';
 import { debounce } from 'lodash'
 
@@ -36,13 +36,17 @@ interface PurchasesViewProps {
   // are separate top-level tabs with no shared router.
   initialPurchaseId?: string | null;
   onInitialPurchaseHandled?: () => void;
+  // Which page the cross-tab drill-in came from — used only to word the
+  // detail page's Back button correctly.
+  initialPurchaseOrigin?: 'MATERIAL' | 'INVENTORY';
   // Called instead of closing locally when the currently open detail page
   // was reached via that cross-tab drill-in — lets App.tsx send the user
-  // back to the originating Material detail page rather than this list.
+  // back to the originating Material detail page (or Inventory tab) rather
+  // than this list.
   onReturnToOrigin?: () => void;
 }
 
-export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHandled, onReturnToOrigin }: PurchasesViewProps = {}) {
+export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHandled, initialPurchaseOrigin, onReturnToOrigin }: PurchasesViewProps = {}) {
   const toast = useToast();
   const confirm = useConfirm();
   const [activeTab, setActiveTab] = useState<PurchaseTab>('QUOTATION');
@@ -363,7 +367,7 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
       });
     } else if (formMode === 'CONVERT' && editHeaderId) {
       await CallAPI(() => convertToPurchaseOrder(editHeaderId, input, formOrderDate || todayStr()), {
-        onCompleted: () => { loadPurchases(activeTab); refreshSelectedPurchase(editHeaderId); toast.success('Purchase order confirmed.'); },
+        onCompleted: () => { loadPurchases(activeTab); setSelectedPurchase(null); toast.success('Purchase order confirmed.'); },
         onError: (err) => { console.error(err); toast.error('Failed to confirm purchase order.'); },
       });
     }
@@ -391,7 +395,7 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
       onCompleted: () => {
         setReceivingId(null);
         loadPurchases(activeTab);
-        refreshSelectedPurchase(purchase.id);
+        setSelectedPurchase(null);
         toast.success('Material package marked as received.');
       },
       onError: (err) => {
@@ -431,7 +435,7 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
         <PurchaseOrderDetailView
           purchase={selectedPurchase}
           onBack={handlePurchaseDetailBack}
-          backLabel={detailOpenedExternally ? 'Back to Material' : 'Back to Purchases'}
+          backLabel={detailOpenedExternally ? (initialPurchaseOrigin === 'INVENTORY' ? 'Back to Inventory' : 'Back to Material') : 'Back to Purchases'}
           receivingId={receivingId}
           onEdit={openEditForm}
           onConvert={openConvertForm}
@@ -814,59 +818,21 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
 
                     <td className="p-4 text-right">
                       <div className="flex items-center justify-end space-x-1.5">
-                        <button onClick={() => openPurchaseDetail(p)} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-slate-50 rounded transition-colors" title="View">
-                          <Eye className="w-3.5 h-3.5" />
-                        </button>
-                        {p.status === 'QUOTATION' && (
-                          <>
-                            <button onClick={() => openEditForm(p)} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-slate-50 rounded transition-colors" title="Edit">
-                              <Edit className="w-3.5 h-3.5" />
-                            </button>
-                            <button onClick={() => handleDelete(p.id)} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-slate-50 rounded transition-colors" title="Delete">
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                            <button onClick={() => openQuotationDoc(p)} className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-50 rounded transition-colors" title="Generate Quotation">
-                              <FileText className="w-3.5 h-3.5" />
-                            </button>
-                            <button onClick={() => openConvertForm(p)} className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded transition-colors" title="Proceed to Purchase Order">
-                              <ArrowRightCircle className="w-3.5 h-3.5" />
-                            </button>
-                          </>
-                        )}
-
-                        {p.status === 'ORDERED' && (
-                          <>
-                            <button onClick={() => openEditForm(p)} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-slate-50 rounded transition-colors" title="Edit">
-                              <Edit className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={() => handleReceive(p)}
-                              disabled={receivingId === p.id}
-                              title="Mark material package as received"
-                              className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                            >
-                              <Check className="w-3.5 h-3.5" />
-                            </button>
-                            <button onClick={() => handleCancel(p.id)} className="p-1 text-slate-400 hover:text-red-600 rounded transition-colors text-[10px] font-medium">
-                              Cancel
-                            </button>
-                          </>
-                        )}
-
                         {p.status === 'RECEIVED' && (
-                          <div className="text-[10px] text-emerald-600 font-semibold flex items-center space-x-0.5 font-mono px-1.5">
-                            <span className="px-2 py-0.5 bg-emerald-50 rounded">Replenished ✓</span>
-                          </div>
+                          <span className="text-[10px] text-emerald-600 font-semibold font-mono px-2 py-0.5 bg-emerald-50 rounded">Replenished ✓</span>
                         )}
-
                         {p.status === 'CANCELLED' && (
-                          <>
-                            <span className="text-[10px] text-slate-400 font-mono italic px-1.5">Cancelled</span>
-                            <button onClick={() => handleDelete(p.id)} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-slate-50 rounded transition-colors" title="Delete">
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </>
+                          <span className="text-[10px] text-slate-400 font-mono italic px-1.5">Cancelled</span>
                         )}
+                        <ActionsMenu items={[
+                          { label: 'View', icon: <Eye className="w-3.5 h-3.5" />, onClick: () => openPurchaseDetail(p) },
+                          { label: 'Edit', icon: <Edit className="w-3.5 h-3.5" />, onClick: () => openEditForm(p), hidden: !['QUOTATION', 'ORDERED'].includes(p.status) },
+                          { label: 'Delete', icon: <Trash2 className="w-3.5 h-3.5" />, onClick: () => handleDelete(p.id), danger: true, hidden: !['QUOTATION', 'CANCELLED'].includes(p.status) },
+                          { label: 'Generate Quotation', icon: <FileText className="w-3.5 h-3.5" />, onClick: () => openQuotationDoc(p), hidden: p.status !== 'QUOTATION' },
+                          { label: 'Proceed to Purchase Order', icon: <ArrowRightCircle className="w-3.5 h-3.5" />, onClick: () => openConvertForm(p), hidden: p.status !== 'QUOTATION' },
+                          { label: 'Mark as Received', icon: <Check className="w-3.5 h-3.5" />, onClick: () => handleReceive(p), disabled: receivingId === p.id, hidden: p.status !== 'ORDERED' },
+                          { label: 'Cancel Order', icon: <Trash2 className="w-3.5 h-3.5" />, onClick: () => handleCancel(p.id), danger: true, hidden: p.status !== 'ORDERED' },
+                        ]} />
                       </div>
                     </td>
 
