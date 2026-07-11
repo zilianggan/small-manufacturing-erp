@@ -1,3 +1,7 @@
+Version 1.0.5
+--------------------
+- Add android build app using capacitor
+
 Version 1.0.4
 --------------------
 - Redesign all pages
