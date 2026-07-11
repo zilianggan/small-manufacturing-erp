@@ -307,10 +307,10 @@ export default function ContactDetailView({ company, companyType, onBack, onComp
                   </div>
                   <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-500">
                     {contact.contactNo && (
-                      <span className="flex items-center space-x-1"><Phone className="w-3 h-3 text-slate-400" /><span>{contact.contactNo}</span></span>
+                      <span className="flex items-center space-x-1 link" onClick={(e) => { e.stopPropagation(); window.open(`https://wa.me/${company.officeNo}`, "_blank") }}><Phone className="w-3 h-3 text-slate-400" /><span>{contact.contactNo}</span></span>
                     )}
                     {contact.email && (
-                      <span className="flex items-center space-x-1"><Mail className="w-3 h-3 text-slate-400" /><span>{contact.email}</span></span>
+                      <span className="flex items-center space-x-1 link" onClick={(e) => { e.stopPropagation(); window.open(`https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(company.email)}`, "_blank") }}><Mail className="w-3 h-3 text-slate-400" /><span>{contact.email}</span></span>
                     )}
                     {/* {contact.attachments?.[0] && (
                       <a

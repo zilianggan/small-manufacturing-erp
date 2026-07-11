@@ -162,7 +162,7 @@ export const getSalesOrders = async (
 
 // Fetches a single sales order regardless of its status/tab or the list's
 // current search filter — used by SalesOrderDetailView.tsx's cross-tab
-// drill-in from ProductDetailView.tsx's order history link.
+// drill-in from ProductView.tsx's order history link.
 export const getSalesOrderById = async (id: string): Promise<SalesHeader | null> => {
   const { data, error } = await supabase
     .from('sales_header')

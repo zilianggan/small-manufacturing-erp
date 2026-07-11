@@ -1,5 +1,5 @@
-import React, { useState, useRef, useEffect, useId, useLayoutEffect } from 'react';
-import { createPortal } from 'react-dom';
+import React, { useState, useRef, useEffect, useId } from 'react';
+import * as RadixPopover from '@radix-ui/react-popover';
 import { ChevronDown, Search, X } from 'lucide-react';
 
 export interface ComboBoxOption {
@@ -27,6 +27,13 @@ interface ComboBoxProps {
   searchLoading?: boolean;
 }
 
+/**
+ * Built on Radix Popover (not a hand-rolled document.body portal) so it
+ * cooperates correctly with an ancestor Radix Dialog/Sheet's focus trap and
+ * dismissable-layer stack — a raw createPortal sibling of the Dialog content
+ * gets its focus silently stolen back by the Dialog's FocusScope, and
+ * pointerdown on it gets treated as "outside" and dismisses the Dialog.
+ */
 export default function ComboBox({
   options,
   value,
@@ -44,13 +51,9 @@ export default function ComboBox({
   const fieldId = id ?? uid;
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
-  const [coords, setCoords] = useState({ top: 0, left: 0, width: 0 });
-  const containerRef = useRef<HTMLDivElement>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const dropdownRef = useRef<HTMLDivElement>(null);
+  const [highlighted, setHighlighted] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
-  const [highlighted, setHighlighted] = useState(0);
 
   const allOptions: ComboBoxOption[] = noneLabel !== undefined
     ? [{ value: '', label: noneLabel }, ...options]
@@ -69,53 +72,6 @@ export default function ComboBox({
 
   const selectedLabel = allOptions.find(o => o.value === value)?.label ?? '';
 
-  // Close on outside click
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      const target = e.target as Node;
-      if (
-        containerRef.current && !containerRef.current.contains(target) &&
-        dropdownRef.current && !dropdownRef.current.contains(target)
-      ) {
-        setOpen(false);
-        setQuery('');
-      }
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, []);
-
-  // Compute trigger position for the portal-rendered dropdown, and close
-  // on scroll/resize of any ancestor so it never drifts off its trigger.
-  useLayoutEffect(() => {
-    if (!open) return;
-
-    const updateCoords = () => {
-      const rect = triggerRef.current?.getBoundingClientRect();
-      if (rect) {
-        setCoords({ top: rect.bottom + 4, left: rect.left, width: rect.width });
-      }
-    };
-    updateCoords();
-
-    const handleScroll = (e: Event) => {
-      // Ignore scrolls that originate inside the dropdown itself (e.g. the
-      // user scrolling a long options list) - only close when something
-      // outside it scrolls, since that's what would make it drift off
-      // its trigger.
-      const target = e.target as Node;
-      if (dropdownRef.current?.contains(target)) return;
-      setOpen(false);
-      setQuery('');
-    };
-    window.addEventListener('scroll', handleScroll, true);
-    window.addEventListener('resize', updateCoords);
-    return () => {
-      window.removeEventListener('scroll', handleScroll, true);
-      window.removeEventListener('resize', updateCoords);
-    };
-  }, [open]);
-
   // Debounce server-side search calls as the user types.
   useEffect(() => {
     if (!onSearch) return;
@@ -124,13 +80,17 @@ export default function ComboBox({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query, onSearch]);
 
-  // Focus search input when opened
   useEffect(() => {
-    if (open) {
-      inputRef.current?.focus();
-      setHighlighted(0);
-    }
+    if (open) setHighlighted(0);
   }, [open]);
+
+  // Scroll highlighted item into view
+  useEffect(() => {
+    if (listRef.current) {
+      const el = listRef.current.children[highlighted] as HTMLElement | undefined;
+      el?.scrollIntoView({ block: 'nearest' });
+    }
+  }, [highlighted]);
 
   const handleSelect = (opt: ComboBoxOption) => {
     onChange(opt.value);
@@ -138,14 +98,7 @@ export default function ComboBox({
     setQuery('');
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (!open) {
-      if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown') {
-        e.preventDefault();
-        setOpen(true);
-      }
-      return;
-    }
+  const handleInputKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       setHighlighted(h => Math.min(h + 1, filtered.length - 1));
@@ -161,14 +114,6 @@ export default function ComboBox({
     }
   };
 
-  // Scroll highlighted item into view
-  useEffect(() => {
-    if (listRef.current) {
-      const el = listRef.current.children[highlighted] as HTMLElement | undefined;
-      el?.scrollIntoView({ block: 'nearest' });
-    }
-  }, [highlighted]);
-
   const triggerBase = `
     w-full flex items-center justify-between gap-2
     px-3 py-2 text-xs rounded-lg border transition-colors
@@ -180,36 +125,36 @@ export default function ComboBox({
   `.trim();
 
   return (
-    <div ref={containerRef} className={`relative ${className}`} onKeyDown={handleKeyDown}>
-      {/* Trigger button */}
-      <button
-        type="button"
-        id={fieldId}
-        ref={triggerRef}
-        disabled={disabled}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        onClick={() => !disabled && setOpen(v => !v)}
-        className={triggerBase}
-      >
-        <span className={`truncate flex-1 text-left ${!value && !selectedLabel ? 'text-slate-400 dark:text-slate-500' : ''}`}>
-          {selectedLabel || placeholder}
-        </span>
-        {value && !required && noneLabel !== undefined && (
-          <X
-            className="w-3 h-3 text-slate-400 hover:text-slate-600 shrink-0"
-            onClick={(e) => { e.stopPropagation(); onChange(''); }}
-          />
-        )}
-        <ChevronDown className={`w-3.5 h-3.5 shrink-0 text-slate-400 transition-transform duration-150 ${open ? 'rotate-180' : ''}`} />
-      </button>
+    <RadixPopover.Root open={open} onOpenChange={(next) => { setOpen(next); if (!next) setQuery(''); }}>
+      <RadixPopover.Trigger asChild>
+        <button
+          type="button"
+          id={fieldId}
+          disabled={disabled}
+          aria-haspopup="listbox"
+          aria-expanded={open}
+          className={`relative ${className} ${triggerBase}`}
+        >
+          <span className={`truncate flex-1 text-left ${!value && !selectedLabel ? 'text-slate-400 dark:text-slate-500' : ''}`}>
+            {selectedLabel || placeholder}
+          </span>
+          {value && !required && noneLabel !== undefined && (
+            <X
+              className="w-3 h-3 text-slate-400 hover:text-slate-600 shrink-0"
+              onClick={(e) => { e.stopPropagation(); e.preventDefault(); onChange(''); }}
+            />
+          )}
+          <ChevronDown className={`w-3.5 h-3.5 shrink-0 text-slate-400 transition-transform duration-150 ${open ? 'rotate-180' : ''}`} />
+        </button>
+      </RadixPopover.Trigger>
 
-      {/* Dropdown, portalled to body so it can't inflate a scrollable ancestor */}
-      {open && !(coords?.top === 0 && coords?.left === 0 && coords?.width === 0) && createPortal(
-        <div
-          ref={dropdownRef}
-          style={{ position: 'fixed', top: coords.top, left: coords.left, width: coords.width }}
-          className="z-50 min-w-[180px] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl overflow-hidden animate-in fade-in zoom-in-95 duration-100"
+      <RadixPopover.Portal>
+        <RadixPopover.Content
+          align="start"
+          sideOffset={4}
+          style={{ width: 'var(--radix-popover-trigger-width)' }}
+          onOpenAutoFocus={(e) => { e.preventDefault(); inputRef.current?.focus(); }}
+          className="z-[100] min-w-[180px] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl overflow-hidden data-[state=open]:animate-in data-[state=open]:fade-in data-[state=open]:zoom-in-95 duration-100"
         >
           {/* Search */}
           <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-100 dark:border-slate-800">
@@ -219,6 +164,7 @@ export default function ComboBox({
               type="text"
               value={query}
               onChange={e => { setQuery(e.target.value); setHighlighted(0); }}
+              onKeyDown={handleInputKeyDown}
               placeholder="Search..."
               className="flex-1 text-xs bg-transparent outline-none text-slate-800 dark:text-slate-200 placeholder:text-slate-400"
             />
@@ -248,7 +194,7 @@ export default function ComboBox({
                   key={opt.value}
                   role="option"
                   aria-selected={opt.value === value}
-                  onMouseDown={() => handleSelect(opt)}
+                  onMouseDown={(e) => { e.preventDefault(); handleSelect(opt); }}
                   onMouseEnter={() => setHighlighted(idx)}
                   className={`
                     flex flex-col px-3 py-1.5 cursor-pointer text-xs transition-colors
@@ -267,9 +213,8 @@ export default function ComboBox({
               ))
             )}
           </ul>
-        </div>,
-        document.body
-      )}
-    </div>
+        </RadixPopover.Content>
+      </RadixPopover.Portal>
+    </RadixPopover.Root>
   );
 }

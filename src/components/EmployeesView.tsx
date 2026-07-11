@@ -7,16 +7,14 @@ import {
   Mail,
   Phone,
   Briefcase,
-  Search
 } from 'lucide-react';
 import { Employee, JobPosition } from '../types';
 import { generateId, getEmployees, saveEmployee, deleteEmployee, getJobPositions } from '../services/EmployeesService';
-import LoadingSpinner from './LoadingSpinner';
 import ComboBox from './ComboBox';
-import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, FormField, useToast, useConfirm } from './ui';
+import { PageHeader } from './shell';
+import { Sheet, Card, FormField, fieldInputClassName, SearchInput, Button, Badge, Skeleton, useToast, useConfirm } from './ui';
 import { CallAPI } from './UIHelper';
-
-const employeeFieldInputClassName = 'w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 font-sans text-xs text-slate-800';
+import { useFadeInOnMount } from '../hooks/useFadeInOnMount';
 
 export default function EmployeesView() {
   const toast = useToast();
@@ -52,6 +50,7 @@ export default function EmployeesView() {
   const [email, setEmail] = useState('');
   const [contactNo, setContactNo] = useState('');
   const [jobPositions, setJobPositions] = useState<JobPosition[]>([]);
+  const formRef = useFadeInOnMount<HTMLDivElement>([isFormOpen], { duration: 0.7, stagger: 0.18, y: 16 });
 
   useEffect(() => {
     CallAPI(getJobPositions, {
@@ -111,8 +110,7 @@ export default function EmployeesView() {
     });
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async () => {
     if (!fullName.trim()) return;
 
     const savedEmployee: Employee = {
@@ -143,45 +141,20 @@ export default function EmployeesView() {
 
   return (
     <div className="space-y-6">
-      {loading && <LoadingSpinner message="Accessing workforce roster..." subtitle="TEAM_CATALOG" />}
-      {/* Top action block */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h2 className="font-sans font-bold text-slate-900 text-lg flex items-center space-x-2">
-            <span className="p-1 bg-blue-50 text-blue-600 rounded">
-              <Users className="w-5 h-5" />
-            </span>
-            <span>Employee Directory</span>
-          </h2>
-          <p className="text-xs text-slate-500 mt-1">Manage personnel records and engineering team availability to assign tasks</p>
-        </div>
-
-        <div className="flex items-center space-x-2 shrink-0">
-          <button
-            id="btn-add-employee"
-            type="button"
-            onClick={handleOpenAddForm}
-            className="flex items-center space-x-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg shadow transition-all"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Add Employee</span>
-          </button>
-        </div>
-      </div>
+      <PageHeader
+        title="Employee Directory"
+        description="Manage personnel records and engineering team availability to assign tasks."
+        actions={<Button id="btn-add-employee" onClick={handleOpenAddForm}><Plus className="w-4 h-4" />Add Employee</Button>}
+      />
 
       {/* Searching & filters panel */}
       <Card className="p-4 grid grid-cols-1 md:grid-cols-3 gap-3">
-        <div className="relative md:col-span-2">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-          <input
-            id="input-search-employees"
-            type="text"
-            placeholder="Search by name, role, or email..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-9 pr-4 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800 focus:outline-none focus:border-blue-500 font-sans"
-          />
-        </div>
+        <SearchInput
+          value={searchTerm}
+          onChange={setSearchTerm}
+          placeholder="Search by name, role, or email..."
+          className="relative md:col-span-2"
+        />
 
         <div>
           <ComboBox
@@ -198,7 +171,11 @@ export default function EmployeesView() {
       </Card>
 
       {/* Employees catalog list */}
-      {filteredEmployees.length === 0 ? (
+      {loading && employees.length === 0 ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {Array.from({ length: 6 }).map((_, i) => <EmployeeCardSkeleton key={`skeleton-${i}`} />)}
+        </div>
+      ) : filteredEmployees.length === 0 ? (
         <Card className="p-12 text-center">
           <Users className="w-10 h-10 text-slate-300 mx-auto stroke-1 mb-2" />
           <span className="text-sm font-semibold text-slate-800 block">No Personnel Found</span>
@@ -229,12 +206,7 @@ export default function EmployeesView() {
                     </div>
                   </div>
 
-                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${emp.status === 'ACTIVE'
-                    ? 'bg-emerald-50 text-emerald-700'
-                    : 'bg-slate-100 text-slate-500'
-                    }`}>
-                    {emp.status}
-                  </span>
+                  <Badge variant={emp.status === 'ACTIVE' ? 'success' : 'secondary'}>{emp.status}</Badge>
                 </div>
 
                 <div className="pt-3 border-t border-slate-100 space-y-1.5 text-xs text-slate-600">
@@ -254,58 +226,58 @@ export default function EmployeesView() {
               </div>
 
               {/* Action buttons drawer overlay on hover */}
-              <div className="flex items-center justify-end space-x-1.5 mt-4 pt-3 border-t border-slate-50 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
-                <button
+              <div className="flex items-center justify-end space-x-1 mt-4 pt-3 border-t border-slate-50 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                <Button
                   id={`btn-edit-emp-${emp.id}`}
-                  type="button"
+                  variant="ghost" size="icon"
                   onClick={() => handleOpenEditForm(emp)}
-                  className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-slate-50 rounded transition-colors"
+                  className="h-7 w-7 text-muted-foreground hover:text-primary"
                   title="Edit details"
                 >
                   <Edit className="w-3.5 h-3.5" />
-                </button>
-                <button
+                </Button>
+                <Button
                   id={`btn-delete-emp-${emp.id}`}
-                  type="button"
+                  variant="ghost" size="icon"
                   onClick={() => handleDelete(emp.id, emp.fullName)}
-                  className="p-1.5 text-slate-500 hover:text-red-600 hover:bg-slate-50 rounded transition-colors"
+                  className="h-7 w-7 text-muted-foreground hover:text-destructive"
                   title="Remove employee"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
-                </button>
+                </Button>
               </div>
             </Card>
           ))}
         </div>
       )}
 
-      {/* Add / Edit Form Modal */}
-      <Dialog
+      {/* Add / Edit slide-over — matches MaterialView/ContactsView */}
+      <Sheet
         open={isFormOpen}
         onClose={() => setIsFormOpen(false)}
-        maxWidth="max-w-md"
-        headerClassName="bg-slate-50"
-        titleClassName="font-sans font-bold text-slate-900 text-sm"
-        titleIcon={
-          <span className="p-1 bg-blue-50 text-blue-600 rounded">
-            <Users className="w-4 h-4" />
-          </span>
-        }
         title={editingEmployee ? 'Edit Personnel Member' : 'Add New Personnel'}
+        description={editingEmployee ? undefined : 'Create a new employee record'}
+        width="w-full sm:max-w-xl"
+        footer={
+          <div className="flex items-center justify-end gap-2">
+            <Button variant="outline" onClick={() => setIsFormOpen(false)}>Cancel</Button>
+            <Button onClick={handleSubmit}>{editingEmployee ? 'Save Changes' : 'Create Record'}</Button>
+          </div>
+        }
       >
-        <form onSubmit={handleSubmit} className="p-5 space-y-4 text-xs text-slate-600">
-          <FormField label="Full Name *" labelClassName="font-semibold block text-slate-700">
+        <div ref={formRef} className="p-5 space-y-4 text-xs text-muted-foreground" data-fade-item>
+          <FormField label="Full Name *">
             <input
               type="text"
               required
               value={fullName}
               onChange={(e) => setFullName(e.target.value)}
               placeholder="e.g. John Doe"
-              className={employeeFieldInputClassName}
+              className={fieldInputClassName}
             />
           </FormField>
 
-          <FormField label="Job Position" labelClassName="font-semibold block text-slate-700">
+          <FormField label="Job Position">
             <ComboBox
               value={jobPositionId}
               onChange={setJobPositionId}
@@ -314,7 +286,7 @@ export default function EmployeesView() {
             />
           </FormField>
 
-          <FormField label="Availability Status" labelClassName="font-semibold block text-slate-700">
+          <FormField label="Availability Status">
             <ComboBox
               value={status}
               onChange={(v) => setStatus(v as 'ACTIVE' | 'INACTIVE')}
@@ -325,35 +297,44 @@ export default function EmployeesView() {
             />
           </FormField>
 
-          <FormField label="E-mail Address" labelClassName="font-semibold block text-slate-700">
+          <FormField label="E-mail Address">
             <input
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="e.g. j.doe@sengjie.com"
-              className={employeeFieldInputClassName}
+              className={fieldInputClassName}
             />
           </FormField>
 
-          <FormField label="Phone Contact" labelClassName="font-semibold block text-slate-700">
+          <FormField label="Phone Contact">
             <input
               type="text"
               value={contactNo}
               onChange={(e) => setContactNo(e.target.value)}
               placeholder="e.g. +60 12-345-6789"
-              className={employeeFieldInputClassName}
+              className={fieldInputClassName}
             />
           </FormField>
-
-          <DialogFooter>
-            <DialogCancelButton onClick={() => setIsFormOpen(false)} />
-            <DialogSubmitButton className="shadow-sm">
-              {editingEmployee ? 'Save Changes' : 'Create Record'}
-            </DialogSubmitButton>
-          </DialogFooter>
-        </form>
-      </Dialog>
+        </div>
+      </Sheet>
 
     </div>
+  );
+}
+
+// Placeholder shown in the grid while the roster is loading
+function EmployeeCardSkeleton() {
+  return (
+    <Card className="p-5 space-y-3">
+      <div className="flex items-center gap-3">
+        <Skeleton className="h-10 w-10 rounded-full shrink-0" />
+        <Skeleton className="h-4 w-32" />
+      </div>
+      <div className="pt-3 border-t border-border space-y-2">
+        <Skeleton className="h-3 w-full" />
+        <Skeleton className="h-3 w-2/3" />
+      </div>
+    </Card>
   );
 }

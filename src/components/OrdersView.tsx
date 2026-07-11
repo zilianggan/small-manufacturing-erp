@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   getSalesOrders, createSalesQuotation, updateSalesOrder, convertToSalesOrder,
   startProduction, confirmProductionDone, markDelivered, cancelSalesOrder, deleteSalesOrder,
@@ -16,26 +16,47 @@ import { getMaterials } from '../services/MaterialService';
 import { getMaterialCategories } from '../services/SystemAdminService';
 import { getClients } from '../services/ContactsService';
 import { SalesHeader, Client, Product, Material, MaterialCategory, Attachment } from '../types';
-import { Plus, Calendar, Check, CheckCheck, Factory, Paperclip, Trash2, Edit, FileText, ArrowRightCircle, Eye, Filter } from 'lucide-react';
+import { Plus, Calendar, Check, CheckCheck, Factory, Paperclip, Trash2, Edit, FileText, ArrowRightCircle, Eye } from 'lucide-react';
 import AttachmentSection from './AttachmentSection';
 import SalesQuotationModal from './SalesQuotationModal';
 import InvoiceModal from './InvoiceModal';
 import ProductionCompletionModal from './ProductionCompletionModal';
 import SalesOrderDetailView from './SalesOrderDetailView';
-import LoadingSpinner from './LoadingSpinner';
 import ComboBox from './ComboBox';
 import FilterDialog from './FilterDialog';
-import SortableTh from './SortableTh';
-import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, FormField, SearchInput, useToast, useConfirm, ActionsMenu } from './ui';
+import { PageHeader, SectionCard, FilterBar, DataTable } from './shell';
+import type { DataTableColumn, FilterChip } from './shell';
+import {
+  Button, Badge, Sheet, FormField, fieldInputClassName, ActionsMenu,
+  Tabs, TabsList, TabsTrigger, useToast, useConfirm,
+} from './ui';
+import type { ActionMenuItem } from './ui';
+import { useFadeInOnMount } from '../hooks/useFadeInOnMount';
 import { CallAPI } from './UIHelper';
-import { debounce } from 'lodash'
+import { debounce } from 'lodash';
 
 type OrderTab = 'QUOTATION' | 'SO';
 type FormMode = 'CREATE' | 'EDIT' | 'CONVERT';
 
+// 'items' (Product & Quantity) has no single backing column — sales_detail is
+// a joined child list, so PostgREST can't order by it. Sorted client-side
+// over whatever's currently loaded, same trick PurchasesView.tsx uses for its
+// joined/derived "Material Details" column.
+type DisplaySortField = SalesSortField | 'items';
+const SERVER_SORT_FIELDS: readonly string[] = ['reference', 'client', 'date', 'totalAmount'];
+
+const STATUS_META: Record<SalesHeader['status'], { label: string; variant: 'default' | 'warning' | 'success' | 'destructive' | 'secondary' }> = {
+  QUOTATION: { label: 'Quotation', variant: 'default' },
+  ORDERED: { label: 'Pending Production', variant: 'warning' },
+  IN_PRODUCTION: { label: 'In Production', variant: 'default' },
+  DONE_IN_PRODUCTION: { label: 'Done in Production', variant: 'secondary' },
+  DELIVERED: { label: 'Delivered', variant: 'success' },
+  CANCELLED: { label: 'Cancelled', variant: 'destructive' },
+};
+
 interface OrdersViewProps {
-  // Cross-tab drill-in: ProductDetailView.tsx's/MaterialDetailView.tsx's
-  // inventory list links here via App.tsx passing a pending sales header id,
+  // Cross-tab drill-in: ProductView.tsx's/MaterialView.tsx's inventory list
+  // links here via App.tsx passing a pending sales header id,
   // since Orders/Product/Material are separate top-level tabs with no shared
   // router.
   initialOrderId?: string | null;
@@ -50,11 +71,21 @@ interface OrdersViewProps {
   onReturnToOrigin?: () => void;
 }
 
+/**
+ * Sales Contracts — table-first ledger (Pattern C) with a Quotation/Sales
+ * Order tab switch, mirroring PurchasesView.tsx. Selecting a row swaps the
+ * whole page for SalesOrderDetailView instead of a Sheet drawer: the detail
+ * has a longer status-driven lifecycle (production stages) and is also a
+ * cross-tab navigation target, so a full page keeps the Back button and
+ * origin-return behavior simple.
+ */
 export default function OrdersView({ initialOrderId, onInitialOrderHandled, initialOrderOrigin, onReturnToOrigin }: OrdersViewProps = {}) {
   const toast = useToast();
   const confirm = useConfirm();
+  const contentRef = useFadeInOnMount<HTMLDivElement>([]);
+
   const [activeTab, setActiveTab] = useState<OrderTab>('QUOTATION');
-  const [searchQuery, setSearchQuery] = useState([{ search: '' }, { search: '' }]);
+  const [searchQuery, setSearchQuery] = useState<Record<OrderTab, string>>({ QUOTATION: '', SO: '' });
   const [orders, setOrders] = useState<SalesHeader[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -71,6 +102,9 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, init
   // initialOrderId drill-in (Back should return to that origin) or a plain
   // click on a row in this view's own list (Back should just close locally).
   const [detailOpenedExternally, setDetailOpenedExternally] = useState(false);
+  const refreshSelectedOrder = (id: string) => {
+    getSalesOrderById(id).then((order) => { if (order) setSelectedOrder(order); }).catch(console.error);
+  };
 
   const openOrderDetail = (order: SalesHeader) => {
     setDetailOpenedExternally(false);
@@ -84,13 +118,6 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, init
       setSelectedOrder(null);
     }
   };
-
-  useEffect(() => {
-    getClients().then(setClients).catch(console.error);
-    getProducts().then(setProducts).catch(console.error);
-    getMaterials().then(setMaterials).catch(console.error);
-    CallAPI(getMaterialCategories, { onCompleted: setMaterialCategories, onError: console.error });
-  }, []);
 
   // Cross-tab drill-in: fetch and open the order directly by id (independent
   // of whatever tab/search filter is currently active), then tell the parent
@@ -109,6 +136,13 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, init
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialOrderId]);
+
+  useEffect(() => {
+    getClients().then(setClients).catch(console.error);
+    getProducts().then(setProducts).catch(console.error);
+    getMaterials().then(setMaterials).catch(console.error);
+    CallAPI(getMaterialCategories, { onCompleted: setMaterialCategories, onError: console.error });
+  }, []);
 
   const activeProducts = useMemo(
     () => products.filter(p => p.status !== 'INACTIVE'),
@@ -136,33 +170,41 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, init
   const [filterProductSearch, setFilterProductSearch] = useState('');
 
   // ─── Sort ─────────────────────────────────────────────────────────────
-  const [sortField, setSortField] = useState<SalesSortField>('date');
+  const [sortField, setSortField] = useState<DisplaySortField>('date');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
+  const isServerSort = SERVER_SORT_FIELDS.includes(sortField);
+
+  // Guards against out-of-order responses: switching tabs (or typing a new
+  // search) quickly fires a new request before the previous one resolves —
+  // without this, an older response landing last overwrites the table with
+  // the wrong tab's data.
+  const requestIdRef = useRef(0);
 
   const loadOrders = (tab: OrderTab, search: string = '') => {
+    const requestId = ++requestIdRef.current;
     setLoading(true);
-    CallAPI(() => getSalesOrders(tab === 'QUOTATION' ? 'QUOTATION' : 'SO', search, { filters: appliedFilters, sortField, sortDir }), {
-      onCompleted: (data) => { setOrders(data); setLoading(false); },
-      onError: (err) => { console.error(err); setLoading(false); },
+    CallAPI(() => getSalesOrders(tab, search, { filters: appliedFilters, sortField: (isServerSort ? sortField : 'date') as SalesSortField, sortDir: isServerSort ? sortDir : 'desc' }), {
+      onCompleted: (data) => {
+        if (requestId !== requestIdRef.current) return;
+        setOrders(data);
+        setLoading(false);
+      },
+      onError: (err) => {
+        if (requestId !== requestIdRef.current) return;
+        console.error(err);
+        setLoading(false);
+      },
     });
   };
 
   useEffect(() => {
-    loadOrders(activeTab, searchQuery[activeTab === 'QUOTATION' ? 0 : 1]?.search);
+    loadOrders(activeTab, searchQuery[activeTab]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, appliedFilters, sortField, sortDir]);
 
-  // Keeps the open detail page's data in sync after an edit/transition —
-  // loadOrders() only refreshes the list underneath it.
-  const refreshSelectedOrder = (id: string) => {
-    getSalesOrderById(id).then((order) => { if (order) setSelectedOrder(order); }).catch(console.error);
-  };
-
+  // Debounced search-as-you-type
   const search = useMemo(
-    () =>
-      debounce((text: string) => {
-        loadOrders(activeTab, text);
-      }, 500),
+    () => debounce((text: string) => loadOrders(activeTab, text), 500),
     [activeTab, appliedFilters, sortField, sortDir]
   );
 
@@ -197,12 +239,29 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, init
       .map(p => ({ id: p.id, label: p.name, sublabel: p.code }));
   }, [products, filterProductSearch]);
 
-  const hasActiveFilters = !!(appliedFilters.clientIds?.length || appliedFilters.productIds?.length || appliedFilters.dateFrom || appliedFilters.dateTo);
+  const filterChips: FilterChip[] = [
+    ...(appliedFilters.clientIds?.length ? [{ key: 'clients', label: `${appliedFilters.clientIds.length} client${appliedFilters.clientIds.length === 1 ? '' : 's'}`, onRemove: () => setAppliedFilters(f => ({ ...f, clientIds: [] })) }] : []),
+    ...(appliedFilters.productIds?.length ? [{ key: 'products', label: `${appliedFilters.productIds.length} product${appliedFilters.productIds.length === 1 ? '' : 's'}`, onRemove: () => setAppliedFilters(f => ({ ...f, productIds: [] })) }] : []),
+    ...(appliedFilters.dateFrom || appliedFilters.dateTo ? [{ key: 'date', label: `${appliedFilters.dateFrom || '…'} → ${appliedFilters.dateTo || '…'}`, onRemove: () => setAppliedFilters(f => ({ ...f, dateFrom: undefined, dateTo: undefined })) }] : []),
+  ];
+  const activeFilterCount = (appliedFilters.clientIds?.length || 0) + (appliedFilters.productIds?.length || 0) + (appliedFilters.dateFrom || appliedFilters.dateTo ? 1 : 0);
 
-  const toggleSort = (key: SalesSortField) => {
-    if (key === sortField) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
-    else { setSortField(key); setSortDir('asc'); }
+  const toggleSort = (key: string) => {
+    const field = key as DisplaySortField;
+    if (field === sortField) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
+    else { setSortField(field); setSortDir('asc'); }
   };
+
+  // Client-side re-sort for the 'items' column — applied over whatever's
+  // currently loaded (server-sorted columns skip this and pass through).
+  const displayedOrders = useMemo(() => {
+    if (isServerSort) return orders;
+    const firstItemLabel = (o: SalesHeader) => o.details[0]?.productName || '';
+    return [...orders].sort((a, b) => {
+      const cmp = firstItemLabel(a).localeCompare(firstItemLabel(b));
+      return sortDir === 'asc' ? cmp : -cmp;
+    });
+  }, [orders, sortField, sortDir, isServerSort]);
 
   // Quotation print modal
   const [selectedQuotation, setSelectedQuotation] = useState<SalesHeader | null>(null);
@@ -212,8 +271,8 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, init
   const [selectedInvoiceOrder, setSelectedInvoiceOrder] = useState<SalesHeader | null>(null);
   const [isInvoiceOpen, setIsInvoiceOpen] = useState(false);
 
-  // Form dialog state
-  const [showFormDialog, setShowFormDialog] = useState(false);
+  // Form drawer state
+  const [showFormSheet, setShowFormSheet] = useState(false);
   const [formMode, setFormMode] = useState<FormMode>('CREATE');
   const [editHeaderId, setEditHeaderId] = useState<string | null>(null);
   const [formClientId, setFormClientId] = useState('');
@@ -227,6 +286,7 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, init
   const [tempMaterialId, setTempMaterialId] = useState('');
   const [tempMaterialQty, setTempMaterialQty] = useState(1);
   const [formAttachment, setFormAttachment] = useState<Attachment | undefined>(undefined);
+  const [submitting, setSubmitting] = useState(false);
 
   // Clears the pending (not-yet-committed) product+material staging fields.
   // Mirrors PurchasesView.tsx's clearTempMaterials — without this, values
@@ -260,7 +320,7 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, init
   const openCreateForm = () => {
     resetForm();
     setFormMode('CREATE');
-    setShowFormDialog(true);
+    setShowFormSheet(true);
   };
 
   const detailsFromHeader = (order: SalesHeader): SalesDetailInput[] =>
@@ -288,7 +348,7 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, init
     setFormRemark(order.remark || '');
     setFormAttachment(order.attachments?.[0]);
     setFormDetails(detailsFromHeader(order));
-    setShowFormDialog(true);
+    setShowFormSheet(true);
   };
 
   const openConvertForm = (order: SalesHeader) => {
@@ -300,7 +360,7 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, init
     setFormAttachment(order.attachments?.[0]);
     setFormDetails(detailsFromHeader(order));
     setFormDeliveryDate(defaultDeliveryDate());
-    setShowFormDialog(true);
+    setShowFormSheet(true);
   };
 
   // Product catalog rows carry a sellingPrice, so selecting a product
@@ -353,12 +413,7 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, init
       materials: tempMaterials,
     }]);
 
-    setTempProductId('');
-    setTempQuantity(1);
-    setTempUnitPrice(0);
-    setTempMaterials([]);
-    setTempMaterialId('');
-    setTempMaterialQty(1);
+    clearTempStaging();
   };
 
   const handleRemoveFormItem = (index: number) => {
@@ -373,8 +428,7 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, init
     setFormDetails(formDetails.map((d, idx) => idx === index ? { ...d, unitPrice, totalPrice: d.quantity * unitPrice } : d));
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async () => {
     if (!formClientId) return;
 
     // Check if there's a pending product line selected but not added yet, and
@@ -408,6 +462,7 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, init
       details: finalDetails,
     };
 
+    setSubmitting(true);
     if (formMode === 'CREATE') {
       await CallAPI(() => createSalesQuotation(input), {
         onCompleted: () => { loadOrders(activeTab); toast.success('Sales quotation created.'); },
@@ -425,7 +480,8 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, init
       });
     }
 
-    setShowFormDialog(false);
+    setSubmitting(false);
+    setShowFormSheet(false);
     resetForm();
   };
 
@@ -522,7 +578,7 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, init
     setIsInvoiceOpen(true);
   };
 
-  const dialogTitle = formMode === 'CREATE' ? 'Create Sales Quotation'
+  const sheetTitle = formMode === 'CREATE' ? 'Create Sales Quotation'
     : formMode === 'EDIT' ? 'Edit Sales Quotation'
       : 'Confirm Sales Order';
 
@@ -530,10 +586,67 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, init
     : formMode === 'EDIT' ? 'Update Quotation'
       : 'Confirm Sales Order';
 
-  return (
-    <div className="space-y-6" id="orders-view">
-      {loading && <LoadingSpinner message="Processing sales contracts..." subtitle="SALES_CONTRACTS" />}
+  const buildRowActions = (o: SalesHeader): ActionMenuItem[] => [
+    { label: 'View', icon: <Eye className="w-3.5 h-3.5" />, onClick: () => openOrderDetail(o) },
+    { label: 'Edit', icon: <Edit className="w-3.5 h-3.5" />, onClick: () => openEditForm(o), hidden: !['QUOTATION', 'ORDERED'].includes(o.status) },
+    { label: 'Delete', icon: <Trash2 className="w-3.5 h-3.5" />, onClick: () => handleDelete(o.id), danger: true, hidden: !['QUOTATION', 'CANCELLED'].includes(o.status) },
+    { label: 'Generate Quotation', icon: <FileText className="w-3.5 h-3.5" />, onClick: () => openQuotationDoc(o), hidden: o.status !== 'QUOTATION' },
+    { label: 'Proceed to Sales Order', icon: <ArrowRightCircle className="w-3.5 h-3.5" />, onClick: () => openConvertForm(o), hidden: o.status !== 'QUOTATION' },
+    { label: 'Generate Tax Invoice', icon: <FileText className="w-3.5 h-3.5" />, onClick: () => openInvoiceDoc(o), hidden: !['ORDERED', 'IN_PRODUCTION', 'DONE_IN_PRODUCTION', 'DELIVERED'].includes(o.status) },
+    { label: 'Proceed to Production', icon: <Factory className="w-3.5 h-3.5" />, onClick: () => handleStartProduction(o), disabled: transitioningId === o.id, hidden: o.status !== 'ORDERED' },
+    { label: 'Mark Production Done', icon: <CheckCheck className="w-3.5 h-3.5" />, onClick: () => openProductionCompletion(o), disabled: transitioningId === o.id, hidden: o.status !== 'IN_PRODUCTION' },
+    { label: 'Mark as Delivered', icon: <Check className="w-3.5 h-3.5" />, onClick: () => handleMarkDelivered(o.id), disabled: transitioningId === o.id, hidden: o.status !== 'DONE_IN_PRODUCTION' },
+    { label: 'Cancel Order', icon: <Trash2 className="w-3.5 h-3.5" />, onClick: () => handleCancel(o), danger: true, hidden: !['ORDERED', 'IN_PRODUCTION'].includes(o.status) },
+  ];
 
+  const columns: DataTableColumn<SalesHeader>[] = [
+    { key: 'reference', header: 'Contract ID', sortable: true, className: 'w-32', render: (o) => <span className="font-mono font-medium text-foreground">{o.salesNo}</span> },
+    { key: 'client', header: 'Client', sortable: true, className: 'w-40', render: (o) => <span className="font-medium text-card-foreground truncate">{o.clientName}</span> },
+    {
+      key: 'items', header: 'Product & Quantity', sortable: true,
+      render: (o) => (
+        <div className="min-w-0 max-w-xs space-y-1.5">
+          <div className="divide-y divide-border">
+            {o.details.map((item, idx) => (
+              <div key={item.detailId || idx} className="py-1 first:pt-0 last:pb-0 min-w-0">
+                <div className="font-medium text-card-foreground truncate">{item.productName}</div>
+                <div className="text-[11px] text-muted-foreground font-mono">Qty {item.quantity} @ RM {item.unitPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+              </div>
+            ))}
+          </div>
+          {o.attachments?.[0] && (
+            <a
+              href={o.attachments[0].dataUrl}
+              download={o.attachments[0].name}
+              onClick={(e) => e.stopPropagation()}
+              className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-primary/10 hover:bg-primary/20 text-primary rounded text-[10px] font-mono transition-colors"
+              title="Download attachment"
+            >
+              <Paperclip className="w-2.5 h-2.5 shrink-0" />
+              <span className="truncate max-w-[120px]">{o.attachments[0].name}</span>
+            </a>
+          )}
+        </div>
+      )
+    },
+    {
+      key: 'date', header: activeTab === 'QUOTATION' ? 'Order Date' : 'Delivery Due', sortable: true, className: 'w-32',
+      render: (o) => (
+        <div className="inline-flex items-center gap-1.5 text-muted-foreground font-mono text-[11px]">
+          <Calendar className="w-3.5 h-3.5" />
+          <span>{activeTab === 'QUOTATION' ? o.orderDate : o.deliveryDate}</span>
+        </div>
+      )
+    },
+    { key: 'totalAmount', header: 'Contract Total', sortable: true, align: 'right', className: 'w-32', render: (o) => <span className="font-mono font-medium text-foreground">RM {o.totalAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span> },
+    ...(activeTab === 'SO' ? [{
+      key: 'status', header: 'Status', className: 'w-[1%] whitespace-nowrap',
+      render: (o: SalesHeader) => <Badge variant={STATUS_META[o.status].variant}>{STATUS_META[o.status].label}</Badge>,
+    } as DataTableColumn<SalesHeader>] : []),
+  ];
+
+  return (
+    <div ref={contentRef} className="flex flex-col gap-5 h-full min-h-0" id="orders-view">
       {selectedOrder ? (
         <SalesOrderDetailView
           order={selectedOrder}
@@ -552,63 +665,48 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, init
         />
       ) : (
       <>
-      {/* Tab toggle + search + actions */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div className="flex space-x-1 p-1 bg-slate-100 rounded-lg border border-slate-200/50 self-start">
-          <button
-            onClick={() => setActiveTab('QUOTATION')}
-            className={`px-4 py-1.5 text-xs font-medium rounded-md font-sans transition-all ${activeTab === 'QUOTATION' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
-          >
-            Quotation
-          </button>
-          <button
-            onClick={() => setActiveTab('SO')}
-            className={`px-4 py-1.5 text-xs font-medium rounded-md font-sans transition-all ${activeTab === 'SO' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
-          >
-            Sales Order
-          </button>
-        </div>
+      <PageHeader
+        title="Sales Contracts"
+        description="Manage client quotations and sales orders."
+        actions={activeTab === 'QUOTATION' && <Button onClick={openCreateForm}><Plus className="w-4 h-4" /> New Quotation</Button>}
+      />
 
-        <div className="flex items-center space-x-2">
-          <SearchInput
-            value={searchQuery?.[activeTab === 'QUOTATION' ? 0 : 1]?.search}
-            onChange={(e: any) => {
-              setSearchQuery((prev) => {
-                const updated = [...prev];
-                const index = activeTab === "QUOTATION" ? 0 : 1;
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as OrderTab)}>
+        <TabsList>
+          <TabsTrigger value="QUOTATION">Quotation</TabsTrigger>
+          <TabsTrigger value="SO">Sales Order</TabsTrigger>
+        </TabsList>
+      </Tabs>
 
-                updated[index] = {
-                  ...updated[index],
-                  search: e,
-                };
+      <SectionCard title="Filters" className="shrink-0" contentClassName="p-4">
+        <FilterBar
+          search={searchQuery[activeTab]}
+          onSearchChange={(v) => { setSearchQuery(prev => ({ ...prev, [activeTab]: v })); search(v); }}
+          searchPlaceholder="Search by client or reference no..."
+          chips={filterChips}
+          onOpenFilters={openFilterDialog}
+          filterCount={activeFilterCount}
+        />
+      </SectionCard>
 
-                return updated;
-              });
-              search(e)
-            }}
-            placeholder="Search by client or reference no..."
+      <SectionCard title={activeTab === 'QUOTATION' ? 'Quotations' : 'Sales Orders'} description={`${orders.length} record${orders.length === 1 ? '' : 's'}`} className="flex-1 min-h-0" contentClassName="p-0 flex-1 min-h-0 flex flex-col">
+        <div className="flex-1 min-h-0 overflow-auto">
+          <DataTable
+            columns={columns}
+            rows={displayedOrders}
+            rowKey={(o) => o.id}
+            sortField={sortField}
+            sortDir={sortDir}
+            onSort={toggleSort}
+            onRowClick={openOrderDetail}
+            rowActions={(o) => <ActionsMenu items={buildRowActions(o)} />}
+            loading={loading}
+            emptyState={`No ${activeTab === 'QUOTATION' ? 'quotations' : 'sales orders'} found.`}
           />
-          <button
-            onClick={openFilterDialog}
-            className={`relative flex items-center space-x-1.5 px-3 py-2 border rounded-lg text-xs font-medium transition-colors ${hasActiveFilters ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-600'}`}
-          >
-            <Filter className="w-3.5 h-3.5" />
-            <span>Filter</span>
-            {hasActiveFilters && <span className="absolute -top-1 -right-1 w-2 h-2 bg-blue-600 rounded-full" />}
-          </button>
-          {activeTab === 'QUOTATION' && (
-            <button
-              onClick={openCreateForm}
-              className="flex items-center space-x-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium transition-colors font-sans shadow-sm"
-            >
-              <Plus className="w-4 h-4" />
-              <span>New Quotation</span>
-            </button>
-          )}
         </div>
-      </div>
+      </SectionCard>
 
-      {/* Filter dialog */}
+      {/* Advanced filter dialog */}
       <FilterDialog
         open={showFilterDialog}
         onClose={() => setShowFilterDialog(false)}
@@ -659,16 +757,22 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, init
         }}
       />
 
-      {/* Creation/Edit/Convert form as Dialog Modal */}
-      <Dialog
-        open={showFormDialog}
-        onClose={() => { clearTempStaging(); setShowFormDialog(false); }}
-        title={dialogTitle}
+      {/* Create/Edit/Convert drawer */}
+      <Sheet
+        open={showFormSheet}
+        onClose={() => { clearTempStaging(); setShowFormSheet(false); }}
+        title={sheetTitle}
+        width="w-full sm:max-w-2xl"
+        footer={
+          <div className="flex items-center justify-end gap-2">
+            <Button variant="outline" onClick={() => { clearTempStaging(); setShowFormSheet(false); }}>Cancel</Button>
+            <Button onClick={handleSubmit} disabled={submitting || !formClientId}>{submitting ? 'Saving...' : submitLabel}</Button>
+          </div>
+        }
       >
-        <form onSubmit={handleSubmit} className="p-5 space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs text-slate-600">
-
-            <FormField label="Client Company *" labelClassName="font-semibold block text-slate-700" colSpan="sm:col-span-2">
+        <div className="p-5 space-y-5">
+          <div data-fade-item className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <FormField label="Client Company *" colSpan="sm:col-span-2">
               <ComboBox
                 required
                 value={formClientId}
@@ -679,333 +783,162 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, init
             </FormField>
 
             {formMode === 'CONVERT' && (
-              <FormField label="Delivery Date *" labelClassName="font-semibold block text-slate-700" colSpan="sm:col-span-2">
-                <input
-                  type="date"
-                  required
-                  value={formDeliveryDate}
-                  onChange={(e) => setFormDeliveryDate(e.target.value)}
-                  className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 text-slate-800"
-                />
+              <FormField label="Delivery Date *" colSpan="sm:col-span-2">
+                <input type="date" required value={formDeliveryDate} onChange={(e) => setFormDeliveryDate(e.target.value)} className={fieldInputClassName} />
               </FormField>
             )}
+          </div>
 
-            {/* Contract Line Items (products, each with its own nested material list) */}
-            <div className="sm:col-span-2 border border-slate-150 rounded-lg p-3 bg-slate-50/50 space-y-2">
-              <span className="font-semibold block text-slate-700 text-xs">Contract Line Items ({formDetails.length})</span>
-              {formDetails.length === 0 ? (
-                <div className="text-center py-4 text-slate-400 border border-dashed border-slate-200 rounded-lg bg-white text-[11px]">
-                  No items added yet. Specify product details below to add items to this contract.
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {formDetails.map((item, idx) => (
-                    <div key={idx} className="border border-slate-200 rounded-lg bg-white p-2.5">
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="font-semibold text-slate-800 text-[11px] flex-1">{item.productName}</span>
-                        <div className="flex items-center gap-1.5 text-[10px] text-slate-500 font-mono">
-                          <span>Qty:</span>
-                          <input
-                            type="number"
-                            min="1"
-                            value={item.quantity}
-                            onChange={(e) => handleUpdateFormItemQuantity(idx, Number(e.target.value))}
-                            className="w-14 px-1.5 py-1 bg-white border border-slate-200 rounded text-right font-mono text-[11px] focus:outline-none focus:border-blue-500"
-                          />
-                          <span>@ RM</span>
-                          <input
-                            type="number"
-                            min="0"
-                            step="0.01"
-                            value={item.unitPrice}
-                            onChange={(e) => handleUpdateFormItemUnitPrice(idx, Number(e.target.value))}
-                            className="w-20 px-1.5 py-1 bg-white border border-slate-200 rounded text-right font-mono text-[11px] focus:outline-none focus:border-blue-500"
-                          />
-                          <span>= RM {item.totalPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                        </div>
-                        <button type="button" onClick={() => handleRemoveFormItem(idx)} className="text-red-500 hover:text-red-700 p-1 shrink-0" title="Remove line item">
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+          <div data-fade-item className="border border-border rounded-xl p-3 bg-secondary/30 space-y-2">
+            <span className="font-semibold block text-foreground text-xs">Contract Line Items ({formDetails.length})</span>
+            {formDetails.length === 0 ? (
+              <div className="text-center py-4 text-muted-foreground border border-dashed border-border rounded-lg bg-card text-[11px]">
+                No items added yet. Specify product details below to add items to this contract.
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {formDetails.map((item, idx) => (
+                  <div key={idx} className="border border-border rounded-lg bg-card p-2.5">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="font-semibold text-card-foreground text-[11px] flex-1">{item.productName}</span>
+                      <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground font-mono">
+                        <span>Qty:</span>
+                        <input
+                          type="number" min="1" value={item.quantity}
+                          onChange={(e) => handleUpdateFormItemQuantity(idx, Number(e.target.value))}
+                          className="w-14 px-1.5 py-1 bg-background border border-input rounded text-right font-mono text-[11px] focus:outline-none focus:ring-2 focus:ring-ring/40 focus:border-ring"
+                        />
+                        <span>@ RM</span>
+                        <input
+                          type="number" min="0" step="0.01" value={item.unitPrice}
+                          onChange={(e) => handleUpdateFormItemUnitPrice(idx, Number(e.target.value))}
+                          className="w-20 px-1.5 py-1 bg-background border border-input rounded text-right font-mono text-[11px] focus:outline-none focus:ring-2 focus:ring-ring/40 focus:border-ring"
+                        />
+                        <span>= RM {item.totalPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                       </div>
-                      {item.materials.length > 0 && (
-                        <div className="mt-2 pl-3 border-l-2 border-slate-100 space-y-0.5">
-                          {item.materials.map((m, midx) => (
-                            <div key={midx} className="text-[10px] text-slate-500 font-mono">
-                              {m.materialName} — planned {m.plannedQuantity}
-                            </div>
-                          ))}
-                        </div>
-                      )}
+                      <button type="button" onClick={() => handleRemoveFormItem(idx)} className="text-destructive hover:text-destructive/80 p-1 shrink-0" title="Remove line item">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
                     </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Inline Add Product Panel */}
-            <div className="sm:col-span-2 border border-blue-100 rounded-lg p-4 bg-blue-50/20 grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
-              <FormField
-                label="Product Selection"
-                labelClassName="font-semibold block text-slate-700 text-[10px] uppercase tracking-wider"
-                colSpan="sm:col-span-6"
-              >
-                <ComboBox
-                  value={tempProductId}
-                  onChange={handleProductSelect}
-                  noneLabel="-- Choose Product --"
-                  options={activeProducts.map(p => ({ value: p.id, label: p.name, sublabel: `RM ${p.sellingPrice.toLocaleString('en-US')}` }))}
-                />
-              </FormField>
-
-              <FormField
-                label="Quantity"
-                labelClassName="font-semibold block text-slate-700 text-[10px] uppercase tracking-wider"
-                colSpan="sm:col-span-2"
-              >
-                <input
-                  type="number"
-                  min="1"
-                  value={tempQuantity}
-                  onChange={(e) => setTempQuantity(Number(e.target.value))}
-                  className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg focus:outline-none text-xs text-slate-800"
-                />
-              </FormField>
-
-              <FormField
-                label="Unit Price (RM)"
-                labelClassName="font-semibold block text-slate-700 text-[10px] uppercase tracking-wider"
-                colSpan="sm:col-span-2"
-              >
-                <input
-                  type="number"
-                  min="0"
-                  step="1"
-                  value={tempUnitPrice}
-                  onChange={(e) => setTempUnitPrice(Number(e.target.value))}
-                  className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg focus:outline-none text-xs text-slate-800"
-                />
-              </FormField>
-
-              {/* Materials for this line — staged until "+ Add Item" commits the whole line */}
-              <div className="sm:col-span-12 border border-emerald-100 rounded-lg p-3 bg-emerald-50/20 space-y-2">
-                <span className="font-semibold block text-slate-700 text-[10px] uppercase tracking-wider">Materials for this line ({tempMaterials.length})</span>
-                {tempMaterials.length > 0 && (
-                  <div className="space-y-1">
-                    {tempMaterials.map((m, midx) => (
-                      <div key={midx} className="flex items-center justify-between bg-white border border-slate-200 rounded px-2 py-1">
-                        <span className="text-[10px] text-slate-700">{m.materialName} — planned {m.plannedQuantity}</span>
-                        <button type="button" onClick={() => handleRemoveTempMaterial(midx)} className="text-red-500 hover:text-red-700 p-0.5" title="Remove material">
-                          <Trash2 className="w-3 h-3" />
-                        </button>
+                    {item.materials.length > 0 && (
+                      <div className="mt-2 pl-3 border-l-2 border-border space-y-0.5">
+                        {item.materials.map((m, midx) => (
+                          <div key={midx} className="text-[10px] text-muted-foreground font-mono">
+                            {m.materialName} — planned {m.plannedQuantity}
+                          </div>
+                        ))}
                       </div>
-                    ))}
+                    )}
                   </div>
-                )}
-                <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-end">
-                  <div className="sm:col-span-7">
-                    <ComboBox
-                      value={tempMaterialId}
-                      onChange={setTempMaterialId}
-                      noneLabel="-- Choose Material --"
-                      options={rawMaterials.map(m => {
-                        const category = materialCategoryMap.get(m.materialCategoryId || '');
-                        return { value: m.id, label: m.name, sublabel: category ? category.name : `Stock: ${m.quantity}` };
-                      })}
-                    />
-                  </div>
-                  <div className="sm:col-span-3">
-                    <input
-                      type="number"
-                      min="1"
-                      value={tempMaterialQty}
-                      onChange={(e) => setTempMaterialQty(Number(e.target.value))}
-                      className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg focus:outline-none text-xs text-slate-800"
-                    />
-                  </div>
-                  <div className="sm:col-span-2">
-                    <button
-                      type="button"
-                      onClick={handleAddTempMaterial}
-                      disabled={!tempMaterialId || tempMaterialQty <= 0}
-                      className="w-full py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-semibold transition-colors shadow-sm disabled:bg-slate-200 disabled:text-slate-400 disabled:shadow-none"
-                    >
-                      + Add
-                    </button>
-                  </div>
-                </div>
+                ))}
               </div>
+            )}
+          </div>
 
-              <div className="sm:col-span-12">
-                <button
-                  type="button"
-                  onClick={handleAddTempItem}
-                  disabled={!tempProductId || tempQuantity <= 0}
-                  className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[10px] font-semibold transition-colors shadow-sm disabled:bg-slate-200 disabled:text-slate-400 disabled:shadow-none"
-                >
-                  + Add Item
-                </button>
-              </div>
-            </div>
+          <div data-fade-item className="border border-border rounded-xl p-4 bg-secondary/30 grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
+            <FormField label="Product Selection" labelClassName="font-semibold block text-muted-foreground text-[10px] uppercase tracking-wider" colSpan="sm:col-span-6">
+              <ComboBox
+                value={tempProductId}
+                onChange={handleProductSelect}
+                noneLabel="-- Choose Product --"
+                options={activeProducts.map(p => ({ value: p.id, label: p.name, sublabel: `RM ${p.sellingPrice.toLocaleString('en-US')}` }))}
+              />
+            </FormField>
 
-            {/* Subtotals Block */}
-            <div className="bg-blue-50/70 border border-blue-100 rounded-lg p-3 sm:col-span-2 flex items-center justify-between">
-              <div>
-                <span className="font-semibold block text-[11px] text-blue-900">Projected Sales Contract Value:</span>
-                <span className="text-[10px] text-blue-700">Calculated sum of all added items on this sales contract.</span>
-              </div>
-              <div className="font-mono text-base font-bold text-blue-900">
-                RM {Math.max(0, formDetails.reduce((sum, item) => sum + item.totalPrice, 0) + (tempProductId && tempQuantity > 0 ? tempQuantity * tempUnitPrice : 0)).toLocaleString('en-US')}
-              </div>
-            </div>
+            <FormField label="Quantity" labelClassName="font-semibold block text-muted-foreground text-[10px] uppercase tracking-wider" colSpan="sm:col-span-2">
+              <input
+                type="number" min="1" value={tempQuantity}
+                onChange={(e) => setTempQuantity(Number(e.target.value))}
+                className={fieldInputClassName}
+              />
+            </FormField>
 
-            <FormField label="Remark (Optional)" labelClassName="font-semibold block text-slate-700" colSpan="sm:col-span-2">
-              <textarea
-                value={formRemark}
-                onChange={(e) => setFormRemark(e.target.value)}
-                rows={2}
-                className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 text-slate-800"
+            <FormField label="Unit Price (RM)" labelClassName="font-semibold block text-muted-foreground text-[10px] uppercase tracking-wider" colSpan="sm:col-span-2">
+              <input
+                type="number" min="0" step="1" value={tempUnitPrice}
+                onChange={(e) => setTempUnitPrice(Number(e.target.value))}
+                className={fieldInputClassName}
               />
             </FormField>
 
             <div className="sm:col-span-2">
-              <AttachmentSection
-                attachment={formAttachment}
-                onAttachmentChange={setFormAttachment}
-                label="Signed Contract or Specifications Doc (Optional)"
-                helperText="Upload any business contract, product details, or custom design spec (Max 1MB)"
-              />
+              <Button type="button" className="w-full" onClick={handleAddTempItem} disabled={!tempProductId || tempQuantity <= 0}>
+                + Add Item
+              </Button>
             </div>
 
-          </div>
-          <DialogFooter>
-            <DialogCancelButton onClick={() => { clearTempStaging(); setShowFormDialog(false); }} />
-            <DialogSubmitButton>{submitLabel}</DialogSubmitButton>
-          </DialogFooter>
-        </form>
-      </Dialog>
-
-      {/* Orders Listing Table */}
-      <Card className="overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs border-collapse">
-            <thead>
-              <tr className="bg-slate-50/75 border-b border-slate-200 text-slate-500 uppercase font-mono tracking-wider dark:bg-slate-800/80 dark:border-slate-700 dark:text-slate-400">
-                <SortableTh label="Contract ID" sortKey="reference" activeKey={sortField} dir={sortDir} onClick={toggleSort} thClassName="p-4" />
-                <SortableTh label="Client" sortKey="client" activeKey={sortField} dir={sortDir} onClick={toggleSort} thClassName="p-4" />
-                <th className="p-4">Product & Quantity</th>
-                <SortableTh label={activeTab === 'QUOTATION' ? 'Order Date' : 'Delivery Due'} sortKey="date" activeKey={sortField} dir={sortDir} onClick={toggleSort} thClassName="p-4" />
-                <SortableTh label="Contract Total" sortKey="totalAmount" activeKey={sortField} dir={sortDir} onClick={toggleSort} thClassName="p-4" />
-                {activeTab === 'SO' && <th className="p-4">Status</th>}
-                <th className="p-4 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 text-slate-700">
-              {orders.length === 0 ? (
-                <tr>
-                  <td colSpan={activeTab === 'SO' ? 7 : 6} className="text-center py-12 text-xs text-slate-400 font-sans">
-                    No {activeTab === 'QUOTATION' ? 'quotations' : 'sales orders'} found matching your search.
-                  </td>
-                </tr>
-              ) : (
-                orders.map((order) => (
-                  <tr key={order.id} className="group hover:bg-slate-50/50 transition-colors">
-
-                    {/* Contract ID */}
-                    <td className="p-4 font-mono font-semibold text-slate-900">{order.salesNo}</td>
-
-                    {/* Client Company */}
-                    <td className="p-4 font-semibold text-slate-900">{order.clientName}</td>
-
-                    {/* Product & Qty */}
-                    <td className="p-4">
-                      <div className="space-y-1">
-                        <div className="space-y-1 max-w-xs">
-                          {order.details.map((item, idx) => (
-                            <div key={item.detailId || idx} className="flex flex-col border-b border-slate-100 last:border-none pb-1 last:pb-0">
-                              <span className="font-semibold text-slate-800">{item.productName}</span>
-                              <span className="text-[10px] text-slate-400 font-mono text-slate-500">
-                                Qty: {item.quantity} {item.quantity > 1 ? 'units' : 'unit'} @ RM {item.unitPrice}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                        {order.attachments?.[0] && (
-                          <div className="pt-1.5 flex items-center">
-                            <a
-                              href={order.attachments[0].dataUrl}
-                              download={order.attachments[0].name}
-                              className="inline-flex items-center space-x-1 px-1.5 py-0.5 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded text-[10px] font-mono transition-colors"
-                              title="Download attachment"
-                            >
-                              <Paperclip className="w-2.5 h-2.5 text-blue-500 shrink-0" />
-                              <span className="truncate max-w-[120px]">{order.attachments[0].name}</span>
-                            </a>
-                          </div>
-                        )}
-                      </div>
-                    </td>
-
-                    {/* Date */}
-                    <td className="p-4">
-                      <div className="flex items-center space-x-1.5 text-slate-600 font-mono text-[11px]">
-                        <Calendar className="w-3.5 h-3.5 text-slate-400" />
-                        <span>{activeTab === 'QUOTATION' ? order.orderDate : order.deliveryDate}</span>
-                      </div>
-                    </td>
-
-                    {/* Contract Value */}
-                    <td className="p-4 font-mono font-semibold text-slate-900">
-                      RM {order.totalAmount.toLocaleString('en-US')}
-                    </td>
-
-                    {/* Status Badge */}
-                    {activeTab === 'SO' && (
-                      <td className="p-4">
-                        <span className={`px-2.5 py-1 rounded-full font-mono text-[10px] font-medium border ${order.status === 'ORDERED' ? 'bg-amber-50 text-amber-800 border-amber-200'
-                          : order.status === 'IN_PRODUCTION' ? 'bg-blue-50 text-blue-800 border-blue-200'
-                            : order.status === 'DONE_IN_PRODUCTION' ? 'bg-violet-50 text-violet-800 border-violet-200'
-                              : order.status === 'DELIVERED' ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
-                                : 'bg-red-50 text-red-800 border-red-200'
-                          }`}>
-                          {order.status === 'ORDERED' ? 'Pending Production'
-                            : order.status === 'IN_PRODUCTION' ? 'In Production'
-                              : order.status === 'DONE_IN_PRODUCTION' ? 'Done in Production'
-                                : order.status}
-                        </span>
-                      </td>
-                    )}
-
-                    {/* Transition actions */}
-                    <td className="p-4 text-right">
-                      <div className="flex items-center justify-end space-x-1.5">
-                        {order.status === 'DELIVERED' && (
-                          <span className="text-[10px] text-emerald-600 font-semibold font-mono px-1.5">✓ Delivered</span>
-                        )}
-                        {order.status === 'CANCELLED' && (
-                          <span className="text-[10px] text-slate-400 font-mono italic px-1.5">Cancelled</span>
-                        )}
-                        <ActionsMenu items={[
-                          { label: 'View', icon: <Eye className="w-3.5 h-3.5" />, onClick: () => openOrderDetail(order) },
-                          { label: 'Edit', icon: <Edit className="w-3.5 h-3.5" />, onClick: () => openEditForm(order), hidden: !['QUOTATION', 'ORDERED'].includes(order.status) },
-                          { label: 'Delete', icon: <Trash2 className="w-3.5 h-3.5" />, onClick: () => handleDelete(order.id), danger: true, hidden: !['QUOTATION', 'CANCELLED'].includes(order.status) },
-                          { label: 'Generate Quotation', icon: <FileText className="w-3.5 h-3.5" />, onClick: () => openQuotationDoc(order), hidden: order.status !== 'QUOTATION' },
-                          { label: 'Proceed to Sales Order', icon: <ArrowRightCircle className="w-3.5 h-3.5" />, onClick: () => openConvertForm(order), hidden: order.status !== 'QUOTATION' },
-                          { label: 'Generate Tax Invoice', icon: <FileText className="w-3.5 h-3.5" />, onClick: () => openInvoiceDoc(order), hidden: !['ORDERED', 'IN_PRODUCTION', 'DONE_IN_PRODUCTION', 'DELIVERED'].includes(order.status) },
-                          { label: 'Proceed to Production', icon: <Factory className="w-3.5 h-3.5" />, onClick: () => handleStartProduction(order), disabled: transitioningId === order.id, hidden: order.status !== 'ORDERED' },
-                          { label: 'Mark Production Done', icon: <CheckCheck className="w-3.5 h-3.5" />, onClick: () => openProductionCompletion(order), disabled: transitioningId === order.id, hidden: order.status !== 'IN_PRODUCTION' },
-                          { label: 'Mark as Delivered', icon: <Check className="w-3.5 h-3.5" />, onClick: () => handleMarkDelivered(order.id), disabled: transitioningId === order.id, hidden: order.status !== 'DONE_IN_PRODUCTION' },
-                          { label: 'Cancel Order', icon: <Trash2 className="w-3.5 h-3.5" />, onClick: () => handleCancel(order), danger: true, hidden: !['ORDERED', 'IN_PRODUCTION'].includes(order.status) },
-                        ]} />
-                      </div>
-                    </td>
-
-                  </tr>
-                ))
+            {/* Materials for this line — staged until "+ Add Item" commits the whole line */}
+            <div className="sm:col-span-12 border border-border rounded-lg p-3 bg-card space-y-2">
+              <span className="font-semibold block text-muted-foreground text-[10px] uppercase tracking-wider">Materials for this line ({tempMaterials.length})</span>
+              {tempMaterials.length > 0 && (
+                <div className="space-y-1">
+                  {tempMaterials.map((m, midx) => (
+                    <div key={midx} className="flex items-center justify-between bg-secondary/30 border border-border rounded px-2 py-1">
+                      <span className="text-[10px] text-card-foreground">{m.materialName} — planned {m.plannedQuantity}</span>
+                      <button type="button" onClick={() => handleRemoveTempMaterial(midx)} className="text-destructive hover:text-destructive/80 p-0.5" title="Remove material">
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
               )}
-            </tbody>
-          </table>
+              <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-end">
+                <div className="sm:col-span-7">
+                  <ComboBox
+                    value={tempMaterialId}
+                    onChange={setTempMaterialId}
+                    noneLabel="-- Choose Material --"
+                    options={rawMaterials.map(m => {
+                      const category = materialCategoryMap.get(m.materialCategoryId || '');
+                      return { value: m.id, label: m.name, sublabel: category ? category.name : `Stock: ${m.quantity}` };
+                    })}
+                  />
+                </div>
+                <div className="sm:col-span-3">
+                  <input
+                    type="number" min="1" value={tempMaterialQty}
+                    onChange={(e) => setTempMaterialQty(Number(e.target.value))}
+                    className={fieldInputClassName}
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <Button type="button" variant="outline" className="w-full" onClick={handleAddTempMaterial} disabled={!tempMaterialId || tempMaterialQty <= 0}>
+                    + Add
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div data-fade-item className="bg-primary/5 border border-primary/20 rounded-xl p-3 flex items-center justify-between">
+            <div>
+              <span className="font-semibold block text-[11px] text-foreground">Projected Sales Contract Value:</span>
+              <span className="text-[10px] text-muted-foreground">Calculated sum of all added items on this sales contract.</span>
+            </div>
+            <div className="font-mono text-base font-bold text-foreground">
+              RM {Math.max(0, formDetails.reduce((sum, item) => sum + item.totalPrice, 0) + (tempProductId && tempQuantity > 0 ? tempQuantity * tempUnitPrice : 0)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </div>
+          </div>
+
+          <FormField label="Remark (Optional)">
+            <textarea
+              value={formRemark}
+              onChange={(e) => setFormRemark(e.target.value)}
+              rows={2}
+              className={fieldInputClassName}
+            />
+          </FormField>
+
+          <div data-fade-item>
+            <AttachmentSection
+              attachment={formAttachment}
+              onAttachmentChange={setFormAttachment}
+              label="Signed Contract or Specifications Doc (Optional)"
+              helperText="Upload any business contract, product details, or custom design spec (Max 1MB)"
+            />
+          </div>
         </div>
-      </Card>
+      </Sheet>
       </>
       )}
 
@@ -1034,7 +967,6 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, init
         onClose={() => setCompletingOrder(null)}
         onSubmit={handleConfirmProductionDone}
       />
-
     </div>
   );
 }

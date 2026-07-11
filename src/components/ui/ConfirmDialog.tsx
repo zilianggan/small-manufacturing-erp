@@ -1,11 +1,7 @@
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
-
 import React, { createContext, useCallback, useContext, useRef, useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import Dialog, { DialogFooter, DialogCancelButton } from './Dialog';
+import { Button } from './Button';
 
 interface ConfirmOptions {
   title?: string;
@@ -49,21 +45,19 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
         onClose={() => settle(false)}
         title={pending?.title ?? 'Confirm'}
         maxWidth="max-w-sm"
-        titleIcon={<AlertTriangle className="w-4 h-4 text-amber-500" />}
+        titleIcon={<AlertTriangle className="w-4 h-4 text-warning" />}
       >
-        <div className="p-5 text-xs text-slate-600 leading-relaxed">{pending?.message}</div>
+        <div className="p-5 text-xs text-muted-foreground leading-relaxed">{pending?.message}</div>
         <div className="px-5 pb-5">
           <DialogFooter>
             <DialogCancelButton onClick={() => settle(false)}>{pending?.cancelLabel ?? 'Cancel'}</DialogCancelButton>
-            <button
+            <Button
               type="button"
+              variant={pending?.danger === false ? 'default' : 'destructive'}
               onClick={() => settle(true)}
-              className={`px-4 py-2 rounded-lg font-medium transition-colors text-white ${
-                pending?.danger === false ? 'bg-blue-600 hover:bg-blue-700' : 'bg-red-600 hover:bg-red-700'
-              }`}
             >
               {pending?.confirmLabel ?? 'Confirm'}
-            </button>
+            </Button>
           </DialogFooter>
         </div>
       </Dialog>

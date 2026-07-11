@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   getPurchases, createPurchaseQuotation, updatePurchase, convertToPurchaseOrder,
   receivePurchaseOrder, cancelPurchaseOrder, deletePurchase, getMaterialCategories,
@@ -14,25 +14,44 @@ import { getMaterials } from '../services/MaterialService';
 import { getVendors } from '../services/ContactsService';
 import { getSalesOrdersForLinking, SalesOrderLinkOption, getSalesOrderMaterialRequirements, SalesOrderMaterialRequirement } from '../services/OrdersService';
 import { PurchaseHeader, Vendor, Material, Attachment, MaterialCategory } from '../types';
-import { Plus, Calendar, Check, Paperclip, Trash2, Edit, FileText, ArrowRightCircle, Eye, Filter } from 'lucide-react';
+import { Plus, Calendar, Check, Paperclip, Trash2, Edit, FileText, ArrowRightCircle, Eye } from 'lucide-react';
 import AttachmentSection from './AttachmentSection';
 import QuotationModal from './QuotationModal';
-import InvoiceModal from './InvoiceModal';
 import PurchaseOrderDetailView from './PurchaseOrderDetailView';
-import LoadingSpinner from './LoadingSpinner';
 import ComboBox from './ComboBox';
 import FilterDialog from './FilterDialog';
-import SortableTh from './SortableTh';
-import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, FormField, SearchInput, useToast, useConfirm, ActionsMenu } from './ui';
+import { PageHeader, SectionCard, FilterBar, DataTable } from './shell';
+import type { DataTableColumn, FilterChip } from './shell';
+import {
+  Button, Badge, Sheet, FormField, fieldInputClassName, ActionsMenu,
+  Table, TableHeader, TableBody, TableRow, TableHead, TableCell,
+  Tabs, TabsList, TabsTrigger, useToast, useConfirm,
+} from './ui';
+import type { ActionMenuItem } from './ui';
+import { useFadeInOnMount } from '../hooks/useFadeInOnMount';
 import { CallAPI } from './UIHelper';
-import { debounce } from 'lodash'
+import { debounce } from 'lodash';
 
 type PurchaseTab = 'QUOTATION' | 'PO';
 type FormMode = 'CREATE' | 'EDIT' | 'CONVERT';
 
+// 'items' (Material Details) has no single backing column — purchase_detail
+// is a joined child list, so PostgREST can't order by it. Sorted client-side
+// over whatever's currently loaded instead, same trick InventoryView uses
+// for its joined/derived columns.
+type DisplaySortField = PurchaseSortField | 'items';
+const SERVER_SORT_FIELDS: readonly string[] = ['reference', 'supplier', 'date', 'totalCost'];
+
+const STATUS_META: Record<PurchaseHeader['status'], { label: string; variant: 'default' | 'warning' | 'success' | 'destructive' }> = {
+  QUOTATION: { label: 'Quotation', variant: 'default' },
+  ORDERED: { label: 'Pending Stock', variant: 'warning' },
+  RECEIVED: { label: 'Received', variant: 'success' },
+  CANCELLED: { label: 'Cancelled', variant: 'destructive' },
+};
+
 interface PurchasesViewProps {
-  // Cross-tab drill-in: MaterialDetailView.tsx's purchase history links here
-  // via App.tsx passing a pending purchase header id, since Purchases/Material
+  // Cross-tab drill-in: MaterialView.tsx's purchase history links here via
+  // App.tsx passing a pending purchase header id, since Purchases/Material
   // are separate top-level tabs with no shared router.
   initialPurchaseId?: string | null;
   onInitialPurchaseHandled?: () => void;
@@ -46,11 +65,21 @@ interface PurchasesViewProps {
   onReturnToOrigin?: () => void;
 }
 
+/**
+ * Purchases — table-first ledger (Pattern C) with a Quotation/Purchase Order
+ * tab switch. Selecting a row swaps the whole page for
+ * PurchaseOrderDetailView instead of a Sheet drawer: the detail has
+ * status-driven lifecycle actions and is also a cross-tab navigation target
+ * (Material/Inventory link straight into it), so a full page keeps the Back
+ * button and origin-return behavior simple.
+ */
 export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHandled, initialPurchaseOrigin, onReturnToOrigin }: PurchasesViewProps = {}) {
   const toast = useToast();
   const confirm = useConfirm();
+  const contentRef = useFadeInOnMount<HTMLDivElement>([]);
+
   const [activeTab, setActiveTab] = useState<PurchaseTab>('QUOTATION');
-  const [searchQuery, setSearchQuery] = useState([{ search: '' }, { search: '' }]);
+  const [searchQuery, setSearchQuery] = useState<Record<PurchaseTab, string>>({ QUOTATION: '', PO: '' });
   const [purchases, setPurchases] = useState<PurchaseHeader[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -130,28 +159,41 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
   const [filterMaterialSearch, setFilterMaterialSearch] = useState('');
 
   // ─── Sort ─────────────────────────────────────────────────────────────
-  const [sortField, setSortField] = useState<PurchaseSortField>('date');
+  const [sortField, setSortField] = useState<DisplaySortField>('date');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
+  const isServerSort = SERVER_SORT_FIELDS.includes(sortField);
+
+  // Guards against out-of-order responses: switching tabs (or typing a new
+  // search) quickly fires a new request before the previous one resolves —
+  // without this, an older response landing last overwrites the table with
+  // the wrong tab's data.
+  const requestIdRef = useRef(0);
 
   const loadPurchases = (tab: PurchaseTab, search: string = '') => {
+    const requestId = ++requestIdRef.current;
     setLoading(true);
-    CallAPI(() => getPurchases(tab === 'QUOTATION' ? 'QUOTATION' : 'PO', search, { filters: appliedFilters, sortField, sortDir }), {
-      onCompleted: (data) => { setPurchases(data); setLoading(false); },
-      onError: (err) => { console.error(err); setLoading(false); },
+    CallAPI(() => getPurchases(tab, search, { filters: appliedFilters, sortField: (isServerSort ? sortField : 'date') as PurchaseSortField, sortDir: isServerSort ? sortDir : 'desc' }), {
+      onCompleted: (data) => {
+        if (requestId !== requestIdRef.current) return;
+        setPurchases(data);
+        setLoading(false);
+      },
+      onError: (err) => {
+        if (requestId !== requestIdRef.current) return;
+        console.error(err);
+        setLoading(false);
+      },
     });
   };
 
   useEffect(() => {
-    loadPurchases(activeTab, searchQuery[activeTab === 'QUOTATION' ? 0 : 1]?.search);
+    loadPurchases(activeTab, searchQuery[activeTab]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, appliedFilters, sortField, sortDir]);
 
   // Debounced search-as-you-type
   const search = useMemo(
-    () =>
-      debounce((text: string) => {
-        loadPurchases(activeTab, text);
-      }, 500),
+    () => debounce((text: string) => loadPurchases(activeTab, text), 500),
     [activeTab, appliedFilters, sortField, sortDir]
   );
 
@@ -186,19 +228,36 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
       .map(m => ({ id: m.id, label: m.name, sublabel: m.code }));
   }, [materials, filterMaterialSearch]);
 
-  const hasActiveFilters = !!(appliedFilters.vendorIds?.length || appliedFilters.materialIds?.length || appliedFilters.dateFrom || appliedFilters.dateTo);
+  const filterChips: FilterChip[] = [
+    ...(appliedFilters.vendorIds?.length ? [{ key: 'vendors', label: `${appliedFilters.vendorIds.length} supplier${appliedFilters.vendorIds.length === 1 ? '' : 's'}`, onRemove: () => setAppliedFilters(f => ({ ...f, vendorIds: [] })) }] : []),
+    ...(appliedFilters.materialIds?.length ? [{ key: 'materials', label: `${appliedFilters.materialIds.length} material${appliedFilters.materialIds.length === 1 ? '' : 's'}`, onRemove: () => setAppliedFilters(f => ({ ...f, materialIds: [] })) }] : []),
+    ...(appliedFilters.dateFrom || appliedFilters.dateTo ? [{ key: 'date', label: `${appliedFilters.dateFrom || '…'} → ${appliedFilters.dateTo || '…'}`, onRemove: () => setAppliedFilters(f => ({ ...f, dateFrom: undefined, dateTo: undefined })) }] : []),
+  ];
+  const activeFilterCount = (appliedFilters.vendorIds?.length || 0) + (appliedFilters.materialIds?.length || 0) + (appliedFilters.dateFrom || appliedFilters.dateTo ? 1 : 0);
 
-  const toggleSort = (key: PurchaseSortField) => {
-    if (key === sortField) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
-    else { setSortField(key); setSortDir('asc'); }
+  const toggleSort = (key: string) => {
+    const field = key as DisplaySortField;
+    if (field === sortField) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
+    else { setSortField(field); setSortDir('asc'); }
   };
+
+  // Client-side re-sort for the 'items' column — applied over whatever's
+  // currently loaded (server-sorted columns skip this and pass through).
+  const displayedPurchases = useMemo(() => {
+    if (isServerSort) return purchases;
+    const firstItemLabel = (p: PurchaseHeader) => p.details[0]?.materialName || '';
+    return [...purchases].sort((a, b) => {
+      const cmp = firstItemLabel(a).localeCompare(firstItemLabel(b));
+      return sortDir === 'asc' ? cmp : -cmp;
+    });
+  }, [purchases, sortField, sortDir, isServerSort]);
 
   // Quotation print modal
   const [selectedQuotation, setSelectedQuotation] = useState<PurchaseHeader | null>(null);
   const [isQuotationModalOpen, setIsQuotationModalOpen] = useState(false);
 
-  // Form dialog state
-  const [showFormDialog, setShowFormDialog] = useState(false);
+  // Form drawer state
+  const [showFormSheet, setShowFormSheet] = useState(false);
   const [formMode, setFormMode] = useState<FormMode>('CREATE');
   const [editHeaderId, setEditHeaderId] = useState<string | null>(null);
   const [formVendorId, setFormVendorId] = useState('');
@@ -210,6 +269,7 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
   const [tempUnitCost, setTempUnitCost] = useState(0);
   const [formAttachment, setFormAttachment] = useState<Attachment | undefined>(undefined);
   const [requiredMaterials, setRequiredMaterials] = useState<SalesOrderMaterialRequirement[]>([]);
+  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     if (!formSalesHeaderId) { setRequiredMaterials([]); return; }
@@ -239,7 +299,7 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
   const openCreateForm = () => {
     resetForm();
     setFormMode('CREATE');
-    setShowFormDialog(true);
+    setShowFormSheet(true);
   };
 
   const detailsFromHeader = (purchase: PurchaseHeader): PurchaseDetailInput[] =>
@@ -260,7 +320,7 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
     setFormSalesHeaderId(purchase.salesHeaderId || '');
     setFormAttachment(purchase.attachments?.[0]);
     setFormDetails(detailsFromHeader(purchase));
-    setShowFormDialog(true);
+    setShowFormSheet(true);
   };
 
   const openConvertForm = (purchase: PurchaseHeader) => {
@@ -272,7 +332,7 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
     setFormAttachment(purchase.attachments?.[0]);
     setFormDetails(detailsFromHeader(purchase));
     setFormOrderDate(todayStr());
-    setShowFormDialog(true);
+    setShowFormSheet(true);
   };
 
   // Material catalog rows carry no per-vendor unit cost, so selecting a
@@ -318,8 +378,7 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
     setFormDetails(formDetails.map((d, idx) => idx === index ? { ...d, unitCost, totalPrice: d.quantity * unitCost } : d));
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async () => {
     if (!formVendorId) return;
 
     let finalDetails = [...formDetails];
@@ -355,6 +414,7 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
       details: finalDetails,
     };
 
+    setSubmitting(true);
     if (formMode === 'CREATE') {
       await CallAPI(() => createPurchaseQuotation(input), {
         onCompleted: () => { loadPurchases(activeTab); toast.success('Purchase quotation created.'); },
@@ -372,7 +432,8 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
       });
     }
 
-    setShowFormDialog(false);
+    setSubmitting(false);
+    setShowFormSheet(false);
     resetForm();
   };
 
@@ -419,18 +480,72 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
     setIsQuotationModalOpen(true);
   };
 
-  const dialogTitle = formMode === 'CREATE' ? 'Create Material Purchase Quotation'
-    : formMode === 'EDIT' ? 'Edit Material Purchase Quotation'
+  const sheetTitle = formMode === 'CREATE' ? 'Create Purchase Quotation'
+    : formMode === 'EDIT' ? 'Edit Purchase Quotation'
       : 'Confirm Purchase Order';
 
   const submitLabel = formMode === 'CREATE' ? 'Save Quotation'
     : formMode === 'EDIT' ? 'Update Quotation'
       : 'Confirm Purchase Order';
 
-  return (
-    <div className="space-y-6" id="purchases-view">
-      {loading && <LoadingSpinner message="Verifying supply orders..." subtitle="PURCHASE_ORDERS" />}
+  const buildRowActions = (p: PurchaseHeader): ActionMenuItem[] => [
+    { label: 'View', icon: <Eye className="w-3.5 h-3.5" />, onClick: () => openPurchaseDetail(p) },
+    { label: 'Edit', icon: <Edit className="w-3.5 h-3.5" />, onClick: () => openEditForm(p), hidden: !['QUOTATION', 'ORDERED'].includes(p.status) },
+    { label: 'Delete', icon: <Trash2 className="w-3.5 h-3.5" />, onClick: () => handleDelete(p.id), danger: true, hidden: !['QUOTATION', 'CANCELLED'].includes(p.status) },
+    { label: 'Generate Quotation', icon: <FileText className="w-3.5 h-3.5" />, onClick: () => openQuotationDoc(p), hidden: p.status !== 'QUOTATION' },
+    { label: 'Proceed to Purchase Order', icon: <ArrowRightCircle className="w-3.5 h-3.5" />, onClick: () => openConvertForm(p), hidden: p.status !== 'QUOTATION' },
+    { label: 'Mark as Received', icon: <Check className="w-3.5 h-3.5" />, onClick: () => handleReceive(p), disabled: receivingId === p.id, hidden: p.status !== 'ORDERED' },
+    { label: 'Cancel Order', icon: <Trash2 className="w-3.5 h-3.5" />, onClick: () => handleCancel(p.id), danger: true, hidden: p.status !== 'ORDERED' },
+  ];
 
+  const columns: DataTableColumn<PurchaseHeader>[] = [
+    { key: 'reference', header: 'Reference', sortable: true, className: 'w-32', render: (p) => <span className="font-mono font-medium text-foreground">{p.purchaseNo}</span> },
+    { key: 'supplier', header: 'Supplier', sortable: true, className: 'w-40', render: (p) => <span className="font-medium text-card-foreground truncate">{p.vendorName}</span> },
+    {
+      key: 'items', header: 'Material Details', sortable: true,
+      render: (p) => (
+        <div className="min-w-0 max-w-xs space-y-1.5">
+          <div className="divide-y divide-border">
+            {p.details.map((item, idx) => (
+              <div key={item.detailId || idx} className="py-1 first:pt-0 last:pb-0 min-w-0">
+                <div className="font-medium text-card-foreground truncate">{item.materialName}</div>
+                <div className="text-[11px] text-muted-foreground font-mono">Qty {item.quantity} @ RM {item.unitCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+              </div>
+            ))}
+          </div>
+          {p.attachments?.[0] && (
+            <a
+              href={p.attachments[0].dataUrl}
+              download={p.attachments[0].name}
+              onClick={(e) => e.stopPropagation()}
+              className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-primary/10 hover:bg-primary/20 text-primary rounded text-[10px] font-mono transition-colors"
+              title="Download attachment"
+            >
+              <Paperclip className="w-2.5 h-2.5 shrink-0" />
+              <span className="truncate max-w-[120px]">{p.attachments[0].name}</span>
+            </a>
+          )}
+        </div>
+      )
+    },
+    {
+      key: 'date', header: activeTab === 'QUOTATION' ? 'Quotation Date' : 'Order Date', sortable: true, className: 'w-32',
+      render: (p) => (
+        <div className="inline-flex items-center gap-1.5 text-muted-foreground font-mono text-[11px]">
+          <Calendar className="w-3.5 h-3.5" />
+          <span>{activeTab === 'QUOTATION' ? p.quotationDate : p.orderDate}</span>
+        </div>
+      )
+    },
+    { key: 'totalCost', header: 'Total Cost', sortable: true, align: 'right', className: 'w-32', render: (p) => <span className="font-mono font-medium text-foreground">RM {p.totalPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span> },
+    ...(activeTab === 'PO' ? [{
+      key: 'status', header: 'Status', className: 'w-[1%] whitespace-nowrap',
+      render: (p: PurchaseHeader) => <Badge variant={STATUS_META[p.status].variant}>{STATUS_META[p.status].label}</Badge>,
+    } as DataTableColumn<PurchaseHeader>] : []),
+  ];
+
+  return (
+    <div ref={contentRef} className="flex flex-col gap-5 h-full min-h-0" id="purchases-view">
       {selectedPurchase ? (
         <PurchaseOrderDetailView
           purchase={selectedPurchase}
@@ -446,63 +561,48 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
         />
       ) : (
       <>
-      {/* Tab toggle + search + actions */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div className="flex space-x-1 p-1 bg-slate-100 rounded-lg border border-slate-200/50 self-start">
-          <button
-            onClick={() => setActiveTab('QUOTATION')}
-            className={`px-4 py-1.5 text-xs font-medium rounded-md font-sans transition-all ${activeTab === 'QUOTATION' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
-          >
-            Quotation
-          </button>
-          <button
-            onClick={() => setActiveTab('PO')}
-            className={`px-4 py-1.5 text-xs font-medium rounded-md font-sans transition-all ${activeTab === 'PO' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
-          >
-            Purchase Order
-          </button>
-        </div>
+      <PageHeader
+        title="Purchases"
+        description="Manage supplier quotations and purchase orders."
+        actions={activeTab === 'QUOTATION' && <Button onClick={openCreateForm}><Plus className="w-4 h-4" /> New Quotation</Button>}
+      />
 
-        <div className="flex items-center space-x-2">
-          <SearchInput
-            value={searchQuery?.[activeTab === 'QUOTATION' ? 0 : 1]?.search}
-            onChange={(e: any) => {
-              setSearchQuery((prev) => {
-                const updated = [...prev];
-                const index = activeTab === "QUOTATION" ? 0 : 1;
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as PurchaseTab)}>
+        <TabsList>
+          <TabsTrigger value="QUOTATION">Quotation</TabsTrigger>
+          <TabsTrigger value="PO">Purchase Order</TabsTrigger>
+        </TabsList>
+      </Tabs>
 
-                updated[index] = {
-                  ...updated[index],
-                  search: e,
-                };
+      <SectionCard title="Filters" className="shrink-0" contentClassName="p-4">
+        <FilterBar
+          search={searchQuery[activeTab]}
+          onSearchChange={(v) => { setSearchQuery(prev => ({ ...prev, [activeTab]: v })); search(v); }}
+          searchPlaceholder="Search by supplier or reference no..."
+          chips={filterChips}
+          onOpenFilters={openFilterDialog}
+          filterCount={activeFilterCount}
+        />
+      </SectionCard>
 
-                return updated;
-              });
-              search(e)
-            }}
-            placeholder="Search by supplier or reference no..."
+      <SectionCard title={activeTab === 'QUOTATION' ? 'Quotations' : 'Purchase Orders'} description={`${purchases.length} record${purchases.length === 1 ? '' : 's'}`} className="flex-1 min-h-0" contentClassName="p-0 flex-1 min-h-0 flex flex-col">
+        <div className="flex-1 min-h-0 overflow-auto">
+          <DataTable
+            columns={columns}
+            rows={displayedPurchases}
+            rowKey={(p) => p.id}
+            sortField={sortField}
+            sortDir={sortDir}
+            onSort={toggleSort}
+            onRowClick={openPurchaseDetail}
+            rowActions={(p) => <ActionsMenu items={buildRowActions(p)} />}
+            loading={loading}
+            emptyState={`No ${activeTab === 'QUOTATION' ? 'quotations' : 'purchase orders'} logged yet.`}
           />
-          <button
-            onClick={openFilterDialog}
-            className={`relative flex items-center space-x-1.5 px-3 py-2 border rounded-lg text-xs font-medium transition-colors ${hasActiveFilters ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-600'}`}
-          >
-            <Filter className="w-3.5 h-3.5" />
-            <span>Filter</span>
-            {hasActiveFilters && <span className="absolute -top-1 -right-1 w-2 h-2 bg-blue-600 rounded-full" />}
-          </button>
-          {activeTab === 'QUOTATION' && (
-            <button
-              onClick={openCreateForm}
-              className="flex items-center space-x-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium transition-colors font-sans shadow-sm"
-            >
-              <Plus className="w-4 h-4" />
-              <span>New Quotation</span>
-            </button>
-          )}
         </div>
-      </div>
+      </SectionCard>
 
-      {/* Filter dialog */}
+      {/* Advanced filter dialog */}
       <FilterDialog
         open={showFilterDialog}
         onClose={() => setShowFilterDialog(false)}
@@ -553,16 +653,22 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
         }}
       />
 
-      {/* Creation/Edit/Convert form as Dialog Modal */}
-      <Dialog
-        open={showFormDialog}
-        onClose={() => { clearTempMaterials(); setShowFormDialog(false); }}
-        title={dialogTitle}
+      {/* Create/Edit/Convert drawer */}
+      <Sheet
+        open={showFormSheet}
+        onClose={() => { clearTempMaterials(); setShowFormSheet(false); }}
+        title={sheetTitle}
+        width="w-full sm:max-w-2xl"
+        footer={
+          <div className="flex items-center justify-end gap-2">
+            <Button variant="outline" onClick={() => { clearTempMaterials(); setShowFormSheet(false); }}>Cancel</Button>
+            <Button onClick={handleSubmit} disabled={submitting || !formVendorId}>{submitting ? 'Saving...' : submitLabel}</Button>
+          </div>
+        }
       >
-        <form onSubmit={handleSubmit} className="p-5 space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs text-slate-600">
-
-            <FormField label="Select Vendor *" labelClassName="font-semibold block text-slate-700" colSpan="sm:col-span-2">
+        <div className="p-5 space-y-5">
+          <div data-fade-item className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <FormField label="Select Vendor *" colSpan="sm:col-span-2">
               <ComboBox
                 required
                 value={formVendorId}
@@ -572,7 +678,7 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
               />
             </FormField>
 
-            <FormField label="Linked Sales Order (Optional)" labelClassName="font-semibold block text-slate-700" colSpan="sm:col-span-2">
+            <FormField label="Linked Sales Order (Optional)" colSpan="sm:col-span-2">
               <ComboBox
                 value={formSalesHeaderId}
                 onChange={setFormSalesHeaderId}
@@ -581,268 +687,135 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
               />
             </FormField>
 
-            {formSalesHeaderId && requiredMaterials.length > 0 && (
-              <div className="sm:col-span-2 border border-indigo-100 rounded-lg p-3 bg-indigo-50/40 space-y-1.5">
-                <span className="font-semibold block text-[11px] text-indigo-900">Required Materials for Linked Sales Order</span>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-0.5">
-                  {requiredMaterials.map(r => (
-                    <div key={r.materialId} className="flex justify-between text-[11px] text-indigo-800 font-mono bg-white/60 rounded px-2 py-1">
-                      <span>{r.materialName}</span>
-                      <span>{r.requiredQuantity}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
             {formMode === 'CONVERT' && (
-              <FormField label="Order Date *" labelClassName="font-semibold block text-slate-700" colSpan="sm:col-span-2">
-                <input
-                  type="date"
-                  required
-                  value={formOrderDate}
-                  onChange={(e) => setFormOrderDate(e.target.value)}
-                  className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 text-slate-800"
-                />
+              <FormField label="Order Date *" colSpan="sm:col-span-2">
+                <input type="date" required value={formOrderDate} onChange={(e) => setFormOrderDate(e.target.value)} className={fieldInputClassName} />
               </FormField>
             )}
+          </div>
 
-            <div className="sm:col-span-2 border border-slate-150 rounded-lg p-3 bg-slate-50/50 space-y-2">
-              <span className="font-semibold block text-slate-700 text-xs">Materials to Procure ({formDetails.length})</span>
-              {formDetails.length === 0 ? (
-                <div className="text-center py-4 text-slate-400 border border-dashed border-slate-200 rounded-lg bg-white text-[11px]">
-                  No materials added yet. Specify material details below to add items.
-                </div>
-              ) : (
-                <div className="overflow-x-auto border border-slate-200 rounded-lg bg-white">
-                  <table className="w-full text-left text-[11px] border-collapse">
-                    <thead>
-                      <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 font-medium dark:bg-slate-800 dark:border-slate-700 dark:text-slate-400">
-                        <th className="p-2">Material Name</th>
-                        <th className="p-2 text-right">Quantity</th>
-                        <th className="p-2 text-right">Unit Cost</th>
-                        <th className="p-2 text-right">Total (RM)</th>
-                        <th className="p-2 text-center" style={{ width: '40px' }}></th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-150 text-slate-700">
-                      {formDetails.map((item, idx) => (
-                        <tr key={idx} className="hover:bg-slate-50">
-                          <td className="p-2 font-semibold text-slate-800">{item.materialName}</td>
-                          <td className="p-2 text-right">
-                            <input
-                              type="number"
-                              min="1"
-                              value={item.quantity}
-                              onChange={(e) => handleUpdateFormItemQuantity(idx, Number(e.target.value))}
-                              className="w-20 px-1.5 py-1 bg-white border border-slate-200 rounded text-right font-mono text-[11px] focus:outline-none focus:border-blue-500"
-                            />
-                          </td>
-                          <td className="p-2 text-right">
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.01"
-                              value={item.unitCost}
-                              onChange={(e) => handleUpdateFormItemUnitCost(idx, Number(e.target.value))}
-                              className="w-24 px-1.5 py-1 bg-white border border-slate-200 rounded text-right font-mono text-[11px] focus:outline-none focus:border-blue-500"
-                            />
-                          </td>
-                          <td className="p-2 text-right font-mono font-semibold">RM {item.totalPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                          <td className="p-2 text-center">
-                            <button type="button" onClick={() => handleRemoveFormItem(idx)} className="text-red-500 hover:text-red-700 p-1" title="Remove item">
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-
-            <div className="sm:col-span-2 border border-blue-100 rounded-lg p-4 bg-blue-50/20 grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
-              <FormField label="Material Selection" labelClassName="font-semibold block text-slate-700 text-[10px] uppercase tracking-wider" colSpan="sm:col-span-6">
-                <ComboBox
-                  value={tempMaterialId}
-                  onChange={handleMaterialSelect}
-                  noneLabel="-- Choose Material --"
-                  options={rawMaterials.map(m => {
-                    const category = materialCategoryMap.get(m.materialCategoryId || '');
-                    return { value: m.id, label: m.name, sublabel: category ? category.name : `Stock: ${m.quantity}` };
-                  })}
-                />
-              </FormField>
-
-              <FormField label="Quantity" labelClassName="font-semibold block text-slate-700 text-[10px] uppercase tracking-wider" colSpan="sm:col-span-2">
-                <input
-                  type="number"
-                  min="1"
-                  value={tempQuantity}
-                  onChange={(e) => setTempQuantity(Number(e.target.value))}
-                  disabled={!formVendorId}
-                  className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg focus:outline-none text-xs text-slate-800 disabled:bg-slate-50"
-                />
-              </FormField>
-
-              <FormField label="Unit Cost (RM)" labelClassName="font-semibold block text-slate-700 text-[10px] uppercase tracking-wider" colSpan="sm:col-span-2">
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={tempUnitCost}
-                  onChange={(e) => setTempUnitCost(Number(e.target.value))}
-                  disabled={!formVendorId}
-                  className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg focus:outline-none text-xs text-slate-800 disabled:bg-slate-50"
-                />
-              </FormField>
-
-              <div className="sm:col-span-2">
-                <button
-                  type="button"
-                  onClick={handleAddTempItem}
-                  disabled={!formVendorId || !tempMaterialId || tempQuantity <= 0}
-                  className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[10px] font-semibold transition-colors shadow-sm disabled:bg-slate-200 disabled:text-slate-400 disabled:shadow-none"
-                >
-                  + Add Item
-                </button>
+          {formSalesHeaderId && requiredMaterials.length > 0 && (
+            <div data-fade-item className="border border-primary/20 rounded-xl p-3 bg-primary/5 space-y-1.5">
+              <span className="font-semibold block text-[11px] text-primary">Required Materials for Linked Sales Order</span>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-0.5">
+                {requiredMaterials.map(r => (
+                  <div key={r.materialId} className="flex justify-between text-[11px] text-foreground font-mono bg-card/60 rounded px-2 py-1">
+                    <span>{r.materialName}</span>
+                    <span>{r.requiredQuantity}</span>
+                  </div>
+                ))}
               </div>
             </div>
+          )}
 
-            <div className="bg-amber-50 rounded-lg p-3 sm:col-span-2 flex items-center justify-between border border-amber-100">
-              <div>
-                <span className="font-semibold block text-[11px] text-amber-900">Total Purchase Cost:</span>
-                <span className="text-[10px] text-amber-700 font-sans">Payment will be logged under company material costs.</span>
+          <div data-fade-item className="border border-border rounded-xl p-3 bg-secondary/30 space-y-2">
+            <span className="font-semibold block text-foreground text-xs">Materials to Procure ({formDetails.length})</span>
+            {formDetails.length === 0 ? (
+              <div className="text-center py-4 text-muted-foreground border border-dashed border-border rounded-lg bg-card text-[11px]">
+                No materials added yet. Specify material details below to add items.
               </div>
-              <div className="font-mono text-base font-bold text-amber-950">
-                RM {Math.max(0, formDetails.reduce((sum, item) => sum + item.totalPrice, 0) + (tempMaterialId && tempQuantity > 0 ? tempQuantity * tempUnitCost : 0)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            ) : (
+              <div className="border border-border rounded-lg bg-card overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Material</TableHead>
+                      <TableHead className="text-right">Quantity</TableHead>
+                      <TableHead className="text-right">Unit Cost</TableHead>
+                      <TableHead className="text-right">Total (RM)</TableHead>
+                      <TableHead className="w-10" />
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {formDetails.map((item, idx) => (
+                      <TableRow key={idx}>
+                        <TableCell className="font-medium text-card-foreground">{item.materialName}</TableCell>
+                        <TableCell className="text-right">
+                          <input
+                            type="number" min="1" value={item.quantity}
+                            onChange={(e) => handleUpdateFormItemQuantity(idx, Number(e.target.value))}
+                            className="w-20 px-1.5 py-1 bg-background border border-input rounded text-right font-mono text-xs focus:outline-none focus:ring-2 focus:ring-ring/40 focus:border-ring"
+                          />
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <input
+                            type="number" min="0" step="0.01" value={item.unitCost}
+                            onChange={(e) => handleUpdateFormItemUnitCost(idx, Number(e.target.value))}
+                            className="w-24 px-1.5 py-1 bg-background border border-input rounded text-right font-mono text-xs focus:outline-none focus:ring-2 focus:ring-ring/40 focus:border-ring"
+                          />
+                        </TableCell>
+                        <TableCell className="text-right font-mono font-medium text-foreground">RM {item.totalPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
+                        <TableCell>
+                          <button type="button" onClick={() => handleRemoveFormItem(idx)} className="text-destructive hover:text-destructive/80 p-1" title="Remove item">
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
               </div>
-            </div>
+            )}
+          </div>
+
+          <div data-fade-item className="border border-border rounded-xl p-4 bg-secondary/30 grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
+            <FormField label="Material Selection" labelClassName="font-semibold block text-muted-foreground text-[10px] uppercase tracking-wider" colSpan="sm:col-span-6">
+              <ComboBox
+                value={tempMaterialId}
+                onChange={handleMaterialSelect}
+                noneLabel="-- Choose Material --"
+                options={rawMaterials.map(m => {
+                  const category = materialCategoryMap.get(m.materialCategoryId || '');
+                  return { value: m.id, label: m.name, sublabel: category ? category.name : `Stock: ${m.quantity}` };
+                })}
+              />
+            </FormField>
+
+            <FormField label="Quantity" labelClassName="font-semibold block text-muted-foreground text-[10px] uppercase tracking-wider" colSpan="sm:col-span-2">
+              <input
+                type="number" min="1" value={tempQuantity}
+                onChange={(e) => setTempQuantity(Number(e.target.value))}
+                disabled={!formVendorId}
+                className={fieldInputClassName + ' disabled:bg-secondary/50'}
+              />
+            </FormField>
+
+            <FormField label="Unit Cost (RM)" labelClassName="font-semibold block text-muted-foreground text-[10px] uppercase tracking-wider" colSpan="sm:col-span-2">
+              <input
+                type="number" min="0" step="0.01" value={tempUnitCost}
+                onChange={(e) => setTempUnitCost(Number(e.target.value))}
+                disabled={!formVendorId}
+                className={fieldInputClassName + ' disabled:bg-secondary/50'}
+              />
+            </FormField>
 
             <div className="sm:col-span-2">
-              <AttachmentSection
-                attachment={formAttachment}
-                onAttachmentChange={setFormAttachment}
-                label="Quotation or Invoice Document (Optional)"
-                helperText="Upload any supplier quotation, invoice, specification, or receipt (Max 1MB)"
-              />
+              <Button type="button" className="w-full" onClick={handleAddTempItem} disabled={!formVendorId || !tempMaterialId || tempQuantity <= 0}>
+                + Add Item
+              </Button>
             </div>
-
           </div>
-          <DialogFooter>
-            <DialogCancelButton onClick={() => { clearTempMaterials(); setShowFormDialog(false); }} />
-            <DialogSubmitButton>{submitLabel}</DialogSubmitButton>
-          </DialogFooter>
-        </form>
-      </Dialog>
 
-      {/* Listing table */}
-      <Card className="overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs border-collapse">
-            <thead>
-              <tr className="bg-slate-50/75 border-b border-slate-200 text-slate-500 uppercase font-mono tracking-wider dark:bg-slate-800/80 dark:border-slate-700 dark:text-slate-400">
-                <SortableTh label="Reference" sortKey="reference" activeKey={sortField} dir={sortDir} onClick={toggleSort} thClassName="p-4" />
-                <SortableTh label="Supplier" sortKey="supplier" activeKey={sortField} dir={sortDir} onClick={toggleSort} thClassName="p-4" />
-                <th className="p-4">Material Details</th>
-                <SortableTh label={activeTab === 'QUOTATION' ? 'Quotation Date' : 'Order Date'} sortKey="date" activeKey={sortField} dir={sortDir} onClick={toggleSort} thClassName="p-4" />
-                <SortableTh label="Total Cost" sortKey="totalCost" activeKey={sortField} dir={sortDir} onClick={toggleSort} thClassName="p-4" />
-                {activeTab === 'PO' && <th className="p-4">Status</th>}
-                <th className="p-4 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 text-slate-700">
-              {purchases.length === 0 ? (
-                <tr>
-                  <td colSpan={activeTab === 'PO' ? 7 : 6} className="text-center py-12 text-xs text-slate-400 font-sans">
-                    No {activeTab === 'QUOTATION' ? 'quotations' : 'purchase orders'} logged yet.
-                  </td>
-                </tr>
-              ) : (
-                purchases.map((p) => (
-                  <tr key={p.id} className="group hover:bg-slate-50/50 transition-colors">
+          <div data-fade-item className="bg-warning/10 border border-warning/20 rounded-xl p-3 flex items-center justify-between">
+            <div>
+              <span className="font-semibold block text-[11px] text-foreground">Total Purchase Cost:</span>
+              <span className="text-[10px] text-muted-foreground">Payment will be logged under company material costs.</span>
+            </div>
+            <div className="font-mono text-base font-bold text-foreground">
+              RM {Math.max(0, formDetails.reduce((sum, item) => sum + item.totalPrice, 0) + (tempMaterialId && tempQuantity > 0 ? tempQuantity * tempUnitCost : 0)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </div>
+          </div>
 
-                    <td className="p-4 font-mono font-semibold text-slate-900">{p.purchaseNo}</td>
-                    <td className="p-4 font-semibold text-slate-900">{p.vendorName}</td>
-
-                    <td className="p-4">
-                      <div className="space-y-1">
-                        <div className="space-y-1 max-w-xs">
-                          {p.details.map((item, idx) => (
-                            <div key={item.detailId || idx} className="flex flex-col border-b border-slate-100 last:border-none pb-1 last:pb-0">
-                              <span className="font-semibold text-slate-800">{item.materialName}</span>
-                              <span className="text-[10px] text-slate-400 font-mono">
-                                Qty: {item.quantity} @ RM {item.unitCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                        {p.attachments?.[0] && (
-                          <div className="pt-1.5 flex items-center">
-                            <a
-                              href={p.attachments[0].dataUrl}
-                              download={p.attachments[0].name}
-                              className="inline-flex items-center space-x-1 px-1.5 py-0.5 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded text-[10px] font-mono transition-colors"
-                              title="Download attachment"
-                            >
-                              <Paperclip className="w-2.5 h-2.5 text-blue-500 shrink-0" />
-                              <span className="truncate max-w-[120px]">{p.attachments[0].name}</span>
-                            </a>
-                          </div>
-                        )}
-                      </div>
-                    </td>
-
-                    <td className="p-4">
-                      <div className="flex items-center space-x-1.5 text-slate-600 font-mono text-[11px]">
-                        <Calendar className="w-3.5 h-3.5 text-slate-400" />
-                        <span>{activeTab === 'QUOTATION' ? p.quotationDate : p.orderDate}</span>
-                      </div>
-                    </td>
-
-                    <td className="p-4 font-mono font-semibold text-slate-900">
-                      RM {p.totalPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </td>
-
-                    {activeTab === 'PO' && (
-                      <td className="p-4">
-                        <span className={`px-2.5 py-1 rounded-full font-mono text-[10px] font-medium border ${p.status === 'ORDERED' ? 'bg-amber-50 text-amber-800 border-amber-200'
-                          : p.status === 'RECEIVED' ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
-                            : 'bg-red-50 text-red-800 border-red-200'
-                          }`}>
-                          {p.status === 'ORDERED' ? 'Pending Stock' : p.status}
-                        </span>
-                      </td>
-                    )}
-
-                    <td className="p-4 text-right">
-                      <div className="flex items-center justify-end space-x-1.5">
-                        {p.status === 'RECEIVED' && (
-                          <span className="text-[10px] text-emerald-600 font-semibold font-mono px-2 py-0.5 bg-emerald-50 rounded">Replenished ✓</span>
-                        )}
-                        {p.status === 'CANCELLED' && (
-                          <span className="text-[10px] text-slate-400 font-mono italic px-1.5">Cancelled</span>
-                        )}
-                        <ActionsMenu items={[
-                          { label: 'View', icon: <Eye className="w-3.5 h-3.5" />, onClick: () => openPurchaseDetail(p) },
-                          { label: 'Edit', icon: <Edit className="w-3.5 h-3.5" />, onClick: () => openEditForm(p), hidden: !['QUOTATION', 'ORDERED'].includes(p.status) },
-                          { label: 'Delete', icon: <Trash2 className="w-3.5 h-3.5" />, onClick: () => handleDelete(p.id), danger: true, hidden: !['QUOTATION', 'CANCELLED'].includes(p.status) },
-                          { label: 'Generate Quotation', icon: <FileText className="w-3.5 h-3.5" />, onClick: () => openQuotationDoc(p), hidden: p.status !== 'QUOTATION' },
-                          { label: 'Proceed to Purchase Order', icon: <ArrowRightCircle className="w-3.5 h-3.5" />, onClick: () => openConvertForm(p), hidden: p.status !== 'QUOTATION' },
-                          { label: 'Mark as Received', icon: <Check className="w-3.5 h-3.5" />, onClick: () => handleReceive(p), disabled: receivingId === p.id, hidden: p.status !== 'ORDERED' },
-                          { label: 'Cancel Order', icon: <Trash2 className="w-3.5 h-3.5" />, onClick: () => handleCancel(p.id), danger: true, hidden: p.status !== 'ORDERED' },
-                        ]} />
-                      </div>
-                    </td>
-
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+          <div data-fade-item>
+            <AttachmentSection
+              attachment={formAttachment}
+              onAttachmentChange={setFormAttachment}
+              label="Quotation or Invoice Document (Optional)"
+              helperText="Upload any supplier quotation, invoice, specification, or receipt (Max 1MB)"
+            />
+          </div>
         </div>
-      </Card>
+      </Sheet>
       </>
       )}
 
@@ -851,7 +824,6 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
         isOpen={isQuotationModalOpen}
         onClose={() => { setIsQuotationModalOpen(false); setSelectedQuotation(null); }}
       />
-
     </div>
   );
 }

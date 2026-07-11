@@ -11,13 +11,13 @@ import SortableTh from './SortableTh';
 import { sortByField } from '../utils/sortRows';
 
 // Shared badge styling for InventoryListItem.transactionType, used by both
-// MaterialDetailView's and ProductDetailView's "Inventory List" tables.
+// MaterialView's and ProductView's "Inventory List" detail-panel tables.
 export const TRANSACTION_TYPE_BADGE: Record<InventoryTransactionType, { label: string; className: string }> = {
-  PURCHASE: { label: 'Purchase', className: 'bg-blue-50 text-blue-700 border-blue-100' },
-  SALES: { label: 'Sales', className: 'bg-emerald-50 text-emerald-700 border-emerald-100' },
-  PURCHASE_RETURN: { label: 'Purchase Return', className: 'bg-amber-50 text-amber-700 border-amber-100' },
-  SALES_RETURN: { label: 'Sales Return', className: 'bg-amber-50 text-amber-700 border-amber-100' },
-  ADJUSTMENT: { label: 'Adjustment', className: 'bg-slate-50 text-slate-600 border-slate-200' },
+  PURCHASE: { label: 'Purchase', className: 'bg-primary/10 text-primary border-primary/20' },
+  SALES: { label: 'Sales', className: 'bg-success/10 text-success border-success/20' },
+  PURCHASE_RETURN: { label: 'Purchase Return', className: 'bg-warning/10 text-warning border-warning/20' },
+  SALES_RETURN: { label: 'Sales Return', className: 'bg-warning/10 text-warning border-warning/20' },
+  ADJUSTMENT: { label: 'Adjustment', className: 'bg-secondary text-secondary-foreground border-transparent' },
 };
 
 type SortKey = 'transactionType' | 'refNo' | 'counterpartyName' | 'orderDate' | 'quantity' | 'unitCost' | 'totalPrice' | 'status';
@@ -32,11 +32,11 @@ interface InventoryHistoryTableProps {
 }
 
 /**
- * The "Inventory List" table shared by MaterialDetailView.tsx and
- * ProductDetailView.tsx (purchase/sales history + other stock movements for
- * one material/product) — identical shape in both, so built once here.
- * Click-to-sort headers sort client-side since the whole list is already
- * loaded (one item's history, never heavy).
+ * The "Inventory List" table shared by MaterialView.tsx and ProductView.tsx
+ * (purchase/sales history + other stock movements for one material/product)
+ * — identical shape in both, so built once here. Click-to-sort headers sort
+ * client-side since the whole list is already loaded (one item's history,
+ * never heavy).
  */
 export function InventoryHistoryTable({ items, loading, emptyMessage = 'No inventory transactions yet.', onViewPurchaseOrder, onViewSalesOrder }: InventoryHistoryTableProps) {
   const [sortKey, setSortKey] = useState<SortKey>('orderDate');
@@ -53,13 +53,13 @@ export function InventoryHistoryTable({ items, loading, emptyMessage = 'No inven
   return (
     <Card className="overflow-hidden">
       {loading ? (
-        <div className="p-12 text-center text-xs text-slate-400">Loading inventory list...</div>
+        <div className="p-12 text-center text-xs text-muted-foreground">Loading inventory list...</div>
       ) : items.length === 0 ? (
-        <div className="p-12 text-center text-xs text-slate-400">{emptyMessage}</div>
+        <div className="p-12 text-center text-xs text-muted-foreground">{emptyMessage}</div>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-xs text-left">
-            <thead className="bg-slate-50 text-slate-500 border-b border-slate-100">
+            <thead className="bg-secondary/50 text-muted-foreground border-b border-border">
               <tr>
                 <SortableTh label="Type" sortKey="transactionType" activeKey={sortKey} dir={sortDir} onClick={toggleSort} />
                 <SortableTh label="Ref No." sortKey="refNo" activeKey={sortKey} dir={sortDir} onClick={toggleSort} />
@@ -72,25 +72,25 @@ export function InventoryHistoryTable({ items, loading, emptyMessage = 'No inven
                 {showActionCol && <th className="px-4 py-2 font-semibold"></th>}
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
+            <tbody className="divide-y divide-border">
               {sorted.map((item) => {
                 const badge = TRANSACTION_TYPE_BADGE[item.transactionType];
                 return (
-                  <tr key={item.id} className="hover:bg-slate-50/50 transition-colors">
+                  <tr key={item.id} className="hover:bg-secondary/40 transition-colors">
                     <td className="px-4 py-2.5">
-                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-mono border ${badge.className}`}>
+                      <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-medium border ${badge.className}`}>
                         {badge.label}
                       </span>
                     </td>
-                    <td className="px-4 py-2.5 font-mono text-slate-700">{item.refNo || '-'}</td>
-                    <td className="px-4 py-2.5 text-slate-600">{item.counterpartyName || '-'}</td>
-                    <td className="px-4 py-2.5 text-slate-600">{item.orderDate || '-'}</td>
-                    <td className="px-4 py-2.5 text-slate-600">{item.quantity}</td>
-                    <td className="px-4 py-2.5 text-slate-600">{item.unitCost != null ? item.unitCost.toFixed(2) : '-'}</td>
-                    <td className="px-4 py-2.5 text-slate-600">{item.totalPrice != null ? item.totalPrice.toFixed(2) : '-'}</td>
+                    <td className="px-4 py-2.5 font-mono text-card-foreground">{item.refNo || '-'}</td>
+                    <td className="px-4 py-2.5 text-muted-foreground">{item.counterpartyName || '-'}</td>
+                    <td className="px-4 py-2.5 text-muted-foreground">{item.orderDate || '-'}</td>
+                    <td className="px-4 py-2.5 text-muted-foreground">{item.quantity}</td>
+                    <td className="px-4 py-2.5 text-muted-foreground">{item.unitCost != null ? item.unitCost.toFixed(2) : '-'}</td>
+                    <td className="px-4 py-2.5 text-muted-foreground">{item.totalPrice != null ? item.totalPrice.toFixed(2) : '-'}</td>
                     <td className="px-4 py-2.5">
                       {item.status && (
-                        <span className="px-1.5 py-0.5 bg-slate-50 text-slate-600 border border-slate-200 rounded text-[10px] font-mono">
+                        <span className="px-1.5 py-0.5 bg-secondary text-secondary-foreground rounded-full text-[10px] font-medium">
                           {item.status}
                         </span>
                       )}
@@ -100,7 +100,7 @@ export function InventoryHistoryTable({ items, loading, emptyMessage = 'No inven
                         {onViewPurchaseOrder && item.purchaseHeaderId && (
                           <button
                             onClick={() => onViewPurchaseOrder(item.purchaseHeaderId!)}
-                            className="inline-flex items-center gap-0.5 text-[11px] font-medium text-blue-600 hover:text-blue-800"
+                            className="inline-flex items-center gap-0.5 text-[11px] font-medium text-primary hover:text-primary/80"
                             title="View purchase order"
                           >
                             <span>View</span>
@@ -110,7 +110,7 @@ export function InventoryHistoryTable({ items, loading, emptyMessage = 'No inven
                         {onViewSalesOrder && item.salesHeaderId && (
                           <button
                             onClick={() => onViewSalesOrder(item.salesHeaderId!)}
-                            className="inline-flex items-center gap-0.5 text-[11px] font-medium text-blue-600 hover:text-blue-800"
+                            className="inline-flex items-center gap-0.5 text-[11px] font-medium text-primary hover:text-primary/80"
                             title="View sales order"
                           >
                             <span>View</span>

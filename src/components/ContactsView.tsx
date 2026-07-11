@@ -7,14 +7,14 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { getVendors, getClients, saveVendor, saveClient, deleteVendor, deleteClient, generateId } from '../services/ContactsService';
 import { Vendor, Client, Attachment } from '../types';
 import { Plus, Mail, Phone, MapPin, Briefcase, Users, Paperclip, Edit, Trash2, ChevronRight, FileText, Image as ImageIcon } from 'lucide-react';
-import LoadingSpinner from './LoadingSpinner';
 import CompanyFormFields from './CompanyFormFields';
 import ContactDetailView from './ContactDetailView';
 import SortMenu, { SortOption } from './SortMenu';
 import CompanyLogo from './CompanyLogo';
-import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, SearchInput, useToast, useConfirm } from './ui';
+import { Sheet, Card, SearchInput, Button, Tabs, TabsList, TabsTrigger, Skeleton, useToast, useConfirm } from './ui';
 import { CallAPI } from './UIHelper';
 import { sortByField } from '../utils/sortRows';
+import { useFadeInOnMount } from '../hooks/useFadeInOnMount';
 import { debounce } from 'lodash'
 
 type CompanyType = 'VENDORS' | 'CLIENTS';
@@ -91,6 +91,7 @@ export default function ContactsView() {
   const [companyAddress, setCompanyAddress] = useState('');
   const [companyDescription, setCompanyDescription] = useState('');
   const [companyAttachment, setCompanyAttachment] = useState<Attachment | undefined>(undefined);
+  const formRef = useFadeInOnMount<HTMLDivElement>([showCompanyForm], { duration: 0.7, stagger: 0.18, y: 16 });
 
   const resetCompanyForm = () => {
     setEditCompanyId(null);
@@ -118,8 +119,7 @@ export default function ContactsView() {
     setShowCompanyForm(true);
   };
 
-  const handleSaveCompany = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSaveCompany = async () => {
     if (!companyName.trim()) return;
 
     const record: Company = {
@@ -182,28 +182,20 @@ export default function ContactsView() {
   return (
     <div className="space-y-6" id="contacts-view">
 
-      {loading && <LoadingSpinner message="Retrieving contact profiles..." subtitle="CONTACTS_LOAD" />}
-
       {/* Top Toggle & Actions */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
 
         {/* Toggle Selector */}
-        <div className="flex space-x-1 p-1 bg-slate-100 rounded-lg border border-slate-200/50 self-start">
-          <button
-            onClick={() => setActiveTab('VENDORS')}
-            className={`flex items-center space-x-1.5 px-4 py-1.5 text-xs font-medium rounded-md font-sans transition-all ${activeTab === 'VENDORS' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
-          >
-            <Briefcase className="w-3.5 h-3.5" />
-            <span>Suppliers & Vendors</span>
-          </button>
-          <button
-            onClick={() => setActiveTab('CLIENTS')}
-            className={`flex items-center space-x-1.5 px-4 py-1.5 text-xs font-medium rounded-md font-sans transition-all ${activeTab === 'CLIENTS' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
-          >
-            <Users className="w-3.5 h-3.5" />
-            <span>Customer Clients</span>
-          </button>
-        </div>
+        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as CompanyType)} className="self-start">
+          <TabsList>
+            <TabsTrigger value="VENDORS" className="gap-1.5">
+              <Briefcase className="w-3.5 h-3.5" /> Suppliers & Vendors
+            </TabsTrigger>
+            <TabsTrigger value="CLIENTS" className="gap-1.5">
+              <Users className="w-3.5 h-3.5" /> Customer Clients
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
 
         {/* Search Input & Button */}
         <div className="flex items-center space-x-2">
@@ -229,43 +221,48 @@ export default function ContactsView() {
 
           <SortMenu options={SORT_OPTIONS} sortField={sortField} sortDir={sortDir} onChange={(f, d) => { setSortField(f as CompanySortField); setSortDir(d); }} />
 
-          <button
-            onClick={openAddCompany}
-            className="flex items-center space-x-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium transition-colors font-sans shadow-sm"
-          >
+          <Button onClick={openAddCompany}>
             <Plus className="w-4 h-4" />
-            <span>Add {activeTab === 'VENDORS' ? 'Supplier' : 'Client'}</span>
-          </button>
+            Add {activeTab === 'VENDORS' ? 'Supplier' : 'Client'}
+          </Button>
         </div>
 
       </div>
 
-      {/* Creation/Edit form as Dialog Modal */}
-      <Dialog
+      {/* Creation/Edit form as slide-over drawer — matches MaterialView/ProductView */}
+      <Sheet
         open={showCompanyForm}
         onClose={() => setShowCompanyForm(false)}
         title={`${editCompanyId ? 'Edit' : 'Create'} ${activeTab === 'VENDORS' ? 'Preferred Raw Supplier Account' : 'Customer Client Account'}`}
+        description={editCompanyId ? companyEmail || undefined : 'Create a new company profile'}
+        width="w-full sm:max-w-xl"
+        footer={
+          <div className="flex items-center justify-end gap-2">
+            <Button variant="outline" onClick={() => setShowCompanyForm(false)}>Cancel</Button>
+            <Button onClick={handleSaveCompany}>{editCompanyId ? 'Save Profile' : 'Add Profile'}</Button>
+          </div>
+        }
       >
-        <form onSubmit={handleSaveCompany} className="p-5 space-y-4">
-          <CompanyFormFields
-            companyName={companyName} setCompanyName={setCompanyName}
-            companyEmail={companyEmail} setCompanyEmail={setCompanyEmail}
-            companyOfficeNo={companyOfficeNo} setCompanyOfficeNo={setCompanyOfficeNo}
-            companyAddress={companyAddress} setCompanyAddress={setCompanyAddress}
-            companyDescription={companyDescription} setCompanyDescription={setCompanyDescription}
-            companyAttachment={companyAttachment} setCompanyAttachment={setCompanyAttachment}
-          />
-          <DialogFooter>
-            <DialogCancelButton onClick={() => setShowCompanyForm(false)} />
-            <DialogSubmitButton>{editCompanyId ? 'Save Profile' : 'Add Profile'}</DialogSubmitButton>
-          </DialogFooter>
-        </form>
-      </Dialog>
+        <div ref={formRef} className="p-5 space-y-6">
+          <div data-fade-item>
+            <CompanyFormFields
+              companyName={companyName} setCompanyName={setCompanyName}
+              companyEmail={companyEmail} setCompanyEmail={setCompanyEmail}
+              companyOfficeNo={companyOfficeNo} setCompanyOfficeNo={setCompanyOfficeNo}
+              companyAddress={companyAddress} setCompanyAddress={setCompanyAddress}
+              companyDescription={companyDescription} setCompanyDescription={setCompanyDescription}
+              companyAttachment={companyAttachment} setCompanyAttachment={setCompanyAttachment}
+            />
+          </div>
+        </div>
+      </Sheet>
 
       {/* Company grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-        {companies.length === 0 ? (
-          <Card className="col-span-full text-center py-12 text-xs text-slate-400">
+        {loading && companies.length === 0 ? (
+          Array.from({ length: 6 }).map((_, i) => <CompanyCardSkeleton key={`skeleton-${i}`} />)
+        ) : companies.length === 0 ? (
+          <Card className="col-span-full text-center py-12 text-xs text-muted-foreground">
             No {activeTab === 'VENDORS' ? 'vendors' : 'clients'} found matching your query.
           </Card>
         ) : (
@@ -282,6 +279,26 @@ export default function ContactsView() {
       </div>
 
     </div>
+  );
+}
+
+// Placeholder shown in the grid while a company page is loading
+function CompanyCardSkeleton() {
+  return (
+    <Card className="p-5 space-y-4">
+      <div className="flex items-center gap-2.5">
+        <Skeleton className="h-10 w-10 rounded-full shrink-0" />
+        <Skeleton className="h-4 w-32" />
+      </div>
+      <div className="space-y-2">
+        <Skeleton className="h-3 w-full" />
+        <Skeleton className="h-3 w-3/4" />
+        <Skeleton className="h-3 w-1/2" />
+      </div>
+      <div className="border-t border-border pt-3">
+        <Skeleton className="h-3 w-24" />
+      </div>
+    </Card>
   );
 }
 
@@ -347,30 +364,29 @@ function CompanyCard({
         </div>
       </div>
 
-      <div className="border-t border-slate-100 pt-3 flex items-center justify-between text-xs">
-        <button
-          onClick={onOpen}
-          className="flex items-center space-x-1 text-[11px] font-medium text-blue-600 hover:text-blue-800"
-        >
+      <div className="border-t border-border pt-3 flex items-center justify-between text-xs">
+        <Button variant="link" size="sm" onClick={onOpen} className="h-auto p-0 gap-1">
           <Users className="w-3.5 h-3.5" />
-          <span>View Contacts</span>
-        </button>
+          View Contacts
+        </Button>
 
-        <div className="flex items-center space-x-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-          <button
+        <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          <Button
+            variant="ghost" size="icon"
             onClick={(e) => { e.stopPropagation(); onEdit(); }}
-            className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-slate-50 rounded transition-colors"
+            className="h-7 w-7 text-muted-foreground hover:text-primary"
             title="Edit"
           >
             <Edit className="w-3.5 h-3.5" />
-          </button>
-          <button
+          </Button>
+          <Button
+            variant="ghost" size="icon"
             onClick={(e) => { e.stopPropagation(); onDelete(); }}
-            className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-slate-50 rounded transition-colors"
+            className="h-7 w-7 text-muted-foreground hover:text-destructive"
             title="Delete"
           >
             <Trash2 className="w-3.5 h-3.5" />
-          </button>
+          </Button>
         </div>
       </div>
     </Card>

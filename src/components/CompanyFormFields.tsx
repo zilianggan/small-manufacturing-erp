@@ -27,7 +27,7 @@ export default function CompanyFormFields({
   companyAttachment, setCompanyAttachment,
 }: CompanyFormFieldsProps) {
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs text-slate-600">
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs text-muted-foreground">
       <FormField label="Company Name *" colSpan="sm:col-span-2">
         <input
           type="text" required value={companyName} onChange={(e) => setCompanyName(e.target.value)}

@@ -57,7 +57,7 @@ export default function SortMenu({ options, sortField, sortDir, onChange }: Sort
       </button>
 
       {open && (
-        <div className="absolute right-0 mt-1 w-56 bg-white border border-slate-200 rounded-lg shadow-lg z-20 overflow-hidden py-1">
+        <div className="absolute right-0 mt-1 w-56 bg-white border border-slate-200 rounded-lg shadow-lg z-50 overflow-hidden py-1">
           {options.map((option) => {
             const active = option.value === sortField;
             return (

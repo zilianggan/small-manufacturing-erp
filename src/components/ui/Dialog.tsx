@@ -1,9 +1,8 @@
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
-
 import React from 'react';
+import * as RadixDialog from '@radix-ui/react-dialog';
+import { X } from 'lucide-react';
+import { cn } from '../../lib/utils';
+import { Button } from './Button';
 
 interface DialogProps {
   open: boolean;
@@ -12,11 +11,11 @@ interface DialogProps {
   children: React.ReactNode;
   /** Tailwind max-width class for the dialog panel, e.g. 'max-w-2xl' (default) or 'max-w-md' */
   maxWidth?: string;
-  /** Extra classes for the header row (e.g. 'bg-slate-50' used by the Employees dialog) */
+  /** Extra classes for the header row */
   headerClassName?: string;
-  /** Extra classes for the title text (e.g. 'font-bold' + icon wrapper support via titleIcon) */
+  /** Extra classes for the title text */
   titleClassName?: string;
-  /** Optional icon/badge rendered before the title (kept generic so callers can pass their own icon markup) */
+  /** Optional icon/badge rendered before the title */
   titleIcon?: React.ReactNode;
 }
 
@@ -32,63 +31,57 @@ export default function Dialog({
   children,
   maxWidth = 'max-w-2xl',
   headerClassName = '',
-  titleClassName = 'font-sans font-semibold text-slate-900 text-sm',
-  titleIcon
+  titleClassName = 'font-semibold text-card-foreground text-sm',
+  titleIcon,
 }: DialogProps) {
-  if (!open) return null;
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
-      <div className={`w-full ${maxWidth} bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden animate-in fade-in zoom-in duration-200`}>
-        <div className={`p-5 border-b border-slate-100 flex items-center justify-between ${headerClassName}`}>
-          <h3 className={`${titleClassName} flex items-center space-x-2`}>
-            {titleIcon}
-            <span>{title}</span>
-          </h3>
-          <button
-            type="button"
-            onClick={onClose}
-            className="text-slate-400 hover:text-slate-600 font-bold text-base p-1 leading-none"
-          >
-            &times;
-          </button>
-        </div>
-        {children}
-      </div>
-    </div>
+    <RadixDialog.Root open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
+      <RadixDialog.Portal>
+        <RadixDialog.Overlay className="fixed inset-0 z-50 bg-foreground/40 backdrop-blur-sm data-[state=open]:animate-in data-[state=open]:fade-in data-[state=closed]:animate-out data-[state=closed]:fade-out" />
+        <RadixDialog.Content
+          className={cn(
+            'fixed left-1/2 top-1/2 z-50 w-full -translate-x-1/2 -translate-y-1/2 bg-card border border-border rounded-2xl shadow-xl overflow-hidden data-[state=open]:animate-in data-[state=open]:fade-in data-[state=open]:zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out data-[state=closed]:zoom-out-95 duration-200 max-h-[90vh] flex flex-col',
+            maxWidth
+          )}
+        >
+          <div className={cn('p-5 border-b border-border flex items-center justify-between shrink-0', headerClassName)}>
+            <RadixDialog.Title className={cn(titleClassName, 'flex items-center space-x-2')}>
+              {titleIcon}
+              <span>{title}</span>
+            </RadixDialog.Title>
+            <RadixDialog.Close asChild>
+              <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground">
+                <X className="w-4 h-4" />
+              </Button>
+            </RadixDialog.Close>
+          </div>
+          <div className="overflow-y-auto">{children}</div>
+        </RadixDialog.Content>
+      </RadixDialog.Portal>
+    </RadixDialog.Root>
   );
 }
 
-/** Standard footer action row (Cancel + Submit buttons) used at the bottom of dialog forms. */
 export function DialogFooter({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex items-center justify-end space-x-2 pt-3 border-t border-slate-100 text-xs mt-4">
+    <div className="flex items-center justify-end space-x-2 pt-3 border-t border-border text-xs mt-4">
       {children}
     </div>
   );
 }
 
-/** Secondary "Cancel" style button matching the existing dialog footer look. */
 export function DialogCancelButton({ onClick, children = 'Cancel' }: { onClick: () => void; children?: React.ReactNode }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-medium transition-colors"
-    >
+    <Button type="button" variant="secondary" onClick={onClick}>
       {children}
-    </button>
+    </Button>
   );
 }
 
-/** Primary "Save/Submit" style button matching the existing dialog footer look. */
 export function DialogSubmitButton({ children, className = '' }: { children: React.ReactNode; className?: string }) {
   return (
-    <button
-      type="submit"
-      className={`px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors ${className}`}
-    >
+    <Button type="submit" className={className}>
       {children}
-    </button>
+    </Button>
   );
 }

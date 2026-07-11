@@ -4,16 +4,24 @@
  */
 
 import React, { useMemo, useState } from 'react';
-import { PurchaseHeader } from '../types';
+import { PurchaseHeader, PurchaseDetail } from '../types';
 import {
   ArrowLeft, Calendar, Paperclip, Trash2, Edit, FileText, ArrowRightCircle, Check, Boxes,
 } from 'lucide-react';
-import { Card } from './ui';
-import SortableTh from './SortableTh';
-import { sortByField } from '../utils/sortRows';
+import { Card, Badge, Button } from './ui';
+import { SectionCard, DataTable } from './shell';
+import type { DataTableColumn } from './shell';
+import { useFadeInOnMount } from '../hooks/useFadeInOnMount';
 
 type LineItemSortKey = 'materialName' | 'quantity' | 'unitCost' | 'totalPrice' | 'receivedQuantity';
 const NUMERIC_KEYS: LineItemSortKey[] = ['quantity', 'unitCost', 'totalPrice', 'receivedQuantity'];
+
+const STATUS_META: Record<PurchaseHeader['status'], { label: string; variant: 'default' | 'warning' | 'success' | 'destructive' }> = {
+  QUOTATION: { label: 'Quotation', variant: 'default' },
+  ORDERED: { label: 'Pending Stock', variant: 'warning' },
+  RECEIVED: { label: 'Received', variant: 'success' },
+  CANCELLED: { label: 'Cancelled', variant: 'destructive' },
+};
 
 interface PurchaseOrderDetailViewProps {
   purchase: PurchaseHeader;
@@ -32,6 +40,19 @@ interface PurchaseOrderDetailViewProps {
   onOpenQuotationDoc: (purchase: PurchaseHeader) => void;
 }
 
+const sortByField = <K extends LineItemSortKey>(rows: PurchaseDetail[], key: K, dir: 'asc' | 'desc'): PurchaseDetail[] => {
+  const isNumeric = NUMERIC_KEYS.includes(key);
+  const mul = dir === 'asc' ? 1 : -1;
+  return [...rows].sort((a, b) => {
+    const av = a[key], bv = b[key];
+    if (av == null && bv == null) return 0;
+    if (av == null) return 1;
+    if (bv == null) return -1;
+    if (isNumeric) return ((av as unknown as number) - (bv as unknown as number)) * mul;
+    return String(av).localeCompare(String(bv)) * mul;
+  });
+};
+
 /**
  * Drill-down "detail page" for a single purchase (PurchaseHeader): header
  * summary + status-appropriate lifecycle actions (mirrors PurchasesView.tsx's
@@ -44,72 +65,77 @@ export default function PurchaseOrderDetailView({
   purchase, onBack, backLabel = 'Back to Purchases', receivingId,
   onEdit, onConvert, onDelete, onReceive, onCancel, onOpenQuotationDoc
 }: PurchaseOrderDetailViewProps) {
-  const statusBadgeClass = purchase.status === 'ORDERED' ? 'bg-amber-50 text-amber-800 border-amber-200'
-    : purchase.status === 'RECEIVED' ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
-      : purchase.status === 'CANCELLED' ? 'bg-red-50 text-red-800 border-red-200'
-        : 'bg-slate-50 text-slate-600 border-slate-200';
+  const contentRef = useFadeInOnMount<HTMLDivElement>([purchase.id]);
+  const status = STATUS_META[purchase.status];
 
-  // Click-to-sort table headers. Whole list is already loaded (one order's
-  // line items, never heavy), so this sorts client-side rather than re-fetching.
+  // Whole list is already loaded (one order's line items, never heavy), so
+  // this sorts client-side rather than re-fetching.
   const [sortKey, setSortKey] = useState<LineItemSortKey>('materialName');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
-  const toggleSort = (key: LineItemSortKey) => {
-    if (key === sortKey) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
-    else { setSortKey(key); setSortDir('asc'); }
+  const toggleSort = (key: string) => {
+    const field = key as LineItemSortKey;
+    if (field === sortKey) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
+    else { setSortKey(field); setSortDir('asc'); }
   };
   const sortedDetails = useMemo(
-    () => sortByField(purchase.details, sortKey, sortDir, NUMERIC_KEYS),
+    () => sortByField(purchase.details, sortKey, sortDir),
     [purchase.details, sortKey, sortDir]
   );
 
+  const columns: DataTableColumn<PurchaseDetail>[] = [
+    { key: 'materialName', header: 'Material', sortable: true, render: (d) => <span className="font-medium text-card-foreground">{d.materialName}</span> },
+    { key: 'quantity', header: 'Quantity', sortable: true, align: 'right', render: (d) => <span className="font-mono text-muted-foreground">{d.quantity}</span> },
+    { key: 'unitCost', header: 'Unit Cost', sortable: true, align: 'right', render: (d) => <span className="font-mono text-muted-foreground">RM {d.unitCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span> },
+    { key: 'totalPrice', header: 'Total Price', sortable: true, align: 'right', render: (d) => <span className="font-mono font-medium text-foreground">RM {d.totalPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span> },
+    { key: 'receivedQuantity', header: 'Received Qty', sortable: true, align: 'right', render: (d) => <span className="font-mono text-muted-foreground">{d.receivedQuantity}</span> },
+  ];
+
   return (
-    <div className="space-y-6" id="purchase-order-detail-view">
+    <div ref={contentRef} className="space-y-5" id="purchase-order-detail-view">
       <button
+        data-fade-item
         onClick={onBack}
-        className="flex items-center space-x-1.5 text-xs font-medium text-slate-500 hover:text-slate-800 transition-colors"
+        className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
       >
         <ArrowLeft className="w-3.5 h-3.5" />
         <span>{backLabel}</span>
       </button>
 
       {/* Header summary card */}
+      <div data-fade-item>
       <Card className="p-5">
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div className="space-y-2.5 min-w-0">
             <div>
-              <h2 className="font-sans font-bold text-slate-900 text-lg leading-snug font-mono">{purchase.purchaseNo}</h2>
-              <p className="text-xs text-slate-500 mt-1">{purchase.vendorName}</p>
+              <h2 className="font-mono font-bold text-foreground text-lg leading-snug">{purchase.purchaseNo}</h2>
+              <p className="text-xs text-muted-foreground mt-1">{purchase.vendorName}</p>
             </div>
 
-            <div className="flex flex-wrap gap-1.5">
-              <span className={`px-1.5 py-0.5 rounded text-[10px] font-mono border ${statusBadgeClass}`}>
-                {purchase.status === 'ORDERED' ? 'Pending Stock' : purchase.status}
-              </span>
-            </div>
+            <Badge variant={status.variant}>{status.label}</Badge>
 
-            <div className="flex flex-wrap gap-x-5 gap-y-1.5 text-xs text-slate-500">
-              <div className="flex items-center space-x-1.5">
-                <Calendar className="w-3.5 h-3.5 text-slate-400" />
-                <span className="text-slate-400">Quotation Date:</span>
-                <span>{purchase.quotationDate}</span>
+            <div className="flex flex-wrap gap-x-5 gap-y-1.5 text-xs text-muted-foreground">
+              <div className="flex items-center gap-1.5">
+                <Calendar className="w-3.5 h-3.5" />
+                <span>Quotation Date:</span>
+                <span className="text-foreground">{purchase.quotationDate}</span>
               </div>
               {purchase.orderDate && (
-                <div className="flex items-center space-x-1.5">
-                  <Calendar className="w-3.5 h-3.5 text-slate-400" />
-                  <span className="text-slate-400">Order Date:</span>
-                  <span>{purchase.orderDate}</span>
+                <div className="flex items-center gap-1.5">
+                  <Calendar className="w-3.5 h-3.5" />
+                  <span>Order Date:</span>
+                  <span className="text-foreground">{purchase.orderDate}</span>
                 </div>
               )}
               {purchase.receivedDate && (
-                <div className="flex items-center space-x-1.5">
-                  <Calendar className="w-3.5 h-3.5 text-slate-400" />
-                  <span className="text-slate-400">Received Date:</span>
-                  <span>{purchase.receivedDate}</span>
+                <div className="flex items-center gap-1.5">
+                  <Calendar className="w-3.5 h-3.5" />
+                  <span>Received Date:</span>
+                  <span className="text-foreground">{purchase.receivedDate}</span>
                 </div>
               )}
-              <div className="flex items-center space-x-1.5">
-                <span className="text-slate-400">Total Cost:</span>
-                <span className="font-mono font-semibold text-slate-800">RM {purchase.totalPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              <div className="flex items-center gap-1.5">
+                <span>Total Cost:</span>
+                <span className="font-mono font-semibold text-foreground">RM {purchase.totalPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
             </div>
 
@@ -117,10 +143,10 @@ export default function PurchaseOrderDetailView({
               <a
                 href={purchase.attachments[0].dataUrl}
                 download={purchase.attachments[0].name}
-                className="inline-flex items-center space-x-1 px-1.5 py-0.5 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded text-[10px] font-mono transition-colors"
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-primary/10 hover:bg-primary/20 text-primary rounded text-[10px] font-mono transition-colors"
                 title="Download attachment"
               >
-                <Paperclip className="w-2.5 h-2.5 text-blue-500 shrink-0" />
+                <Paperclip className="w-2.5 h-2.5 shrink-0" />
                 <span className="truncate max-w-[200px]">{purchase.attachments[0].name}</span>
               </a>
             )}
@@ -130,90 +156,46 @@ export default function PurchaseOrderDetailView({
           <div className="flex items-center flex-wrap gap-1.5 shrink-0">
             {purchase.status === 'QUOTATION' && (
               <>
-                <button onClick={() => onEdit(purchase)} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-slate-50 rounded transition-colors" title="Edit">
-                  <Edit className="w-4 h-4" />
-                </button>
-                <button onClick={() => onDelete(purchase.id)} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-slate-50 rounded transition-colors" title="Delete">
-                  <Trash2 className="w-4 h-4" />
-                </button>
-                <button onClick={() => onOpenQuotationDoc(purchase)} className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-50 rounded transition-colors" title="Generate Quotation">
-                  <FileText className="w-4 h-4" />
-                </button>
-                <button onClick={() => onConvert(purchase)} className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded transition-colors" title="Proceed to Purchase Order">
-                  <ArrowRightCircle className="w-4 h-4" />
-                </button>
+                <Button variant="outline" size="sm" onClick={() => onEdit(purchase)}><Edit className="w-3.5 h-3.5" /> Edit</Button>
+                <Button variant="outline" size="sm" onClick={() => onOpenQuotationDoc(purchase)}><FileText className="w-3.5 h-3.5" /> Generate Quotation</Button>
+                <Button size="sm" onClick={() => onConvert(purchase)}><ArrowRightCircle className="w-3.5 h-3.5" /> Proceed to Purchase Order</Button>
+                <Button variant="destructive" size="sm" onClick={() => onDelete(purchase.id)}><Trash2 className="w-3.5 h-3.5" /> Delete</Button>
               </>
             )}
 
             {purchase.status === 'ORDERED' && (
               <>
-                <button onClick={() => onEdit(purchase)} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-slate-50 rounded transition-colors" title="Edit">
-                  <Edit className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={() => onReceive(purchase)}
-                  disabled={receivingId === purchase.id}
-                  title="Mark material package as received"
-                  className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <Check className="w-4 h-4" />
-                </button>
-                <button onClick={() => onCancel(purchase.id)} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-slate-50 rounded transition-colors text-[11px] font-medium">
-                  Cancel
-                </button>
+                <Button variant="outline" size="sm" onClick={() => onEdit(purchase)}><Edit className="w-3.5 h-3.5" /> Edit</Button>
+                <Button size="sm" onClick={() => onReceive(purchase)} disabled={receivingId === purchase.id}>
+                  <Check className="w-3.5 h-3.5" /> {receivingId === purchase.id ? 'Receiving...' : 'Mark as Received'}
+                </Button>
+                <Button variant="destructive" size="sm" onClick={() => onCancel(purchase.id)}>Cancel Order</Button>
               </>
-            )}
-
-            {purchase.status === 'RECEIVED' && (
-              <span className="text-[11px] text-emerald-600 font-semibold flex items-center space-x-0.5 font-mono px-1.5">
-                <span className="px-2 py-0.5 bg-emerald-50 rounded">Replenished ✓</span>
-              </span>
             )}
 
             {purchase.status === 'CANCELLED' && (
-              <>
-                <span className="text-[11px] text-slate-400 font-mono italic px-1.5">Cancelled</span>
-                <button onClick={() => onDelete(purchase.id)} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-slate-50 rounded transition-colors" title="Delete">
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </>
+              <Button variant="destructive" size="sm" onClick={() => onDelete(purchase.id)}><Trash2 className="w-3.5 h-3.5" /> Delete</Button>
             )}
           </div>
         </div>
       </Card>
-
-      {/* Material line items */}
-      <div className="flex items-center gap-2">
-        <Boxes className="w-4 h-4 text-slate-500" />
-        <h3 className="font-sans font-bold text-slate-900 text-sm">Material Line Items</h3>
       </div>
 
-      <Card className="overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs text-left">
-            <thead className="bg-slate-50 text-slate-500 border-b border-slate-100">
-              <tr>
-                <SortableTh label="Material" sortKey="materialName" activeKey={sortKey} dir={sortDir} onClick={toggleSort} />
-                <SortableTh label="Quantity" sortKey="quantity" activeKey={sortKey} dir={sortDir} onClick={toggleSort} align="right" />
-                <SortableTh label="Unit Cost" sortKey="unitCost" activeKey={sortKey} dir={sortDir} onClick={toggleSort} align="right" />
-                <SortableTh label="Total Price" sortKey="totalPrice" activeKey={sortKey} dir={sortDir} onClick={toggleSort} align="right" />
-                <SortableTh label="Received Qty" sortKey="receivedQuantity" activeKey={sortKey} dir={sortDir} onClick={toggleSort} align="right" />
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {sortedDetails.map((item, idx) => (
-                <tr key={item.detailId || idx} className="hover:bg-slate-50/50 transition-colors">
-                  <td className="px-4 py-2.5 font-semibold text-slate-800">{item.materialName}</td>
-                  <td className="px-4 py-2.5 text-right font-mono text-slate-600">{item.quantity}</td>
-                  <td className="px-4 py-2.5 text-right font-mono text-slate-600">RM {item.unitCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                  <td className="px-4 py-2.5 text-right font-mono font-semibold text-slate-800">RM {item.totalPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                  <td className="px-4 py-2.5 text-right font-mono text-slate-600">{item.receivedQuantity}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Card>
+      {/* Material line items */}
+      <SectionCard
+        data-fade-item
+        title={<span className="inline-flex items-center gap-2"><Boxes className="w-4 h-4 text-muted-foreground" /> Material Line Items</span>}
+        contentClassName="p-0"
+      >
+        <DataTable
+          columns={columns}
+          rows={sortedDetails}
+          rowKey={(d) => d.detailId}
+          sortField={sortKey}
+          sortDir={sortDir}
+          onSort={toggleSort}
+        />
+      </SectionCard>
     </div>
   );
 }

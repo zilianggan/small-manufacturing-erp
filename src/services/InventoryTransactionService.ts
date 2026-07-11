@@ -28,6 +28,8 @@ const mapTransactionRow = (row: any): InventoryTransaction => {
     productId: row.product_id || undefined,
     productName: row.product?.name,
     refNo: purchaseHeader?.purchase_no || salesHeader?.sales_no,
+    counterpartyName: purchaseHeader?.vendors?.company_name || salesHeader?.clients?.company_name,
+    status: purchaseHeader?.status || salesHeader?.status,
     purchaseHeaderId: purchaseHeader?.id,
     salesHeaderId: salesHeader?.id,
     transactionDate: row.transaction_date?.slice(0, 10),
@@ -50,19 +52,21 @@ export const getInventoryTransactions = async (params: {
   typeFilters?: InventoryTransactionType[]; // empty/undefined = all types
   materialIds?: string[]; // FilterDialog's ticked-record picker, OR'd with productIds, AND'd with search
   productIds?: string[];
+  dateFrom?: string; // inclusive, yyyy-mm-dd, against transaction_date
+  dateTo?: string; // inclusive
   sortField?: InventoryLedgerSortField;
   sortDir?: SortDir;
   offset: number;
   limit: number;
-}): Promise<{ rows: InventoryTransaction[]; hasMore: boolean }> => {
-  const { search = '', typeFilters, materialIds, productIds, sortField = 'date', sortDir = 'desc', offset, limit } = params;
+}): Promise<{ rows: InventoryTransaction[]; hasMore: boolean; totalCount: number }> => {
+  const { search = '', typeFilters, materialIds, productIds, dateFrom, dateTo, sortField = 'date', sortDir = 'desc', offset, limit } = params;
 
   let query = supabase
     .from('inventory_transaction')
     .select(`
       *, material(name), product(name),
-      purchase_detail(purchase_header(id, purchase_no)),
-      production_material_usage(sales_detail(sales_header(id, sales_no)))
+      purchase_detail(purchase_header(id, purchase_no, status, vendors(company_name))),
+      production_material_usage(sales_detail(sales_header(id, sales_no, status, clients(company_name))))
     `, { count: 'exact' })
     .order(SORT_COLUMN[sortField], { ascending: sortDir === 'asc' })
     .order('created_at', { ascending: false });
@@ -70,6 +74,8 @@ export const getInventoryTransactions = async (params: {
   if (typeFilters && typeFilters.length > 0) {
     query = query.in('transaction_type', typeFilters);
   }
+  if (dateFrom) query = query.gte('transaction_date', dateFrom);
+  if (dateTo) query = query.lte('transaction_date', dateTo);
 
   const q = search.trim();
   if (q) {
@@ -84,7 +90,7 @@ export const getInventoryTransactions = async (params: {
     const searchProductIds = matchedProducts.map(p => p.id);
 
     if (searchMaterialIds.length === 0 && searchProductIds.length === 0) {
-      return { rows: [], hasMore: false };
+      return { rows: [], hasMore: false, totalCount: 0 };
     }
 
     const orParts: string[] = [];
@@ -109,12 +115,13 @@ export const getInventoryTransactions = async (params: {
   const { data, error, count } = await query;
   if (error) {
     console.error('getInventoryTransactions', error);
-    return { rows: [], hasMore: false };
+    return { rows: [], hasMore: false, totalCount: 0 };
   }
 
   const rows = (data || []).map(mapTransactionRow);
-  const hasMore = count != null ? offset + rows.length < count : rows.length === limit;
-  return { rows, hasMore };
+  const totalCount = count ?? rows.length;
+  const hasMore = offset + rows.length < totalCount;
+  return { rows, hasMore, totalCount };
 };
 
 export const saveInventoryTransaction = (tx: InventoryTransaction): Promise<void> =>
@@ -141,8 +148,8 @@ const mapMovementRow = (row: any): InventoryListItem => {
   };
 };
 
-// Read-only side of the ledger for MaterialDetailView's/ProductDetailView's
-// "Inventory List": movements against one material/product, joined out to
+// Read-only side of the ledger for MaterialView's/ProductView's "Inventory
+// List": movements against one material/product, joined out to
 // whichever order header generated them (purchase_detail -> purchase_header
 // for PURCHASE/PURCHASE_RETURN, production_material_usage -> sales_detail ->
 // sales_header for SALES/SALES_RETURN/ADJUSTMENT). ADJUSTMENT rows with no
@@ -174,4 +181,68 @@ export const getInventoryMovements = async (
     return [];
   }
   return (data || []).map(mapMovementRow);
+};
+
+export interface InventoryStatsSummary {
+  totalIn: number;
+  totalOut: number;
+  transactionCount: number;
+  monthlyInOut: { month: string; stockIn: number; stockOut: number }[];
+  topConsumed: { materialId: string; materialName: string; quantity: number }[];
+}
+
+/**
+ * Statistics dialog data — aggregated client-side over the last 6 months of
+ * transactions (no dedicated analytics RPC exists yet). Bounded by date range
+ * rather than a full-table fetch, so this stays cheap for a single-site shop.
+ * Only material-side rows carry consumption data (see getProductInventoryList's
+ * comment — products have no ledger entry for ordinary sales), so
+ * "Top Consumed" is materials only.
+ */
+export const getInventoryStatsSummary = async (months = 6): Promise<InventoryStatsSummary> => {
+  const since = new Date();
+  since.setMonth(since.getMonth() - (months - 1));
+  since.setDate(1);
+  const sinceStr = since.toISOString().split('T')[0];
+
+  const { data, error } = await supabase
+    .from('inventory_transaction')
+    .select('transaction_type, quantity, transaction_date, material_id, material(name)')
+    .gte('transaction_date', sinceStr);
+
+  if (error) {
+    console.error('getInventoryStatsSummary', error);
+    return { totalIn: 0, totalOut: 0, transactionCount: 0, monthlyInOut: [], topConsumed: [] };
+  }
+
+  const monthBuckets = new Map<string, { stockIn: number; stockOut: number }>();
+  const consumedByMaterial = new Map<string, { materialName: string; quantity: number }>();
+  let totalIn = 0;
+  let totalOut = 0;
+
+  for (const row of data || []) {
+    const qty = Number(row.quantity) || 0;
+    const monthKey = (row.transaction_date || '').slice(0, 7); // yyyy-mm
+    const bucket = monthBuckets.get(monthKey) || { stockIn: 0, stockOut: 0 };
+    if (qty >= 0) { bucket.stockIn += qty; totalIn += qty; }
+    else { bucket.stockOut += Math.abs(qty); totalOut += Math.abs(qty); }
+    monthBuckets.set(monthKey, bucket);
+
+    if (qty < 0 && row.material_id) {
+      const entry = consumedByMaterial.get(row.material_id) || { materialName: (row as any).material?.name || 'Unknown', quantity: 0 };
+      entry.quantity += Math.abs(qty);
+      consumedByMaterial.set(row.material_id, entry);
+    }
+  }
+
+  const monthlyInOut = Array.from(monthBuckets.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([month, v]) => ({ month, ...v }));
+
+  const topConsumed = Array.from(consumedByMaterial.entries())
+    .map(([materialId, v]) => ({ materialId, ...v }))
+    .sort((a, b) => b.quantity - a.quantity)
+    .slice(0, 8);
+
+  return { totalIn, totalOut, transactionCount: (data || []).length, monthlyInOut, topConsumed };
 };

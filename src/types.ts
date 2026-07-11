@@ -346,13 +346,15 @@ export interface InventoryTransaction {
   purchaseDetailId?: string; // FK -> purchase_detail.detail_id, set when a PO receipt generated this row
   productionMaterialUsageId?: string; // FK -> production_material_usage.id, set when a production reservation/reconciliation generated this row
   refNo?: string; // joined, display only — purchase_no or sales_no of the linked order
+  counterpartyName?: string; // joined, display only — vendor (purchase) or client name (sales-linked production)
+  status?: string; // joined, display only — linked purchase/sales header status; unset for standalone ADJUSTMENT rows
   purchaseHeaderId?: string; // joined, display only — for cross-tab nav to the purchase order
   salesHeaderId?: string; // joined, display only — for cross-tab nav to the sales order
   transactionDate: string;
   createdAt?: string;
 }
 
-// Unified row for MaterialDetailView's/ProductDetailView's "Inventory List":
+// Unified row for MaterialView's/ProductView's "Inventory List":
 // order-level rows (purchase_detail for materials, sales_detail for products)
 // merged with any other inventory_transaction movements against the same
 // item (e.g. a material consumed in production against a sales order, or a

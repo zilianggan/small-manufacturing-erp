@@ -34,7 +34,8 @@ import {
 import { useSyncStore } from './services/db';
 import { CompanyProfile } from './types';
 import SignaturePad from './components/SignaturePad';
-import { useToast, useConfirm } from './components/ui';
+import { useToast, useConfirm, Button } from './components/ui';
+import { useFadeInOnMount } from './hooks/useFadeInOnMount';
 
 import DashboardView from './components/DashboardView';
 import InventoryView from './components/InventoryView';
@@ -60,14 +61,14 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<TabType>('DASHBOARD');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  // Cross-tab drill-in: ProductDetailView.tsx's/MaterialDetailView.tsx's/
-  // InventoryView.tsx's inventory list links jump here — switch tabs and tell
-  // the destination view which header to open, since these are separate
-  // top-level tabs with no shared router. The "return to" origin is
-  // remembered so the detail page's Back button can restore the originating
-  // Product/Material detail page (or the Inventory tab) instead of just
-  // showing that tab's list. A material row can link to a sales order too
-  // (production consumption against that sale), hence the multiple origins.
+  // Cross-tab drill-in: ProductView.tsx's/MaterialView.tsx's/InventoryView.tsx's
+  // inventory list links jump here — switch tabs and tell the destination
+  // view which header to open, since these are separate top-level tabs with
+  // no shared router. The "return to" origin is remembered so the detail
+  // page's Back button can restore the originating Product/Material detail
+  // panel (or the Inventory tab) instead of just showing that tab's list. A
+  // material row can link to a sales order too (production consumption
+  // against that sale), hence the multiple origins.
   const [pendingSalesOrderId, setPendingSalesOrderId] = useState<string | null>(null);
   const [salesOrderReturnTo, setSalesOrderReturnTo] = useState<{ type: 'PRODUCT' | 'MATERIAL' | 'INVENTORY'; id: string } | null>(null);
   const navigateToSalesOrder = (salesHeaderId: string, fromProductId?: string, fromMaterialId?: string, fromInventory?: boolean) => {
@@ -138,6 +139,7 @@ export default function App() {
   const [showImportModal, setShowImportModal] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const isSyncing = useSyncStore((state: any) => state.isSyncing);
+  const tabContentRef = useFadeInOnMount<HTMLDivElement>([activeTab, refreshKey]);
 
   // Fetch company profile — localStorage first, fallback to API
   const loadData = async () => {
@@ -263,14 +265,6 @@ export default function App() {
     }
   };
 
-  // Reset local storage to seed defaults
-  const resetDatabase = async () => {
-    if (await confirm('WARNING: This will reset all current changes back to seed default data. Proceed?', { title: 'Reset Database' })) {
-      localStorage.clear();
-      window.location.reload();
-    }
-  };
-
   // Define Navigation Items
   const navItems = [
     { id: 'DASHBOARD' as TabType, label: 'Operations Board', icon: LayoutDashboard },
@@ -288,11 +282,10 @@ export default function App() {
   ];
 
   return (
-    <div className="h-dvh max-h-dvh bg-slate-50 flex flex-col md:flex-row text-slate-900 font-sans overflow-hidden">
+    <div className="h-dvh max-h-dvh bg-background flex flex-col md:flex-row text-foreground font-sans overflow-hidden">
 
       {/* Sidebar - Desktop */}
-      <aside className="hidden md:flex flex-col w-64 h-dvh bg-slate-900 text-slate-300 border-r border-slate-800 shrink-0 select-none overflow-hidden">
-
+      <aside className="hidden md:flex flex-col w-64 h-dvh shrink-0 select-none overflow-hidden bg-sidebar text-sidebar-foreground border-r border-sidebar-border">
         {/* Sidebar Header Brand */}
         <div
           onClick={() => {
@@ -309,20 +302,20 @@ export default function App() {
             setBrandingError('');
             setShowBrandingModal(true);
           }}
-          className="p-6 border-b border-slate-800 cursor-pointer hover:bg-slate-800/30 transition-colors group select-none"
+          className="p-6 border-b border-sidebar-foreground/10 cursor-pointer hover:bg-sidebar-hover/5 transition-colors group select-none"
           title="Click to edit company branding"
         >
           <div className="flex items-center space-x-2.5">
-            <span className="p-1.5 bg-blue-600 rounded text-white shrink-0 group-hover:scale-105 transition-transform flex items-center justify-center">
+            <span className="bg-primary p-1.5 rounded-lg text-sidebar-foreground shrink-0 group-hover:scale-105 transition-transform flex items-center justify-center">
               {renderCompanyIcon("w-4.5 h-4.5")}
             </span>
             <div className="min-w-0">
-              <h1 className="font-sans font-bold text-white text-xs tracking-tight truncate group-hover:text-blue-400 transition-colors">
+              <h1 className="font-sans font-bold text-xs tracking-tight truncate group-hover:text-sidebar-foreground transition-colors text-sidebar-foreground hover:bg-sidebar-hover">
                 {companyProfile.name}
               </h1>
-              <p className="text-[9px] text-slate-500 font-mono flex items-center space-x-1">
+              <p className="text-[9px] font-mono flex items-center space-x-1 text-sidebar-foreground hover:bg-sidebar-hover">
                 <span>Machinery & Parts</span>
-                <span className="text-slate-600 group-hover:text-slate-400 font-sans text-[8px]">(edit)</span>
+                <span className="text-sidebar-foreground/30 group-hover:text-sidebar-foreground/50 font-sans text-[8px]">(edit)</span>
               </p>
             </div>
           </div>
@@ -337,9 +330,9 @@ export default function App() {
               <button
                 key={item.id}
                 onClick={() => setActiveTab(item.id)}
-                className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg text-xs font-medium transition-all ${isActive
-                  ? 'bg-blue-600/10 text-blue-400 font-semibold border-l-4 border-blue-500'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                className={`w-full flex items-center space-x-3 px-3 py-2 rounded-md text-xs font-medium transition-all text-sidebar-foreground hover:bg-sidebar-hover transition-colors ${isActive
+                  ? 'bg-sidebar-active text-sidebar-foreground font-semibold'
+                  : 'text-sidebar-foreground/55 hover:text-sidebar-foreground hover:bg-sidebar-foreground/10'
                   }`}
               >
                 <Icon className="w-4.5 h-4.5 shrink-0" />
@@ -350,38 +343,30 @@ export default function App() {
         </nav>
 
         {/* Sidebar Footer Operations */}
-        <div className="p-4 border-t border-slate-800 space-y-2 text-[10px] text-slate-500 font-mono">
-          <div className="flex items-center justify-between text-[11px] text-slate-400 font-sans pb-1 font-semibold border-b border-slate-800/60">
+        <div className="p-4 border-t border-sidebar-foreground/10 space-y-2 text-[10px] text-sidebar-foreground/40 font-mono">
+          <div className="flex items-center justify-between text-[11px] text-sidebar-foreground/50 font-sans pb-1 font-semibold border-b border-sidebar-foreground/10">
             <span>Data Import / Export</span>
-            {/* <span className="text-[9px] bg-slate-800 text-emerald-400 px-1 py-0.5 rounded uppercase">Local SQL Ready</span> */}
           </div>
           <button
             onClick={() => setShowImportModal(true)}
-            className="w-full flex items-center space-x-2 px-2.5 py-1.5 text-blue-400 hover:text-white hover:bg-blue-600/10 rounded transition-colors text-left font-semibold"
+            className="w-full flex items-center space-x-2 px-2.5 py-1.5 text-sidebar-foreground hover:text-sidebar-foreground hover:bg-sidebar-foreground/10 rounded-lg transition-colors text-left font-semibold"
           >
             <Upload className="w-3.5 h-3.5 animate-bounce-subtle" />
             <span>Import / Export Hub</span>
           </button>
           <button
             onClick={downloadBackup}
-            className="w-full flex items-center space-x-2 px-2.5 py-1.5 hover:text-white hover:bg-slate-800 rounded transition-colors text-left"
+            className="w-full flex items-center space-x-2 px-2.5 py-1.5 hover:text-sidebar-foreground hover:bg-sidebar-foreground/10 rounded-lg transition-colors text-left"
           >
             <Download className="w-3.5 h-3.5" />
             <span>Export Full Excel Backup</span>
-          </button>
-          <button
-            onClick={resetDatabase}
-            className="w-full flex items-center space-x-2 px-2.5 py-1.5 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors text-left"
-          >
-            <X className="w-3.5 h-3.5 text-red-500/80" />
-            <span>Reset Default Seeds</span>
           </button>
         </div>
 
       </aside>
 
       {/* Mobile Top Bar */}
-      <header className="md:hidden bg-slate-900 text-slate-300 p-4 border-b border-slate-800 flex items-center justify-between select-none shrink-0">
+      <header className="md:hidden bg-foreground text-background p-4 border-b border-background/10 flex items-center justify-between select-none shrink-0">
         <div
           onClick={() => {
             setBrandingID(companyProfile.id);
@@ -397,21 +382,21 @@ export default function App() {
             setBrandingError('');
             setShowBrandingModal(true);
           }}
-          className="flex items-center space-x-2 cursor-pointer active:bg-slate-800/50 rounded p-1 transition-colors select-none"
+          className="flex items-center space-x-2 cursor-pointer active:bg-background/10 rounded-lg p-1 transition-colors select-none"
           title="Tap to edit company branding"
         >
-          <span className="p-1 bg-blue-600 rounded text-white shrink-0 flex items-center justify-center">
+          <span className="p-1 bg-primary rounded-lg text-sidebar-foreground shrink-0 flex items-center justify-center">
             {renderCompanyIcon("w-4 h-4")}
           </span>
           <div>
-            <h1 className="font-sans font-bold text-white text-xs tracking-tight">{companyProfile.name}</h1>
-            <p className="text-[9px] text-slate-500 font-mono">Machinery & Parts • Tap to edit</p>
+            <h1 className="font-sans font-bold text-background text-xs tracking-tight">{companyProfile.name}</h1>
+            <p className="text-[9px] text-background/40 font-mono">Machinery & Parts • Tap to edit</p>
           </div>
         </div>
 
         <button
           onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-          className="p-1 hover:text-white transition-colors"
+          className="p-1 hover:text-background transition-colors"
         >
           {mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
         </button>
@@ -419,13 +404,13 @@ export default function App() {
 
       {/* Mobile Menu Drawer */}
       {mobileMenuOpen && (
-        <div className="md:hidden fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex justify-end overflow-hidden">
-          <div className="w-64 h-dvh bg-slate-900 text-slate-300 p-4 flex flex-col justify-between animate-fade-in-left overflow-hidden">
+        <div className="md:hidden fixed inset-0 z-50 bg-foreground/60 backdrop-blur-sm flex justify-end overflow-hidden">
+          <div className="w-64 h-dvh bg-foreground text-background p-4 flex flex-col justify-between animate-fade-in-left overflow-hidden">
             <div className="space-y-4 min-h-0 flex-1 overflow-y-auto overscroll-contain">
-              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-                <span className="font-semibold text-white text-xs">Menu Navigations</span>
+              <div className="flex items-center justify-between border-b border-background/10 pb-3">
+                <span className="font-semibold text-background text-xs">Menu Navigations</span>
                 <button onClick={() => setMobileMenuOpen(false)}>
-                  <X className="w-5 h-5 hover:text-white" />
+                  <X className="w-5 h-5 hover:text-background" />
                 </button>
               </div>
               <nav className="space-y-1.5">
@@ -436,9 +421,9 @@ export default function App() {
                     <button
                       key={item.id}
                       onClick={() => { setActiveTab(item.id); setMobileMenuOpen(false); }}
-                      className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg text-xs font-medium transition-all ${isActive
-                        ? 'bg-blue-600/10 text-blue-400 font-semibold border-l-4 border-blue-500'
-                        : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                      className={`w-full flex items-center space-x-3 px-3 py-2 rounded-xl text-xs font-medium transition-all ${isActive
+                        ? 'bg-primary/15 text-sidebar-foreground font-semibold'
+                        : 'text-background/55 hover:text-background hover:bg-background/10'
                         }`}
                     >
                       <Icon className="w-4.5 h-4.5 shrink-0" />
@@ -449,34 +434,27 @@ export default function App() {
               </nav>
             </div>
 
-            <div className="space-y-2 border-t border-slate-800 pt-4 text-[10px] text-slate-500 font-mono">
+            <div className="space-y-2 border-t border-background/10 pt-4 text-[10px] text-background/40 font-mono">
               <button
                 onClick={() => { setDarkMode(!darkMode); setMobileMenuOpen(false); }}
-                className="w-full flex items-center space-x-2 px-2.5 py-1.5 text-slate-300 hover:text-white hover:bg-slate-800 rounded transition-colors text-left font-semibold text-[11px]"
+                className="w-full flex items-center space-x-2 px-2.5 py-1.5 text-background/70 hover:text-background hover:bg-background/10 rounded-lg transition-colors text-left font-semibold text-[11px]"
               >
-                {darkMode ? <Sun className="w-3.5 h-3.5 text-amber-400" /> : <Moon className="w-3.5 h-3.5 text-indigo-400" />}
+                {darkMode ? <Sun className="w-3.5 h-3.5 text-warning" /> : <Moon className="w-3.5 h-3.5 sidebar-foreground" />}
                 <span>{darkMode ? "Switch to Light Theme" : "Switch to Dark Theme"}</span>
               </button>
               <button
                 onClick={() => { setShowImportModal(true); setMobileMenuOpen(false); }}
-                className="w-full flex items-center space-x-2 px-2.5 py-1.5 text-blue-400 hover:text-white hover:bg-blue-600/10 rounded transition-colors text-left font-semibold"
+                className="w-full flex items-center space-x-2 px-2.5 py-1.5 text-sidebar-foreground hover:text-background hover:bg-primary/10 rounded-lg transition-colors text-left font-semibold"
               >
                 <Upload className="w-3.5 h-3.5" />
                 <span>Import / Export Hub</span>
               </button>
               <button
                 onClick={downloadBackup}
-                className="w-full flex items-center space-x-2 px-2.5 py-1.5 hover:text-white hover:bg-slate-800 rounded transition-colors text-left"
+                className="w-full flex items-center space-x-2 px-2.5 py-1.5 hover:text-background hover:bg-background/10 rounded-lg transition-colors text-left"
               >
                 <Download className="w-3.5 h-3.5" />
                 <span>Export Full Excel Backup</span>
-              </button>
-              <button
-                onClick={resetDatabase}
-                className="w-full flex items-center space-x-2 px-2.5 py-1.5 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors text-left"
-              >
-                <X className="w-3.5 h-3.5" />
-                <span>Reset Default Seeds</span>
               </button>
             </div>
           </div>
@@ -484,103 +462,99 @@ export default function App() {
       )}
 
       {/* Main Content Area */}
-      <main className="flex-1 min-h-0 flex flex-col min-w-0 bg-slate-50 relative overflow-hidden">
+      <main className="flex-1 min-h-0 flex flex-col min-w-0 bg-background relative overflow-hidden">
 
         {/* Main Content Top Global Status Header */}
-        <header className="bg-white border-b border-slate-200 px-6 py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 shrink-0 select-none">
+        <header className="bg-card border-b border-border px-6 py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 shrink-0 select-none">
           <div className="space-y-0.5">
-            <h2 className="font-sans font-bold text-slate-900 text-base leading-tight">
+            <h2 className="font-sans font-bold text-card-foreground text-base leading-tight">
               {navItems.find(i => i.id === activeTab)?.label}
             </h2>
-            <p className="text-xs text-slate-400 font-sans">
+            <p className="text-xs text-muted-foreground font-sans">
               Operational Hub • Standard local timezone logging.
             </p>
           </div>
 
-          <div className="flex items-center space-x-4">
-            <button
+          <div className="flex items-center space-x-3">
+            <Button
+              variant="outline"
+              size="sm"
               onClick={() => setDarkMode(!darkMode)}
-              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-100 dark:border-slate-700 dark:hover:bg-slate-850 text-slate-700 dark:text-slate-300 transition-all font-sans text-xs font-medium cursor-pointer"
               title={darkMode ? "Switch to light mode" : "Switch to dark mode"}
             >
               {darkMode ? (
                 <>
-                  <Sun className="w-4 h-4 text-amber-500" />
+                  <Sun className="w-4 h-4 text-warning" />
                   <span>Light Mode</span>
                 </>
               ) : (
                 <>
-                  <Moon className="w-4 h-4 text-indigo-600" />
+                  <Moon className="w-4 h-4 text-sidebar-foreground" />
                   <span>Dark Mode</span>
                 </>
               )}
-            </button>
+            </Button>
             {/* Supabase Sync Indicator */}
-            <div className="flex items-center space-x-1.5 px-2.5 py-1.5 bg-emerald-50 border border-emerald-100 rounded-lg text-xs font-semibold text-emerald-700 shadow-sm">
-              <Database className="w-3.5 h-3.5 text-emerald-500" />
-              <span>{isSyncing ? 'Syncing...' : 'Supabase Connected'}</span>
+            <div className="flex items-center space-x-1.5 px-2.5 py-1.5 bg-success/10 border border-success/20 rounded-lg text-xs font-semibold text-success shadow-sm">
+              <Database className="w-3.5 h-3.5" />
+              <span>{isSyncing ? 'Syncing...' : 'Online'}</span>
             </div>
-
-            {/* <div className="h-6 w-px bg-slate-200 dark:bg-slate-700 hidden sm:block"></div> */}
-
-            {/* <div className="flex items-center space-x-2 text-xs font-mono">
-              <span className="w-2.5 h-2.5 bg-emerald-500 rounded-full animate-pulse" />
-              <span className="text-slate-500">Offline-First Local Storage Sandbox</span>
-            </div> */}
           </div>
         </header>
 
         {/* Render Active Tab View */}
-        <div className="p-6 flex-1 min-h-0 min-w-0 overflow-y-auto overscroll-contain">
-          {activeTab === 'DASHBOARD' && <DashboardView key={refreshKey} />}
-          {activeTab === 'INVENTORY' && (
-            <InventoryView
-              key={refreshKey}
-              onViewPurchaseOrder={(purchaseHeaderId) => navigateToPurchaseOrder(purchaseHeaderId, undefined, true)}
-              onViewSalesOrder={(salesHeaderId) => navigateToSalesOrder(salesHeaderId, undefined, undefined, true)}
-            />
-          )}
-          {activeTab === 'MATERIAL' && (
-            <MaterialView
-              key={refreshKey}
-              onViewPurchaseOrder={navigateToPurchaseOrder}
-              onViewSalesOrder={navigateToSalesOrder}
-              initialMaterialId={pendingMaterialId}
-              onInitialMaterialHandled={() => setPendingMaterialId(null)}
-            />
-          )}
-          {activeTab === 'PRODUCT' && (
-            <ProductView
-              key={refreshKey}
-              onViewSalesOrder={navigateToSalesOrder}
-              initialProductId={pendingProductId}
-              onInitialProductHandled={() => setPendingProductId(null)}
-            />
-          )}
-          {activeTab === 'CONTACTS' && <ContactsView key={refreshKey} />}
-          {activeTab === 'EMPLOYEES' && <EmployeesView key={refreshKey} />}
-          {activeTab === 'ORDERS' && (
-            <OrdersView
-              key={refreshKey}
-              initialOrderId={pendingSalesOrderId}
-              onInitialOrderHandled={() => setPendingSalesOrderId(null)}
-              initialOrderOrigin={salesOrderReturnTo?.type}
-              onReturnToOrigin={returnFromSalesOrder}
-            />
-          )}
-          {activeTab === 'PURCHASES' && (
-            <PurchasesView
-              key={refreshKey}
-              initialPurchaseId={pendingPurchaseId}
-              onInitialPurchaseHandled={() => setPendingPurchaseId(null)}
-              initialPurchaseOrigin={purchaseReturnTo?.type}
-              onReturnToOrigin={returnFromPurchaseOrder}
-            />
-          )}
-          {activeTab === 'WORKFLOWS' && <WorkflowsView key={refreshKey} />}
-          {activeTab === 'SYSTEM_ADMIN' && <SystemAdminView key={refreshKey} />}
-          {activeTab === 'REPORTS' && <ReportsView key={refreshKey} />}
-          {activeTab === 'EXPORT_GUIDE' && <ExportGuide key={refreshKey} />}
+        <div ref={tabContentRef} className="p-6 flex-1 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden overscroll-contain">
+          <div data-fade-item key={activeTab} className="contents">
+            {activeTab === 'DASHBOARD' && <DashboardView key={refreshKey} onNavigate={setActiveTab} />}
+            {activeTab === 'INVENTORY' && (
+              <InventoryView
+                key={refreshKey}
+                onViewPurchaseOrder={(purchaseHeaderId) => navigateToPurchaseOrder(purchaseHeaderId, undefined, true)}
+                onViewSalesOrder={(salesHeaderId) => navigateToSalesOrder(salesHeaderId, undefined, undefined, true)}
+              />
+            )}
+            {activeTab === 'MATERIAL' && (
+              <MaterialView
+                key={refreshKey}
+                onViewPurchaseOrder={navigateToPurchaseOrder}
+                onViewSalesOrder={navigateToSalesOrder}
+                initialMaterialId={pendingMaterialId}
+                onInitialMaterialHandled={() => setPendingMaterialId(null)}
+              />
+            )}
+            {activeTab === 'PRODUCT' && (
+              <ProductView
+                key={refreshKey}
+                onViewSalesOrder={navigateToSalesOrder}
+                initialProductId={pendingProductId}
+                onInitialProductHandled={() => setPendingProductId(null)}
+              />
+            )}
+            {activeTab === 'CONTACTS' && <ContactsView key={refreshKey} />}
+            {activeTab === 'EMPLOYEES' && <EmployeesView key={refreshKey} />}
+            {activeTab === 'ORDERS' && (
+              <OrdersView
+                key={refreshKey}
+                initialOrderId={pendingSalesOrderId}
+                onInitialOrderHandled={() => setPendingSalesOrderId(null)}
+                initialOrderOrigin={salesOrderReturnTo?.type}
+                onReturnToOrigin={returnFromSalesOrder}
+              />
+            )}
+            {activeTab === 'PURCHASES' && (
+              <PurchasesView
+                key={refreshKey}
+                initialPurchaseId={pendingPurchaseId}
+                onInitialPurchaseHandled={() => setPendingPurchaseId(null)}
+                initialPurchaseOrigin={purchaseReturnTo?.type}
+                onReturnToOrigin={returnFromPurchaseOrder}
+              />
+            )}
+            {activeTab === 'WORKFLOWS' && <WorkflowsView key={refreshKey} />}
+            {activeTab === 'SYSTEM_ADMIN' && <SystemAdminView key={refreshKey} />}
+            {activeTab === 'REPORTS' && <ReportsView key={refreshKey} />}
+            {activeTab === 'EXPORT_GUIDE' && <ExportGuide key={refreshKey} />}
+          </div>
         </div>
 
       </main>

@@ -4,17 +4,28 @@
  */
 
 import React, { useMemo, useState } from 'react';
-import { SalesHeader } from '../types';
+import { SalesHeader, SalesDetail } from '../types';
 import {
   ArrowLeft, Calendar, Paperclip, Trash2, Edit, FileText, ArrowRightCircle,
   Check, CheckCheck, Factory, Boxes,
 } from 'lucide-react';
-import { Card } from './ui';
-import SortableTh from './SortableTh';
+import { Card, Badge, Button } from './ui';
+import { SectionCard, DataTable } from './shell';
+import type { DataTableColumn } from './shell';
+import { useFadeInOnMount } from '../hooks/useFadeInOnMount';
 import { sortByField } from '../utils/sortRows';
 
 type LineItemSortKey = 'productName' | 'quantity' | 'unitPrice' | 'totalPrice';
 const NUMERIC_KEYS: LineItemSortKey[] = ['quantity', 'unitPrice', 'totalPrice'];
+
+const STATUS_META: Record<SalesHeader['status'], { label: string; variant: 'default' | 'warning' | 'success' | 'destructive' | 'secondary' }> = {
+  QUOTATION: { label: 'Quotation', variant: 'default' },
+  ORDERED: { label: 'Pending Production', variant: 'warning' },
+  IN_PRODUCTION: { label: 'In Production', variant: 'default' },
+  DONE_IN_PRODUCTION: { label: 'Done in Production', variant: 'secondary' },
+  DELIVERED: { label: 'Delivered', variant: 'success' },
+  CANCELLED: { label: 'Cancelled', variant: 'destructive' },
+};
 
 interface SalesOrderDetailViewProps {
   order: SalesHeader;
@@ -49,87 +60,103 @@ export default function SalesOrderDetailView({
   onEdit, onConvert, onDelete, onStartProduction, onProductionCompletion,
   onMarkDelivered, onCancel, onOpenQuotationDoc, onOpenInvoiceDoc,
 }: SalesOrderDetailViewProps) {
-  const statusBadgeClass = order.status === 'ORDERED' ? 'bg-amber-50 text-amber-800 border-amber-200'
-    : order.status === 'IN_PRODUCTION' ? 'bg-blue-50 text-blue-800 border-blue-200'
-      : order.status === 'DONE_IN_PRODUCTION' ? 'bg-violet-50 text-violet-800 border-violet-200'
-        : order.status === 'DELIVERED' ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
-          : order.status === 'CANCELLED' ? 'bg-red-50 text-red-800 border-red-200'
-            : 'bg-slate-50 text-slate-600 border-slate-200';
+  const contentRef = useFadeInOnMount<HTMLDivElement>([order.id]);
+  const status = STATUS_META[order.status];
 
-  const statusLabel = order.status === 'ORDERED' ? 'Pending Production'
-    : order.status === 'IN_PRODUCTION' ? 'In Production'
-      : order.status === 'DONE_IN_PRODUCTION' ? 'Done in Production'
-        : order.status;
-
-  // Click-to-sort table headers. Whole list is already loaded (one order's
-  // line items, never heavy), so this sorts client-side rather than re-fetching.
+  // Whole list is already loaded (one order's line items, never heavy), so
+  // this sorts client-side rather than re-fetching.
   const [sortKey, setSortKey] = useState<LineItemSortKey>('productName');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
-  const toggleSort = (key: LineItemSortKey) => {
-    if (key === sortKey) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
-    else { setSortKey(key); setSortDir('asc'); }
+  const toggleSort = (key: string) => {
+    const field = key as LineItemSortKey;
+    if (field === sortKey) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
+    else { setSortKey(field); setSortDir('asc'); }
   };
   const sortedDetails = useMemo(
     () => sortByField(order.details, sortKey, sortDir, NUMERIC_KEYS),
     [order.details, sortKey, sortDir]
   );
 
+  const columns: DataTableColumn<SalesDetail>[] = [
+    { key: 'productName', header: 'Product', sortable: true, render: (d) => <span className="font-medium text-card-foreground">{d.productName}</span> },
+    { key: 'quantity', header: 'Quantity', sortable: true, align: 'right', render: (d) => <span className="font-mono text-muted-foreground">{d.quantity}</span> },
+    { key: 'unitPrice', header: 'Unit Price', sortable: true, align: 'right', render: (d) => <span className="font-mono text-muted-foreground">RM {d.unitPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span> },
+    { key: 'totalPrice', header: 'Total Price', sortable: true, align: 'right', render: (d) => <span className="font-mono font-medium text-foreground">RM {d.totalPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span> },
+    {
+      key: 'materials', header: 'Materials Used',
+      render: (d) => d.materials.length > 0 ? (
+        <div className="space-y-1">
+          {d.materials.map((m, midx) => (
+            <div key={midx} className="text-[10px] text-muted-foreground font-mono flex items-center gap-3">
+              <span>{m.materialName}</span>
+              <span>planned {m.plannedQuantity}</span>
+              {(m.actualQuantity > 0 || m.returnedQuantity > 0) && (
+                <>
+                  <span>actual {m.actualQuantity}</span>
+                  <span>returned {m.returnedQuantity}</span>
+                </>
+              )}
+            </div>
+          ))}
+        </div>
+      ) : null,
+    },
+  ];
+
   return (
-    <div className="space-y-6" id="sales-order-detail-view">
+    <div ref={contentRef} className="space-y-5" id="sales-order-detail-view">
       <button
+        data-fade-item
         onClick={onBack}
-        className="flex items-center space-x-1.5 text-xs font-medium text-slate-500 hover:text-slate-800 transition-colors"
+        className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
       >
         <ArrowLeft className="w-3.5 h-3.5" />
         <span>{backLabel}</span>
       </button>
 
       {/* Header summary card */}
+      <div data-fade-item>
       <Card className="p-5">
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div className="space-y-2.5 min-w-0">
             <div>
-              <h2 className="font-sans font-bold text-slate-900 text-lg leading-snug font-mono">{order.salesNo}</h2>
-              <p className="text-xs text-slate-500 mt-1">{order.clientName}</p>
+              <h2 className="font-mono font-bold text-foreground text-lg leading-snug">{order.salesNo}</h2>
+              <p className="text-xs text-muted-foreground mt-1">{order.clientName}</p>
             </div>
 
-            <div className="flex flex-wrap gap-1.5">
-              <span className={`px-1.5 py-0.5 rounded text-[10px] font-mono border ${statusBadgeClass}`}>
-                {statusLabel || order.status}
-              </span>
-            </div>
+            <Badge variant={status.variant}>{status.label}</Badge>
 
-            <div className="flex flex-wrap gap-x-5 gap-y-1.5 text-xs text-slate-500">
-              <div className="flex items-center space-x-1.5">
-                <Calendar className="w-3.5 h-3.5 text-slate-400" />
-                <span className="text-slate-400">Order Date:</span>
-                <span>{order.orderDate}</span>
+            <div className="flex flex-wrap gap-x-5 gap-y-1.5 text-xs text-muted-foreground">
+              <div className="flex items-center gap-1.5">
+                <Calendar className="w-3.5 h-3.5" />
+                <span>Order Date:</span>
+                <span className="text-foreground">{order.orderDate}</span>
               </div>
               {order.deliveryDate && (
-                <div className="flex items-center space-x-1.5">
-                  <Calendar className="w-3.5 h-3.5 text-slate-400" />
-                  <span className="text-slate-400">Delivery Due:</span>
-                  <span>{order.deliveryDate}</span>
+                <div className="flex items-center gap-1.5">
+                  <Calendar className="w-3.5 h-3.5" />
+                  <span>Delivery Due:</span>
+                  <span className="text-foreground">{order.deliveryDate}</span>
                 </div>
               )}
-              <div className="flex items-center space-x-1.5">
-                <span className="text-slate-400">Contract Total:</span>
-                <span className="font-mono font-semibold text-slate-800">RM {order.totalAmount.toLocaleString('en-US')}</span>
+              <div className="flex items-center gap-1.5">
+                <span>Contract Total:</span>
+                <span className="font-mono font-semibold text-foreground">RM {order.totalAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
             </div>
 
             {order.remark && (
-              <p className="text-xs text-slate-500 max-w-2xl">{order.remark}</p>
+              <p className="text-xs text-muted-foreground max-w-2xl">{order.remark}</p>
             )}
 
             {order.attachments?.[0] && (
               <a
                 href={order.attachments[0].dataUrl}
                 download={order.attachments[0].name}
-                className="inline-flex items-center space-x-1 px-1.5 py-0.5 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded text-[10px] font-mono transition-colors"
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-primary/10 hover:bg-primary/20 text-primary rounded text-[10px] font-mono transition-colors"
                 title="Download attachment"
               >
-                <Paperclip className="w-2.5 h-2.5 text-blue-500 shrink-0" />
+                <Paperclip className="w-2.5 h-2.5 shrink-0" />
                 <span className="truncate max-w-[200px]">{order.attachments[0].name}</span>
               </a>
             )}
@@ -139,150 +166,70 @@ export default function SalesOrderDetailView({
           <div className="flex items-center flex-wrap gap-1.5 shrink-0">
             {order.status === 'QUOTATION' && (
               <>
-                <button onClick={() => onEdit(order)} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-slate-50 rounded transition-colors" title="Edit">
-                  <Edit className="w-4 h-4" />
-                </button>
-                <button onClick={() => onDelete(order.id)} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-slate-50 rounded transition-colors" title="Delete">
-                  <Trash2 className="w-4 h-4" />
-                </button>
-                <button onClick={() => onOpenQuotationDoc(order)} className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-50 rounded transition-colors" title="Generate Quotation">
-                  <FileText className="w-4 h-4" />
-                </button>
-                <button onClick={() => onConvert(order)} className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded transition-colors" title="Proceed to Sales Order">
-                  <ArrowRightCircle className="w-4 h-4" />
-                </button>
+                <Button variant="outline" size="sm" onClick={() => onEdit(order)}><Edit className="w-3.5 h-3.5" /> Edit</Button>
+                <Button variant="outline" size="sm" onClick={() => onOpenQuotationDoc(order)}><FileText className="w-3.5 h-3.5" /> Generate Quotation</Button>
+                <Button size="sm" onClick={() => onConvert(order)}><ArrowRightCircle className="w-3.5 h-3.5" /> Proceed to Sales Order</Button>
+                <Button variant="destructive" size="sm" onClick={() => onDelete(order.id)}><Trash2 className="w-3.5 h-3.5" /> Delete</Button>
               </>
             )}
 
             {order.status === 'ORDERED' && (
               <>
-                <button onClick={() => onEdit(order)} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-slate-50 rounded transition-colors" title="Edit">
-                  <Edit className="w-4 h-4" />
-                </button>
-                <button onClick={() => onOpenInvoiceDoc(order)} title="Generate Tax Invoice" className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-50 rounded transition-colors">
-                  <FileText className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={() => onStartProduction(order)}
-                  disabled={transitioningId === order.id}
-                  title="Proceed to production"
-                  className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <Factory className="w-4 h-4" />
-                </button>
-                <button onClick={() => onCancel(order)} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-slate-50 rounded transition-colors text-[11px] font-medium">
-                  Cancel
-                </button>
+                <Button variant="outline" size="sm" onClick={() => onEdit(order)}><Edit className="w-3.5 h-3.5" /> Edit</Button>
+                <Button variant="outline" size="sm" onClick={() => onOpenInvoiceDoc(order)}><FileText className="w-3.5 h-3.5" /> Generate Tax Invoice</Button>
+                <Button size="sm" onClick={() => onStartProduction(order)} disabled={transitioningId === order.id}>
+                  <Factory className="w-3.5 h-3.5" /> {transitioningId === order.id ? 'Starting...' : 'Proceed to Production'}
+                </Button>
+                <Button variant="destructive" size="sm" onClick={() => onCancel(order)}>Cancel Order</Button>
               </>
             )}
 
             {order.status === 'IN_PRODUCTION' && (
               <>
-                <button onClick={() => onOpenInvoiceDoc(order)} title="Generate Tax Invoice" className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-50 rounded transition-colors">
-                  <FileText className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={() => onProductionCompletion(order)}
-                  disabled={transitioningId === order.id}
-                  title="Mark production as done"
-                  className="p-1.5 text-slate-400 hover:text-violet-600 hover:bg-violet-50 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <CheckCheck className="w-4 h-4" />
-                </button>
-                <button onClick={() => onCancel(order)} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-slate-50 rounded transition-colors text-[11px] font-medium">
-                  Cancel
-                </button>
+                <Button variant="outline" size="sm" onClick={() => onOpenInvoiceDoc(order)}><FileText className="w-3.5 h-3.5" /> Generate Tax Invoice</Button>
+                <Button size="sm" onClick={() => onProductionCompletion(order)} disabled={transitioningId === order.id}>
+                  <CheckCheck className="w-3.5 h-3.5" /> Mark Production Done
+                </Button>
+                <Button variant="destructive" size="sm" onClick={() => onCancel(order)}>Cancel Order</Button>
               </>
             )}
 
             {order.status === 'DONE_IN_PRODUCTION' && (
               <>
-                <button onClick={() => onOpenInvoiceDoc(order)} title="Generate Tax Invoice" className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-50 rounded transition-colors">
-                  <FileText className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={() => onMarkDelivered(order.id)}
-                  disabled={transitioningId === order.id}
-                  title="Mark as delivered"
-                  className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <Check className="w-4 h-4" />
-                </button>
+                <Button variant="outline" size="sm" onClick={() => onOpenInvoiceDoc(order)}><FileText className="w-3.5 h-3.5" /> Generate Tax Invoice</Button>
+                <Button size="sm" onClick={() => onMarkDelivered(order.id)} disabled={transitioningId === order.id}>
+                  <Check className="w-3.5 h-3.5" /> {transitioningId === order.id ? 'Updating...' : 'Mark as Delivered'}
+                </Button>
               </>
             )}
 
             {order.status === 'DELIVERED' && (
-              <>
-                <button onClick={() => onOpenInvoiceDoc(order)} title="Generate Tax Invoice" className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-50 rounded transition-colors">
-                  <FileText className="w-4 h-4" />
-                </button>
-                <span className="text-[11px] text-emerald-600 font-semibold flex items-center space-x-0.5 font-mono px-1.5">
-                  <span>✓ Delivered</span>
-                </span>
-              </>
+              <Button variant="outline" size="sm" onClick={() => onOpenInvoiceDoc(order)}><FileText className="w-3.5 h-3.5" /> Generate Tax Invoice</Button>
             )}
 
             {order.status === 'CANCELLED' && (
-              <>
-                <span className="text-[11px] text-slate-400 font-mono italic px-1.5">Cancelled</span>
-                <button onClick={() => onDelete(order.id)} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-slate-50 rounded transition-colors" title="Delete">
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </>
+              <Button variant="destructive" size="sm" onClick={() => onDelete(order.id)}><Trash2 className="w-3.5 h-3.5" /> Delete</Button>
             )}
           </div>
         </div>
       </Card>
-
-      {/* Line items + material breakdown */}
-      <div className="flex items-center gap-2">
-        <Boxes className="w-4 h-4 text-slate-500" />
-        <h3 className="font-sans font-bold text-slate-900 text-sm">Contract Line Items</h3>
       </div>
 
-      <Card className="overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs text-left">
-            <thead className="bg-slate-50 text-slate-500 border-b border-slate-100">
-              <tr>
-                <SortableTh label="Product" sortKey="productName" activeKey={sortKey} dir={sortDir} onClick={toggleSort} />
-                <SortableTh label="Quantity" sortKey="quantity" activeKey={sortKey} dir={sortDir} onClick={toggleSort} align="right" />
-                <SortableTh label="Unit Price" sortKey="unitPrice" activeKey={sortKey} dir={sortDir} onClick={toggleSort} align="right" />
-                <SortableTh label="Total Price" sortKey="totalPrice" activeKey={sortKey} dir={sortDir} onClick={toggleSort} align="right" />
-                <th className="px-4 py-2 font-semibold">Materials Used</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {sortedDetails.map((item, idx) => (
-                <tr key={item.detailId || idx} className="hover:bg-slate-50/50 transition-colors">
-                  <td className="px-4 py-2.5 font-semibold text-slate-800">{item.productName}</td>
-                  <td className="px-4 py-2.5 text-right font-mono text-slate-600">{item.quantity}</td>
-                  <td className="px-4 py-2.5 text-right font-mono text-slate-600">RM {item.unitPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                  <td className="px-4 py-2.5 text-right font-mono font-semibold text-slate-800">RM {item.totalPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                  <td className="px-4 py-2.5">
-                    {item.materials.length > 0 && (
-                      <div className="space-y-1">
-                        {item.materials.map((m, midx) => (
-                          <div key={midx} className="text-[10px] text-slate-500 font-mono flex items-center gap-3">
-                            <span>{m.materialName}</span>
-                            <span>planned {m.plannedQuantity}</span>
-                            {(m.actualQuantity > 0 || m.returnedQuantity > 0) && (
-                              <>
-                                <span>actual {m.actualQuantity}</span>
-                                <span>returned {m.returnedQuantity}</span>
-                              </>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Card>
+      {/* Line items + material breakdown */}
+      <SectionCard
+        data-fade-item
+        title={<span className="inline-flex items-center gap-2"><Boxes className="w-4 h-4 text-muted-foreground" /> Contract Line Items</span>}
+        contentClassName="p-0"
+      >
+        <DataTable
+          columns={columns}
+          rows={sortedDetails}
+          rowKey={(d) => d.detailId}
+          sortField={sortKey}
+          sortDir={sortDir}
+          onSort={toggleSort}
+        />
+      </SectionCard>
     </div>
   );
 }

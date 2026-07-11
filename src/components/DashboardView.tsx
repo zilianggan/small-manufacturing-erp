@@ -1,15 +1,20 @@
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
-
 import { useEffect, useMemo, useState } from 'react';
-import { DollarSign, Package, TrendingUp, AlertTriangle, Play, ClipboardList, ShoppingCart } from 'lucide-react';
-import { getDashboardData } from '../services/DashboardService';
+import {
+  DollarSign, Package, TrendingUp, AlertTriangle, ClipboardList, ShoppingCart, Wallet,
+  FileSpreadsheet, ShoppingBag, Boxes, Tag, Shuffle, CheckCircle2, PackageCheck,
+} from 'lucide-react';
+import {
+  getDashboardData, getOutstandingOrdersCount, getMaterialCount,
+  getRecentSales, getRecentPurchases, RecentSale, RecentPurchase,
+} from '../services/DashboardService';
 import { getWorkflowTasks } from '../services/WorkflowsService';
 import { WorkflowTask, DashboardData } from '../types';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell, PieChart, Pie } from 'recharts';
-import LoadingSpinner from './LoadingSpinner';
+import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell, PieChart, Pie } from 'recharts';
+import { DashboardShell, PageHeader, StatCard, SectionCard, ChartCard, ActionCard, TimelineCard, NotificationCard } from './shell';
+import type { TimelineEntry } from './shell';
+import { Progress, Badge } from './ui';
+import type { BadgeProps } from './ui';
+import { CardEmptyState } from './ui/Card';
 
 const EMPTY_DASHBOARD: DashboardData = {
   monthlyTotals: [],
@@ -24,270 +29,365 @@ const monthLabel = (month: string): string => {
   return new Date(year, mon - 1, 1).toLocaleString('en-US', { month: 'short' });
 };
 
-export default function DashboardView() {
+const formatCurrency = (val: number) => `RM ${val.toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
+const formatUnits = (val: number) => val.toLocaleString('en-US', { maximumFractionDigits: 0 });
+
+const STAGE_LABEL: Record<WorkflowTask['stage'], string> = {
+  PREPARATION: 'Preparation',
+  ASSEMBLY: 'Assembly',
+  QUALITY_CONTROL: 'Quality Control',
+  PACKAGING: 'Packaging',
+  COMPLETED: 'Completed',
+};
+const STAGE_ORDER: WorkflowTask['stage'][] = ['PREPARATION', 'ASSEMBLY', 'QUALITY_CONTROL', 'PACKAGING', 'COMPLETED'];
+
+const SALES_STATUS_META: Record<RecentSale['status'], { label: string; variant: BadgeProps['variant'] }> = {
+  QUOTATION: { label: 'Quotation', variant: 'secondary' },
+  ORDERED: { label: 'Pending Production', variant: 'warning' },
+  IN_PRODUCTION: { label: 'In Production', variant: 'default' },
+  DONE_IN_PRODUCTION: { label: 'Done in Production', variant: 'default' },
+  DELIVERED: { label: 'Delivered', variant: 'success' },
+  CANCELLED: { label: 'Cancelled', variant: 'destructive' },
+};
+
+const PURCHASE_STATUS_META: Record<RecentPurchase['status'], { label: string; variant: BadgeProps['variant'] }> = {
+  QUOTATION: { label: 'Quotation', variant: 'secondary' },
+  ORDERED: { label: 'Pending Stock', variant: 'warning' },
+  RECEIVED: { label: 'Received', variant: 'success' },
+  CANCELLED: { label: 'Cancelled', variant: 'destructive' },
+};
+
+export type QuickActionTarget = 'MATERIAL' | 'PRODUCT' | 'INVENTORY' | 'ORDERS' | 'PURCHASES' | 'WORKFLOWS';
+
+interface DashboardViewProps {
+  onNavigate?: (tab: QuickActionTarget) => void;
+}
+
+export default function DashboardView({ onNavigate }: DashboardViewProps) {
   const [dashboard, setDashboard] = useState<DashboardData>(EMPTY_DASHBOARD);
-  const [dashLoading, setDashLoading] = useState(true);
   const [workflows, setWorkflows] = useState<WorkflowTask[]>([]);
-  const [wfLoading, setWfLoading] = useState(true);
+  const [outstandingOrders, setOutstandingOrders] = useState(0);
+  const [materialCount, setMaterialCount] = useState(0);
+  const [recentSales, setRecentSales] = useState<RecentSale[]>([]);
+  const [recentPurchases, setRecentPurchases] = useState<RecentPurchase[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    getDashboardData()
-      .then(setDashboard)
+    Promise.all([
+      getDashboardData(), getWorkflowTasks(), getOutstandingOrdersCount(), getMaterialCount(),
+      getRecentSales(), getRecentPurchases(),
+    ])
+      .then(([dash, wf, outstanding, matCount, sales, purchases]) => {
+        setDashboard(dash);
+        setWorkflows(wf);
+        setOutstandingOrders(outstanding);
+        setMaterialCount(matCount);
+        setRecentSales(sales);
+        setRecentPurchases(purchases);
+      })
       .catch(console.error)
-      .finally(() => setDashLoading(false));
-    getWorkflowTasks()
-      .then(setWorkflows)
-      .catch(console.error)
-      .finally(() => setWfLoading(false));
+      .finally(() => setLoading(false));
   }, []);
-
-  const loading = dashLoading || wfLoading;
 
   const totalSales = useMemo(() => dashboard.monthlyTotals.reduce((sum, m) => sum + m.sales, 0), [dashboard]);
   const totalPurchaseCosts = useMemo(() => dashboard.monthlyTotals.reduce((sum, m) => sum + m.purchases, 0), [dashboard]);
+  const grossProfit = totalSales - totalPurchaseCosts;
   const totalInventoryUnits = dashboard.rawMaterialQty + dashboard.finishedGoodsQty;
+  const healthyStockPct = materialCount > 0 ? Math.round(((materialCount - dashboard.lowStockCount) / materialCount) * 100) : 100;
 
-  // Active (non-completed) workflow tasks
-  const activeWorkflowsList = useMemo(() => {
-    return workflows.filter(w => w.stage !== 'COMPLETED');
+  const activeWorkflowsList = useMemo(() => workflows.filter(w => w.stage !== 'COMPLETED'), [workflows]);
+
+  const financialChartData = useMemo(() => dashboard.monthlyTotals.map(m => ({
+    name: monthLabel(m.month),
+    Sales: m.sales,
+    Purchases: m.purchases,
+  })), [dashboard]);
+
+  const inventoryChartData = useMemo(() => [
+    { name: 'Raw Materials', value: dashboard.rawMaterialQty, color: 'var(--chart-1)' },
+    { name: 'Finished Goods', value: dashboard.finishedGoodsQty, color: 'var(--chart-2)' },
+  ], [dashboard]);
+
+  const stageCounts = useMemo(() => {
+    const counts = new Map<WorkflowTask['stage'], number>();
+    for (const stage of STAGE_ORDER) counts.set(stage, 0);
+    for (const task of workflows) counts.set(task.stage, (counts.get(task.stage) || 0) + 1);
+    return counts;
   }, [workflows]);
-  const activeWorkflowsCount = activeWorkflowsList.length;
+  const maxStageCount = Math.max(1, ...Array.from(stageCounts.values()));
 
-  // Format currencies
-  const formatCurrency = (val: number) => {
-    return `RM ${val.toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
-  };
-
-  const formatUnits = (val: number) => {
-    return val.toLocaleString('en-US', { maximumFractionDigits: 0 });
-  };
-
-  // Chart data: Sales vs Purchase costs by month (last 6 months, from get_dashboard_data)
-  const financialChartData = useMemo(() => {
-    return dashboard.monthlyTotals.map(m => ({
-      name: monthLabel(m.month),
-      Sales: m.sales,
-      Purchases: m.purchases,
-      Profit: m.sales - m.purchases,
+  const activityTimeline = useMemo<TimelineEntry[]>(() => {
+    const recentWorkflows = [...workflows]
+      .sort((a, b) => (b.updatedAt || b.startDate).localeCompare(a.updatedAt || a.startDate))
+      .slice(0, 5)
+      .map<TimelineEntry>(task => ({
+        id: task.id,
+        icon: task.stage === 'COMPLETED' ? CheckCircle2 : Shuffle,
+        title: `${task.productName} — ${STAGE_LABEL[task.stage]}`,
+        timestamp: new Date(task.updatedAt || task.startDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+        description: `Qty ${task.quantity} • ${task.employeeName || 'Unassigned'} • Order ${task.salesNo}`,
+        tone: task.stage === 'COMPLETED' ? 'success' : 'default',
+      }));
+    const lowStockEntries = dashboard.lowStockItems.slice(0, 3).map<TimelineEntry>(item => ({
+      id: `low-${item.id}`,
+      icon: AlertTriangle,
+      title: `${item.name} below reorder point`,
+      timestamp: item.code || '—',
+      description: `${formatUnits(item.quantity)} in stock, minimum ${formatUnits(item.minimumStock)}`,
+      tone: 'warning',
     }));
-  }, [dashboard]);
+    return [...recentWorkflows, ...lowStockEntries].slice(0, 8);
+  }, [workflows, dashboard.lowStockItems]);
 
-  // Inventory distribution chart data (unit quantities, not $ value — material has no per-unit cost)
-  const inventoryChartData = useMemo(() => {
-    return [
-      { name: 'Raw Materials', value: dashboard.rawMaterialQty, color: '#3b82f6' },
-      { name: 'Finished Goods', value: dashboard.finishedGoodsQty, color: '#10b981' }
-    ];
-  }, [dashboard]);
-
-  // Recent workflow steps (top 5 for display)
-  const activeWorkflows = useMemo(() => activeWorkflowsList.slice(0, 5), [activeWorkflowsList]);
+  const quickActions: { label: string; icon: typeof Boxes; target: QuickActionTarget }[] = [
+    { label: 'New Sales Order', icon: FileSpreadsheet, target: 'ORDERS' },
+    { label: 'New Purchase', icon: ShoppingBag, target: 'PURCHASES' },
+    { label: 'Add Material', icon: Boxes, target: 'MATERIAL' },
+    { label: 'Add Product', icon: Tag, target: 'PRODUCT' },
+    { label: 'Inventory Ledger', icon: Package, target: 'INVENTORY' },
+    { label: 'Production Board', icon: Shuffle, target: 'WORKFLOWS' },
+  ];
 
   return (
-    <div className="space-y-6" id="dashboard-view">
-      {loading && <LoadingSpinner message="Assembling metrics..." subtitle="DASHBOARD_LOAD" />}
-      {/* KPI Cards Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+    <DashboardShell deps={[loading]}>
+      <PageHeader title="Executive Overview" description="Live snapshot of sales, procurement, stock health and factory throughput." />
 
-        {/* Sales Card */}
-        <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-5 shadow-sm hover:shadow-md transition-shadow flex items-start justify-between">
-          <div className="space-y-1.5">
-            <span className="text-slate-500 text-xs font-mono uppercase tracking-wider">Total Sales</span>
-            <div className="text-2xl font-sans font-bold text-slate-900 dark:text-slate-100">{formatCurrency(totalSales)}</div>
-            <p className="text-xs text-emerald-600 flex items-center space-x-1 font-mono">
-              <TrendingUp className="w-3.5 h-3.5" />
-              <span>Last 6 months, confirmed orders</span>
-            </p>
-          </div>
-          <div className="p-2.5 bg-blue-50 dark:bg-slate-700 text-blue-600 dark:text-blue-400 rounded-lg">
-            <DollarSign className="w-5 h-5" />
-          </div>
-        </div>
-
-        {/* Purchase Card */}
-        <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-5 shadow-sm hover:shadow-md transition-shadow flex items-start justify-between">
-          <div className="space-y-1.5">
-            <span className="text-slate-500 text-xs font-mono uppercase tracking-wider">Purchase Costs</span>
-            <div className="text-2xl font-sans font-bold text-slate-900 dark:text-slate-100">{formatCurrency(totalPurchaseCosts)}</div>
-            <p className="text-xs text-slate-500 dark:text-slate-400 font-mono">Last 6 months, confirmed purchases</p>
-          </div>
-          <div className="p-2.5 bg-amber-50 dark:bg-slate-700 text-amber-600 dark:text-amber-400 rounded-lg">
-            <ShoppingCart className="w-5 h-5" />
-          </div>
-        </div>
-
-        {/* Inventory Levels */}
-        <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-5 shadow-sm hover:shadow-md transition-shadow flex items-start justify-between">
-          <div className="space-y-1.5">
-            <span className="text-slate-500 text-xs font-mono uppercase tracking-wider">Inventory Levels</span>
-            <div className="text-2xl font-sans font-bold text-slate-900 dark:text-slate-100">{formatUnits(totalInventoryUnits)}</div>
-            <p className="text-xs text-slate-500 dark:text-slate-400 font-mono">Raw stock & finished units</p>
-          </div>
-          <div className="p-2.5 bg-emerald-50 dark:bg-slate-700 text-emerald-600 dark:text-emerald-400 rounded-lg">
-            <Package className="w-5 h-5" />
-          </div>
-        </div>
-
-        {/* Active Workflows */}
-        <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-5 shadow-sm hover:shadow-md transition-shadow flex items-start justify-between">
-          <div className="space-y-1.5">
-            <span className="text-slate-500 text-xs font-mono uppercase tracking-wider">Active Productions</span>
-            <div className="text-2xl font-sans font-bold text-slate-900 dark:text-slate-100">{activeWorkflowsCount}</div>
-            <p className="text-xs text-blue-600 dark:text-blue-400 font-mono flex items-center space-x-1">
-              <Play className="w-3 h-3 animate-pulse" />
-              <span>In-factory workflow steps</span>
-            </p>
-          </div>
-          <div className="p-2.5 bg-sky-50 dark:bg-slate-700 text-sky-600 dark:text-sky-400 rounded-lg">
-            <ClipboardList className="w-5 h-5" />
-          </div>
-        </div>
-
+      {/* KPI Row */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4">
+        <StatCard data-fade-item label="Revenue" value={totalSales} formatter={formatCurrency} icon={DollarSign}
+          trend={{ value: totalSales, label: 'Last 6 months', direction: 'up' }} />
+        <StatCard data-fade-item label="Purchases" value={totalPurchaseCosts} formatter={formatCurrency} icon={ShoppingCart}
+          trend={{ value: totalPurchaseCosts, label: 'Last 6 months', direction: 'down' }} />
+        <StatCard data-fade-item label="Gross Profit" value={grossProfit} formatter={formatCurrency} icon={Wallet}
+          trend={{ value: grossProfit, label: 'Revenue − purchases', direction: grossProfit >= 0 ? 'up' : 'down' }} />
+        <StatCard data-fade-item label="Inventory Units" value={totalInventoryUnits} formatter={formatUnits} icon={Package}
+          trend={{ value: totalInventoryUnits, label: 'Raw + finished stock', direction: 'up' }} />
+        <StatCard data-fade-item label="Outstanding Orders" value={outstandingOrders} formatter={formatUnits} icon={ClipboardList}
+          trend={{ value: outstandingOrders, label: 'Confirmed, not delivered', direction: 'up' }} />
       </div>
 
-      {/* Main Charts Section */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-
-        {/* Financial Bar Chart */}
-        <div className="lg:col-span-2 bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex flex-col justify-between">
-          <div className="space-y-1 mb-4">
-            <h3 className="font-sans font-semibold text-slate-900">Financial Growth & Cost Trajectory</h3>
-            <p className="text-xs text-slate-500">Sales orders vs raw material procurement costs (last 6 months)</p>
-          </div>
-          <div className="w-full h-[300px]">
+      {/* Sales trend + inventory distribution */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        <ChartCard data-fade-item className="lg:col-span-2" title="Sales Trend" description="Confirmed revenue by month (last 6 months)">
+          <div className="w-full h-[260px]">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={financialChartData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                <XAxis dataKey="name" stroke="#64748b" fontSize={11} tickLine={false} />
-                <YAxis stroke="#64748b" fontSize={11} tickLine={false} axisLine={false} tickFormatter={(v) => `RM ${v}`} />
-                <Tooltip formatter={(value) => [`RM ${value}`, '']} contentStyle={{ background: '#0f172a', borderRadius: '8px', color: '#fff', fontSize: '12px' }} />
-                <Legend iconSize={10} iconType="circle" wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
-                <Bar dataKey="Sales" fill="#3b82f6" radius={[4, 4, 0, 0]} name="Sales revenue" />
-                <Bar dataKey="Purchases" fill="#f59e0b" radius={[4, 4, 0, 0]} name="Purchase costs" />
-              </BarChart>
+              <AreaChart data={financialChartData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="salesFill" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="var(--chart-1)" stopOpacity={0.35} />
+                    <stop offset="95%" stopColor="var(--chart-1)" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
+                <XAxis dataKey="name" stroke="var(--muted-foreground)" fontSize={11} tickLine={false} axisLine={false} />
+                <YAxis stroke="var(--muted-foreground)" fontSize={11} tickLine={false} axisLine={false} tickFormatter={(v) => `RM ${v}`} />
+                <Tooltip formatter={(value) => [formatCurrency(Number(value)), 'Sales']} contentStyle={{ background: 'var(--popover)', borderColor: 'var(--border)', borderRadius: '12px', color: 'var(--popover-foreground)', fontSize: '12px' }} />
+                <Area type="monotone" dataKey="Sales" stroke="var(--chart-1)" strokeWidth={2} fill="url(#salesFill)" />
+              </AreaChart>
             </ResponsiveContainer>
           </div>
-        </div>
+        </ChartCard>
 
-        {/* Inventory Allocation Pie Chart */}
-        <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex flex-col justify-between">
-          <div className="space-y-1 mb-4">
-            <h3 className="font-sans font-semibold text-slate-900">Inventory Distribution</h3>
-            <p className="text-xs text-slate-500">Unit quantities across raw and finished stock</p>
-          </div>
-          <div className="w-full h-[220px] flex items-center justify-center relative">
+        <ChartCard data-fade-item title="Inventory Distribution" description="Unit quantities across stock types">
+          <div className="w-full h-[180px] flex items-center justify-center relative">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
-                <Tooltip formatter={(v) => [formatUnits(Number(v)), '']} contentStyle={{ background: '#0f172a', borderRadius: '8px', color: '#fff', fontSize: '12px' }} />
-                <Pie
-                  data={inventoryChartData}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={60}
-                  outerRadius={80}
-                  paddingAngle={5}
-                  dataKey="value"
-                >
-                  {inventoryChartData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.color} />
-                  ))}
+                <Tooltip formatter={(v) => [formatUnits(Number(v)), '']} contentStyle={{ background: 'var(--popover)', borderColor: 'var(--border)', borderRadius: '12px', color: 'var(--popover-foreground)', fontSize: '12px' }} />
+                <Pie data={inventoryChartData} cx="50%" cy="50%" innerRadius={54} outerRadius={72} paddingAngle={5} dataKey="value">
+                  {inventoryChartData.map((entry, index) => <Cell key={index} fill={entry.color} />)}
                 </Pie>
               </PieChart>
             </ResponsiveContainer>
-            {/* Center label */}
             <div className="absolute text-center">
-              <span className="text-[10px] uppercase font-mono tracking-wider text-slate-400">Total Units</span>
-              <div className="text-xl font-bold font-sans text-slate-950 dark:text-slate-100">{formatUnits(totalInventoryUnits)}</div>
+              <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Total Units</span>
+              <div className="text-lg font-semibold text-card-foreground">{formatUnits(totalInventoryUnits)}</div>
             </div>
           </div>
-          <div className="space-y-2 pt-2 border-t border-slate-100 text-xs">
-            {inventoryChartData.map((item, idx) => (
-              <div key={idx} className="flex items-center justify-between text-slate-600">
-                <div className="flex items-center space-x-2">
+          <div className="space-y-2 pt-3 mt-3 border-t border-border text-xs">
+            {inventoryChartData.map((item) => (
+              <div key={item.name} className="flex items-center justify-between text-muted-foreground">
+                <div className="flex items-center gap-2">
                   <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: item.color }} />
                   <span>{item.name}</span>
                 </div>
-                <span className="font-mono font-medium text-slate-900">{formatUnits(item.value)}</span>
+                <span className="font-medium text-card-foreground">{formatUnits(item.value)}</span>
               </div>
             ))}
           </div>
-        </div>
-
+        </ChartCard>
       </div>
 
-      {/* Grid: Low Stock Alert & Active Workflows */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-
-        {/* Low Stock Panel */}
-        <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-            <div className="flex items-center space-x-2">
-              <AlertTriangle className="w-4.5 h-4.5 text-amber-500" />
-              <h3 className="font-sans font-semibold text-slate-900">Critical Stock Alerts</h3>
-            </div>
-            <span className="text-xs bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full font-mono">
-              {dashboard.lowStockCount} items low
-            </span>
+      {/* Purchase vs sales + inventory health */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        <ChartCard data-fade-item className="lg:col-span-2" title="Purchase vs Sales" description="Revenue against procurement cost, month over month">
+          <div className="w-full h-[240px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={financialChartData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
+                <XAxis dataKey="name" stroke="var(--muted-foreground)" fontSize={11} tickLine={false} axisLine={false} />
+                <YAxis stroke="var(--muted-foreground)" fontSize={11} tickLine={false} axisLine={false} tickFormatter={(v) => `RM ${v}`} />
+                <Tooltip
+                  cursor={{ fill: 'var(--primary)', opacity: 0.08 }}
+                  formatter={(value) => [formatCurrency(Number(value)), '']}
+                  contentStyle={{ background: 'var(--popover)', borderColor: 'var(--border)', borderRadius: '12px', color: 'var(--popover-foreground)', fontSize: '12px' }}
+                />
+                <Legend iconSize={9} iconType="circle" wrapperStyle={{ fontSize: '11px', paddingTop: '8px' }} />
+                <Bar dataKey="Sales" fill="var(--chart-1)" radius={[6, 6, 0, 0]} name="Sales revenue" />
+                <Bar dataKey="Purchases" fill="var(--chart-3)" radius={[6, 6, 0, 0]} name="Purchase costs" />
+              </BarChart>
+            </ResponsiveContainer>
           </div>
+        </ChartCard>
 
+        <SectionCard data-fade-item title="Inventory Health" description="Material SKUs at or above reorder level">
+          <div className="space-y-4">
+            <div>
+              <div className="flex items-baseline justify-between mb-1.5">
+                <span className="text-2xl font-semibold text-card-foreground">{healthyStockPct}%</span>
+                <span className="text-xs text-muted-foreground">{materialCount - dashboard.lowStockCount}/{materialCount} SKUs healthy</span>
+              </div>
+              <Progress value={healthyStockPct} indicatorClassName={healthyStockPct < 70 ? 'bg-warning' : 'bg-success'} />
+            </div>
+            <div className="grid grid-cols-2 gap-3 pt-3 border-t border-border text-xs">
+              <div>
+                <div className="text-muted-foreground">Low stock</div>
+                <div className="text-base font-semibold text-destructive">{dashboard.lowStockCount}</div>
+              </div>
+              <div>
+                <div className="text-muted-foreground">Healthy</div>
+                <div className="text-base font-semibold text-success">{Math.max(0, materialCount - dashboard.lowStockCount)}</div>
+              </div>
+            </div>
+          </div>
+        </SectionCard>
+      </div>
+
+      {/* Quick actions + recent sales/purchases */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        <SectionCard data-fade-item title="Quick Actions" description="Jump straight into common tasks" contentClassName="p-4 grid grid-cols-2 gap-2.5">
+          {quickActions.map((action) => (
+            <ActionCard key={action.target} label={action.label} icon={action.icon} onClick={() => onNavigate?.(action.target)} />
+          ))}
+        </SectionCard>
+
+        <SectionCard
+          data-fade-item
+          title="Recent Sales"
+          description={`Last ${recentSales.length} order${recentSales.length === 1 ? '' : 's'}`}
+          actions={<FileSpreadsheet className="w-4 h-4 text-primary" />}
+        >
+          {recentSales.length === 0 ? (
+            <CardEmptyState>No sales orders yet.</CardEmptyState>
+          ) : (
+            <div className="divide-y divide-border">
+              {recentSales.map((sale) => (
+                <button
+                  key={sale.id}
+                  type="button"
+                  onClick={() => onNavigate?.('ORDERS')}
+                  className="w-full flex items-center justify-between gap-3 py-2.5 text-left hover:bg-secondary/40 rounded-lg px-2 -mx-2 transition-colors"
+                >
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium text-card-foreground truncate">{sale.salesNo}</div>
+                    <div className="text-xs text-muted-foreground truncate">{sale.clientName || '—'}</div>
+                  </div>
+                  <div className="flex flex-col items-end gap-1 shrink-0">
+                    <span className="text-sm font-medium text-card-foreground">{formatCurrency(sale.totalAmount)}</span>
+                    <Badge variant={SALES_STATUS_META[sale.status].variant}>{SALES_STATUS_META[sale.status].label}</Badge>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </SectionCard>
+
+        <SectionCard
+          data-fade-item
+          title="Recent Purchases"
+          description={`Last ${recentPurchases.length} order${recentPurchases.length === 1 ? '' : 's'}`}
+          actions={<ShoppingBag className="w-4 h-4 text-primary" />}
+        >
+          {recentPurchases.length === 0 ? (
+            <CardEmptyState>No purchase orders yet.</CardEmptyState>
+          ) : (
+            <div className="divide-y divide-border">
+              {recentPurchases.map((purchase) => (
+                <button
+                  key={purchase.id}
+                  type="button"
+                  onClick={() => onNavigate?.('PURCHASES')}
+                  className="w-full flex items-center justify-between gap-3 py-2.5 text-left hover:bg-secondary/40 rounded-lg px-2 -mx-2 transition-colors"
+                >
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium text-card-foreground truncate">{purchase.purchaseNo}</div>
+                    <div className="text-xs text-muted-foreground truncate">{purchase.vendorName || '—'}</div>
+                  </div>
+                  <div className="flex flex-col items-end gap-1 shrink-0">
+                    <span className="text-sm font-medium text-card-foreground">{formatCurrency(purchase.totalPrice)}</span>
+                    <Badge variant={PURCHASE_STATUS_META[purchase.status].variant}>{PURCHASE_STATUS_META[purchase.status].label}</Badge>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </SectionCard>
+      </div>
+
+      {/* Low stock + production status */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        <SectionCard
+          data-fade-item
+          title="Critical Stock Alerts"
+          description={`${dashboard.lowStockCount} item${dashboard.lowStockCount === 1 ? '' : 's'} at or below reorder point`}
+          actions={<AlertTriangle className="w-4 h-4 text-warning" />}
+        >
           {dashboard.lowStockItems.length === 0 ? (
-            <div className="text-center py-8 text-xs text-slate-400">
-              ✓ All inventory levels are safe. No immediate restocks required.
-            </div>
+            <CardEmptyState>All inventory levels are healthy — no restocks required.</CardEmptyState>
           ) : (
-            <div className="divide-y divide-slate-100">
-              {dashboard.lowStockItems.map((item, idx) => (
-                <div key={idx} className="py-2.5 flex items-center justify-between text-xs">
-                  <div>
-                    <div className="font-semibold text-slate-800">{item.name}</div>
-                    <div className="text-[10px] text-slate-400 font-mono">{item.code}</div>
-                  </div>
-                  <div className="text-right">
-                    <div className="font-semibold font-mono text-red-600">{formatUnits(item.quantity)}</div>
-                    <div className="text-[10px] text-slate-400 font-mono">Min: {formatUnits(item.minimumStock)}</div>
-                  </div>
-                </div>
+            <div className="divide-y divide-border">
+              {dashboard.lowStockItems.map((item) => (
+                <NotificationCard
+                  key={item.id}
+                  title={item.name}
+                  description={`${item.code || '—'} • ${formatUnits(item.quantity)} in stock, min ${formatUnits(item.minimumStock)}`}
+                  severity="destructive"
+                />
               ))}
             </div>
           )}
-        </div>
+        </SectionCard>
 
-        {/* Manufacturing Workflow Queue */}
-        <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-            <div className="flex items-center space-x-2">
-              <ClipboardList className="w-4.5 h-4.5 text-blue-500" />
-              <h3 className="font-sans font-semibold text-slate-900">Active Production Queue</h3>
-            </div>
-            <span className="text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full font-mono">
-              {activeWorkflowsCount} in progress
-            </span>
+        <SectionCard
+          data-fade-item
+          title="Production Status"
+          description={`${activeWorkflowsList.length} active step${activeWorkflowsList.length === 1 ? '' : 's'} across the floor`}
+          actions={<PackageCheck className="w-4 h-4 text-primary" />}
+        >
+          <div className="space-y-3">
+            {STAGE_ORDER.map((stage) => {
+              const count = stageCounts.get(stage) || 0;
+              return (
+                <div key={stage} className="space-y-1">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-foreground font-medium">{STAGE_LABEL[stage]}</span>
+                    <span className="text-muted-foreground">{count}</span>
+                  </div>
+                  <Progress value={(count / maxStageCount) * 100} indicatorClassName={stage === 'COMPLETED' ? 'bg-success' : 'bg-primary'} />
+                </div>
+              );
+            })}
           </div>
-
-          {activeWorkflows.length === 0 ? (
-            <div className="text-center py-8 text-xs text-slate-400">
-              No active production runs. Launch from Sales Orders to start.
-            </div>
-          ) : (
-            <div className="divide-y divide-slate-100">
-              {activeWorkflows.map((task, idx) => (
-                <div key={idx} className="py-2.5 flex items-center justify-between text-xs">
-                  <div>
-                    <div className="font-semibold text-slate-800">{task.productName}</div>
-                    <div className="text-[10px] text-slate-400 font-mono">Qty: {task.quantity} • Assg: {task.employeeName || 'Unassigned'}</div>
-                  </div>
-                  <div className="text-right">
-                    <span className="px-2.5 py-0.5 rounded-full font-mono text-[10px] font-medium bg-blue-100 text-blue-800">
-                      {task.stage}
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
+        </SectionCard>
       </div>
-    </div>
+
+      {/* Activity timeline */}
+      <SectionCard data-fade-item title="Activity Timeline" description="Recent production movement and stock alerts">
+        {activityTimeline.length === 0 ? (
+          <CardEmptyState>No recent activity yet.</CardEmptyState>
+        ) : (
+          <TimelineCard entries={activityTimeline} />
+        )}
+      </SectionCard>
+    </DashboardShell>
   );
 }

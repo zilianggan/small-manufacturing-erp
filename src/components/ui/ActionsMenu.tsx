@@ -61,7 +61,7 @@ export default function ActionsMenu({ items }: { items: ActionMenuItem[] }) {
         ref={btnRef}
         type="button"
         onClick={() => setOpen(o => !o)}
-        className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded transition-colors dark:hover:bg-slate-700"
+        className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-secondary rounded-lg transition-colors"
         title="Actions"
       >
         <MoreVertical className="w-3.5 h-3.5" />
@@ -70,7 +70,7 @@ export default function ActionsMenu({ items }: { items: ActionMenuItem[] }) {
         <div
           ref={menuRef}
           style={{ position: 'fixed', top: pos.top, left: pos.left, width: MENU_WIDTH }}
-          className="z-50 bg-white border border-slate-200 rounded-lg shadow-lg py-1 text-xs dark:bg-slate-800 dark:border-slate-700"
+          className="z-50 bg-popover border border-border rounded-xl shadow-lg py-1 text-xs"
         >
           {visible.map((item, i) => (
             <button
@@ -79,7 +79,7 @@ export default function ActionsMenu({ items }: { items: ActionMenuItem[] }) {
               disabled={item.disabled}
               onClick={() => { setOpen(false); item.onClick(); }}
               className={`w-full flex items-center space-x-2 px-3 py-2 text-left transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
-                item.danger ? 'text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40' : 'text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-700'
+                item.danger ? 'text-destructive hover:bg-destructive/10' : 'text-popover-foreground hover:bg-secondary'
               }`}
             >
               {item.icon}

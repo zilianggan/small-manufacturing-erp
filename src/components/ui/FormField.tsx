@@ -37,4 +37,4 @@ export default function FormField({
 
 /** Shared text input styling used by plain <input>/<textarea> fields inside forms. */
 export const fieldInputClassName =
-  'w-full px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500';
+  'w-full px-3 py-2 bg-background border border-input rounded-lg focus:outline-none focus:ring-2 focus:ring-ring/40 focus:border-ring transition-shadow';
