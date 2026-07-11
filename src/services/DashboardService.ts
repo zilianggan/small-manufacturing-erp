@@ -7,7 +7,8 @@
  * No db.ts, no server.ts REST hop, no useTableData.
  */
 import { supabase } from "./supabase";
-import { DashboardData, SalesHeader, PurchaseHeader } from "../types";
+import { DashboardData, SalesHeader, PurchaseHeader, SalesPriority } from "../types";
+import { PRIORITY_META } from "../utils/priority";
 
 export const getDashboardData = async (): Promise<DashboardData> => {
   const { data, error } = await supabase.rpc('get_dashboard_data').single<{
@@ -72,6 +73,7 @@ export interface RecentSale {
   clientName: string;
   totalAmount: number;
   status: SalesHeader['status'];
+  priority: SalesPriority;
   orderDate: string;
 }
 
@@ -84,25 +86,35 @@ export interface RecentPurchase {
   orderDate: string | null;
 }
 
-/** Latest N sales orders for the dashboard's "Recent Sales" widget — lightweight columns only. */
+/**
+ * Latest sales orders for the dashboard's "Recent Sales" widget, ranked by
+ * priority (Urgent → Low) first and most-recent-first within each priority
+ * tier — lightweight columns only. PostgREST can't order by a computed rank
+ * over a text enum column, so this fetches a wider recent window and
+ * re-ranks client-side before slicing to `limit`.
+ */
 export const getRecentSales = async (limit = 5): Promise<RecentSale[]> => {
   const { data, error } = await supabase
     .from('sales_header')
-    .select('id, sales_no, order_date, status, total_amount, clients(company_name)')
+    .select('id, sales_no, order_date, status, total_amount, priority, clients(company_name)')
     .order('created_at', { ascending: false })
-    .limit(limit);
+    .limit(Math.max(limit * 6, 30));
   if (error) {
     console.error('getRecentSales', error);
     throw error;
   }
-  return (data || []).map((row: any) => ({
+  const mapped: RecentSale[] = (data || []).map((row: any) => ({
     id: row.id,
     salesNo: row.sales_no,
     clientName: row.clients?.company_name || '',
     totalAmount: Number(row.total_amount) || 0,
     status: row.status,
+    priority: row.priority || 'MEDIUM',
     orderDate: row.order_date,
   }));
+  return mapped
+    .sort((a, b) => PRIORITY_META[b.priority].rank - PRIORITY_META[a.priority].rank || b.orderDate.localeCompare(a.orderDate))
+    .slice(0, limit);
 };
 
 /** Latest N purchase orders for the dashboard's "Recent Purchases" widget — lightweight columns only. */

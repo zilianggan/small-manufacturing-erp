@@ -37,7 +37,7 @@ export default function CompanyFormFields({
       </FormField>
       <FormField label="Business Email">
         <input
-          type="email" value={companyEmail} onChange={(e) => setCompanyEmail(e.target.value)}
+          type="email" value={companyEmail} onChange={(e) => setCompanyEmail(e.target.value.toLowerCase())}
           placeholder="e.g. sales@company.com.my"
           className={fieldInputClassName}
         />

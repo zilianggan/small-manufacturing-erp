@@ -280,3 +280,24 @@ BEGIN
         );
     END LOOP;
 END $$;
+
+-- Production due date is distinct from delivery_date (client-facing ship
+-- date): it's the internal shop-floor deadline the production board sorts
+-- and flags urgency against. Priority is a manual override staff sets on
+-- the sales order, independent of due date.
+ALTER TABLE sales_header
+ADD COLUMN production_due_date date,
+ADD COLUMN priority TEXT NOT NULL DEFAULT 'MEDIUM' CHECK (priority IN ('LOW','MEDIUM','HIGH','URGENT'));
+
+-- Order/quotation/delivery dates carry a time-of-day component now (staff
+-- pick day+time; auto-stamped dates record the real creation instant).
+-- transaction_date is already timestamptz. Existing date-only rows convert
+-- to midnight of the server timezone. production_due_date/received_date stay
+-- plain date — they're calendar deadlines, not instants.
+ALTER TABLE sales_header
+  ALTER COLUMN order_date TYPE timestamptz USING order_date::timestamptz,
+  ALTER COLUMN delivery_date TYPE timestamptz USING delivery_date::timestamptz;
+
+ALTER TABLE purchase_header
+  ALTER COLUMN quotation_date TYPE timestamptz USING quotation_date::timestamptz,
+  ALTER COLUMN order_date TYPE timestamptz USING order_date::timestamptz;

@@ -3,6 +3,7 @@ import { X, Printer, FileText, Mail, Phone, MapPin, Database, Factory, Cpu, Wren
 import { PurchaseHeader, Vendor, CompanyProfile } from '../types';
 import { getVendors } from '../services/ContactsService';
 import { getCompanyProfile } from '../services/CompanyProfileService';
+import { formatDate } from '../utils/date';
 
 interface QuotationModalProps {
   purchase: PurchaseHeader | null;
@@ -124,7 +125,7 @@ export default function QuotationModal({ purchase, isOpen, onClose }: QuotationM
                   <h1 class="quotation-title">PURCHASE QUOTATION</h1>
                   <div class="meta-details">
                     <p style="margin: 2px 0;"><span class="meta-label">Reference No:</span> ${referenceNo}</p>
-                    <p style="margin: 2px 0;"><span class="meta-label">Quotation Date:</span> ${purchase.quotationDate}</p>
+                    <p style="margin: 2px 0;"><span class="meta-label">Quotation Date:</span> ${formatDate(purchase.quotationDate)}</p>
                     <p style="margin: 2px 0;"><span class="meta-label">Status:</span> <span style="font-weight: bold; color: #047857; text-transform: uppercase;">${purchase.status}</span></p>
                   </div>
                 </div>
@@ -343,7 +344,7 @@ export default function QuotationModal({ purchase, isOpen, onClose }: QuotationM
               <h1 className="font-sans font-black text-slate-900 text-xl tracking-tight uppercase print:text-2xl">Purchase Quotation</h1>
               <div className="space-y-0.5 text-[10px] font-mono text-slate-500">
                 <p><span className="font-bold text-slate-700">Reference No:</span> {referenceNo}</p>
-                <p><span className="font-bold text-slate-700">Quotation Date:</span> {purchase.quotationDate}</p>
+                <p><span className="font-bold text-slate-700">Quotation Date:</span> {formatDate(purchase.quotationDate)}</p>
                 <p><span className="font-bold text-slate-700">Status:</span> <span className="text-emerald-700 font-bold uppercase">{purchase.status}</span></p>
               </div>
             </div>

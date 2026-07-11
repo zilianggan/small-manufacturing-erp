@@ -3,6 +3,7 @@ import { X, Printer, FileText, Mail, Phone, MapPin, Database, Factory, Cpu, Wren
 import { SalesHeader, Client, CompanyProfile } from '../types';
 import { getClients } from '../services/ContactsService';
 import { getCompanyProfile } from '../services/CompanyProfileService';
+import { formatDate } from '../utils/date';
 
 interface SalesQuotationModalProps {
   order: SalesHeader | null;
@@ -124,7 +125,7 @@ export default function SalesQuotationModal({ order, isOpen, onClose }: SalesQuo
                   <h1 class="quotation-title">SALES QUOTATION</h1>
                   <div class="meta-details">
                     <p style="margin: 2px 0;"><span class="meta-label">Reference No:</span> ${referenceNo}</p>
-                    <p style="margin: 2px 0;"><span class="meta-label">Order Date:</span> ${order.orderDate}</p>
+                    <p style="margin: 2px 0;"><span class="meta-label">Order Date:</span> ${formatDate(order.orderDate)}</p>
                     <p style="margin: 2px 0;"><span class="meta-label">Status:</span> <span style="font-weight: bold; color: #047857; text-transform: uppercase;">${order.status}</span></p>
                   </div>
                 </div>
@@ -343,7 +344,7 @@ export default function SalesQuotationModal({ order, isOpen, onClose }: SalesQuo
               <h1 className="font-sans font-black text-slate-900 text-xl tracking-tight uppercase print:text-2xl">Sales Quotation</h1>
               <div className="space-y-0.5 text-[10px] font-mono text-slate-500">
                 <p><span className="font-bold text-slate-700">Reference No:</span> {referenceNo}</p>
-                <p><span className="font-bold text-slate-700">Order Date:</span> {order.orderDate}</p>
+                <p><span className="font-bold text-slate-700">Order Date:</span> {formatDate(order.orderDate)}</p>
                 <p><span className="font-bold text-slate-700">Status:</span> <span className="text-emerald-700 font-bold uppercase">{order.status}</span></p>
               </div>
             </div>

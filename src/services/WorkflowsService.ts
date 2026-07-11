@@ -18,6 +18,10 @@ const mapTaskRow = (row: any): WorkflowTask => ({
     id: row.id,
     headerId: row.sales_detail?.header_id,
     salesNo: row.sales_detail?.sales_header?.sales_no || '',
+    clientId: row.sales_detail?.sales_header?.client_id || '',
+    clientName: row.sales_detail?.sales_header?.clients?.company_name || '',
+    productionDueDate: row.sales_detail?.sales_header?.production_due_date || undefined,
+    priority: row.sales_detail?.sales_header?.priority || 'MEDIUM',
     productName: row.sales_detail?.product_name || '',
     quantity: Number(row.sales_detail?.quantity) || 0,
     stage: row.stage,
@@ -33,7 +37,7 @@ const mapTaskRow = (row: any): WorkflowTask => ({
 export const getWorkflowTasks = async (): Promise<WorkflowTask[]> => {
     const { data, error } = await supabase
         .from('workflow_tasks')
-        .select('*, sales_detail(header_id, product_name, quantity, sales_header(sales_no)), employees(full_name)')
+        .select('*, sales_detail(header_id, product_name, quantity, sales_header(sales_no, client_id, production_due_date, priority, clients(company_name))), employees(full_name)')
         .eq('status', 'IN_PRODUCTION');
     if (error) {
         console.error('getWorkflowTasks', error);

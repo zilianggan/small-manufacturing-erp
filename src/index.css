@@ -442,9 +442,3 @@ button {
 .animate-pulse-glow {
   animation: pulse-glow 2s ease-in-out infinite;
 }
-
-.link {
-  text-decoration: underline;
-  color: blue;
-  cursor: pointer;
-}

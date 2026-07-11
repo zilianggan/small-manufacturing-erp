@@ -1,5 +1,6 @@
 Version 1.0.4
 --------------------
+- Redesign all pages
 - Add company logo in vendor and client
 - Add auto numbering for sales no and purchase no
 - Add whatsapp and email when click on phone number and email in vendor and client page
@@ -8,6 +9,14 @@ Version 1.0.4
 - Sales enhancement (When newly add to sales order listing, status should be pending production instead of pending delivery ,fix redirect issue only click view button then go to detail page)
 - Inventory add ref no to link sales or purchase
 - For actions, change to morevert, when click show menu of actions
+- Add contact in import
+- Email input always lowercase
+- Add priority, production due date in sales
+- Add drag and drop in production kanban
+- Add collapse drawer
+- For sales form, add control when proceed to production should check if got sufficient inventory
+- Order date, inventory date, quotation date, delivery date change to date time
+- Add pagination in filter dialog
 
 Version 1.0.3
 --------------------

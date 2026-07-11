@@ -10,7 +10,13 @@
 import { supabase } from "./supabase";
 import { getClients } from "./ContactsService";
 import { saveInventoryTransaction } from "./InventoryTransactionService";
-import { Attachment, SalesHeader, SalesDetail, ProductionMaterialUsage, Product } from "../types";
+import { Attachment, SalesHeader, SalesDetail, ProductionMaterialUsage, Product, SalesPriority } from "../types";
+import { nowIso } from "../utils/date";
+
+// Filter date-range "to" bounds arrive as date-only strings, but order_date
+// and delivery_date are timestamptz now — a bare `<= 2026-07-11` excludes
+// same-day afternoon rows, so bump a date-only bound to end-of-day.
+const endOfDay = (value: string): string => (value.length <= 10 ? `${value}T23:59:59.999` : value);
 
 export const generateId = (): string => crypto.randomUUID();
 
@@ -37,6 +43,8 @@ export interface SalesFormInput {
   remark?: string;
   attachments?: Attachment[];
   details: SalesDetailInput[];
+  productionDueDate?: string;
+  priority?: SalesPriority;
 }
 
 const mapMaterialUsageRow = (row: any): ProductionMaterialUsage => ({
@@ -69,6 +77,8 @@ const mapSalesHeaderRow = (row: any): SalesHeader => ({
   salesNo: row.sales_no,
   orderDate: row.order_date,
   deliveryDate: row.delivery_date || undefined,
+  productionDueDate: row.production_due_date || undefined,
+  priority: row.priority || 'MEDIUM',
   status: row.status,
   clientId: row.client_id,
   clientName: row.clients?.company_name || '',
@@ -80,7 +90,7 @@ const mapSalesHeaderRow = (row: any): SalesHeader => ({
   updatedAt: row.updated_at,
 });
 
-export type SalesSortField = 'reference' | 'client' | 'date' | 'totalAmount';
+export type SalesSortField = 'reference' | 'client' | 'date' | 'totalAmount' | 'productionDue';
 export type SortDir = 'asc' | 'desc';
 
 export interface SalesFilters {
@@ -133,7 +143,7 @@ export const getSalesOrders = async (
     query = query.in('sales_detail.product_id', filters.productIds!);
   }
   if (filters.dateFrom) query = query.gte(dateColumn, filters.dateFrom);
-  if (filters.dateTo) query = query.lte(dateColumn, filters.dateTo);
+  if (filters.dateTo) query = query.lte(dateColumn, endOfDay(filters.dateTo));
 
   switch (sortField) {
     case 'reference':
@@ -144,6 +154,9 @@ export const getSalesOrders = async (
       break;
     case 'totalAmount':
       query = query.order('total_amount', { ascending: sortDir === 'asc' });
+      break;
+    case 'productionDue':
+      query = query.order('production_due_date', { ascending: sortDir === 'asc', nullsFirst: false });
       break;
     case 'date':
     default:
@@ -226,7 +239,6 @@ const replaceDetails = async (headerId: string, details: SalesDetailInput[]): Pr
 export const createSalesQuotation = async (input: SalesFormInput): Promise<void> => {
   const id = generateId();
   const totalAmount = input.details.reduce((sum, d) => sum + d.totalPrice, 0);
-  const today = new Date().toISOString().split('T')[0];
 
   const { data: salesNo, error: numberError } = await supabase.rpc('next_document_number', { p_kind: 'SO' });
   if (numberError) {
@@ -237,12 +249,14 @@ export const createSalesQuotation = async (input: SalesFormInput): Promise<void>
   const { error: headerError } = await supabase.from('sales_header').insert({
     id,
     sales_no: salesNo,
-    order_date: today,
+    order_date: nowIso(),
     status: 'QUOTATION',
     client_id: input.clientId,
     total_amount: totalAmount,
     remark: input.remark || null,
     attachments: input.attachments || [],
+    production_due_date: input.productionDueDate || null,
+    priority: input.priority || 'MEDIUM',
   });
   if (headerError) {
     console.error('createSalesQuotation(header)', headerError);
@@ -262,6 +276,8 @@ export const updateSalesOrder = async (headerId: string, input: SalesFormInput):
       total_amount: totalAmount,
       remark: input.remark || null,
       attachments: input.attachments || [],
+      production_due_date: input.productionDueDate || null,
+      priority: input.priority || 'MEDIUM',
     })
     .eq('id', headerId);
   if (error) {
@@ -282,6 +298,8 @@ export const convertToSalesOrder = async (headerId: string, input: SalesFormInpu
       total_amount: totalAmount,
       remark: input.remark || null,
       attachments: input.attachments || [],
+      production_due_date: input.productionDueDate || null,
+      priority: input.priority || 'MEDIUM',
       delivery_date: deliveryDate,
       status: 'ORDERED',
     })
@@ -292,6 +310,43 @@ export const convertToSalesOrder = async (headerId: string, input: SalesFormInpu
   }
 
   await replaceDetails(headerId, input.details);
+};
+
+export interface MaterialShortfall {
+  materialId: string;
+  materialName: string;
+  required: number;
+  available: number;
+}
+
+// Gate for "Proceed to Production": aggregates every planned material's
+// quantity across the order's line items and checks it against live stock.
+// startProduction's -plannedQuantity inventory_transaction has no DB
+// constraint stopping material.quantity from going negative, so this is the
+// only thing standing between a start and an oversold material.
+export const checkProductionStock = async (header: SalesHeader): Promise<MaterialShortfall[]> => {
+  const required = new Map<string, number>();
+  header.details.forEach(d => d.materials.forEach(m => {
+    required.set(m.materialId, (required.get(m.materialId) || 0) + m.plannedQuantity);
+  }));
+  const materialIds = Array.from(required.keys());
+  if (materialIds.length === 0) return [];
+
+  const { data, error } = await supabase.from('material').select('id, name, quantity').in('id', materialIds);
+  if (error) {
+    console.error('checkProductionStock', error);
+    throw error;
+  }
+
+  const shortfalls: MaterialShortfall[] = [];
+  required.forEach((requiredQty, materialId) => {
+    const row = (data || []).find((m: any) => m.id === materialId);
+    const available = Number(row?.quantity) || 0;
+    if (available < requiredQty) {
+      shortfalls.push({ materialId, materialName: row?.name || materialId, required: requiredQty, available });
+    }
+  });
+  return shortfalls;
 };
 
 // Reserves every planned material's stock (one -plannedQuantity
@@ -322,7 +377,7 @@ export const startProduction = async (header: SalesHeader): Promise<void> => {
         quantity: -material.plannedQuantity,
         materialId: material.materialId,
         productionMaterialUsageId: material.id,
-        transactionDate: today,
+        transactionDate: nowIso(),
       });
     }
   }
@@ -396,7 +451,7 @@ export const confirmProductionDone = async (
         quantity: diff,
         materialId: r.materialId,
         productionMaterialUsageId: r.usageId,
-        transactionDate: today,
+        transactionDate: nowIso(),
       });
     }
     if (leftoverQty > 0) {
@@ -406,7 +461,7 @@ export const confirmProductionDone = async (
         quantity: leftoverQty,
         materialId: r.materialId,
         productionMaterialUsageId: r.usageId,
-        transactionDate: today,
+        transactionDate: nowIso(),
       });
     }
 
@@ -446,7 +501,7 @@ export const confirmProductionDone = async (
       quantity: l.quantity,
       materialId: l.materialId,
       productionMaterialUsageId: inserted.id,
-      transactionDate: today,
+      transactionDate: nowIso(),
     });
   }
 
@@ -476,7 +531,7 @@ export const confirmProductionDone = async (
       quantity: p.quantity,
       productId: p.productId,
       productionMaterialUsageId: inserted.id,
-      transactionDate: today,
+      transactionDate: nowIso(),
     });
   }
 
@@ -520,7 +575,7 @@ export const cancelSalesOrder = async (header: SalesHeader): Promise<void> => {
           quantity: material.plannedQuantity,
           materialId: material.materialId,
           productionMaterialUsageId: material.id,
-          transactionDate: today,
+          transactionDate: nowIso(),
         });
       }
     }

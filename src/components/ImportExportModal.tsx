@@ -8,16 +8,16 @@ import * as XLSX from 'xlsx';
 import ExcelJS from 'exceljs';
 import {
   UploadCloud, CheckCircle2, AlertTriangle, Download, Clipboard, Info,
-  Database, ArrowRight, FileSpreadsheet, Layers, Users, ShoppingBag, Briefcase, Package,
+  Database, ArrowRight, FileSpreadsheet, Layers, Users, ShoppingBag, Briefcase, Package, UserPlus, Boxes,
 } from 'lucide-react';
 import {
   ImportColumn, ImportRowError,
-  VENDOR_COLUMNS, CLIENT_COLUMNS, MATERIAL_COLUMNS, PRODUCT_COLUMNS, PURCHASE_COLUMNS, SALES_COLUMNS,
-  importVendors, importClients, importMaterials, importProducts,
+  VENDOR_COLUMNS, CLIENT_COLUMNS, CONTACT_COLUMNS, MATERIAL_COLUMNS, PRODUCT_COLUMNS, PURCHASE_COLUMNS, SALES_COLUMNS, INVENTORY_COLUMNS,
+  importVendors, importClients, importContacts, importMaterials, importProducts, importInventoryTransactions,
   validatePurchaseImport, commitPurchaseImport, PurchaseImportPreview, PurchaseImportRow,
   validateSalesImport, commitSalesImport, SalesImportPreview, SalesImportRow,
-  getVendorExportRows, getClientExportRows, getMaterialExportRows, getProductExportRows,
-  getPurchaseExportSheets, getSalesExportSheets, getAllExportSheets,
+  getVendorExportRows, getClientExportRows, getContactExportRows, getMaterialExportRows, getProductExportRows,
+  getPurchaseExportSheets, getSalesExportSheets, getInventoryExportRows, getAllExportSheets,
 } from '../services/ImportExportService';
 import { useToast } from './ui';
 
@@ -27,24 +27,28 @@ interface ImportExportModalProps {
   onDataImported: () => void; // Refresh current views
 }
 
-type Category = 'VENDORS' | 'CLIENTS' | 'MATERIAL' | 'PRODUCT' | 'PURCHASE' | 'SALES';
+type Category = 'VENDORS' | 'CLIENTS' | 'CONTACTS' | 'MATERIAL' | 'PRODUCT' | 'PURCHASE' | 'SALES' | 'INVENTORY';
 
 const EXPECTED_COLUMNS: Record<Category, ImportColumn[]> = {
   VENDORS: VENDOR_COLUMNS,
   CLIENTS: CLIENT_COLUMNS,
+  CONTACTS: CONTACT_COLUMNS,
   MATERIAL: MATERIAL_COLUMNS,
   PRODUCT: PRODUCT_COLUMNS,
   PURCHASE: PURCHASE_COLUMNS,
   SALES: SALES_COLUMNS,
+  INVENTORY: INVENTORY_COLUMNS,
 };
 
 const CATEGORY_LIST: { id: Category; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { id: 'VENDORS', label: 'Vendors', icon: Users },
   { id: 'CLIENTS', label: 'Clients', icon: Briefcase },
+  { id: 'CONTACTS', label: 'Contacts', icon: UserPlus },
   { id: 'MATERIAL', label: 'Material Catalog', icon: Layers },
   { id: 'PRODUCT', label: 'Product Catalog', icon: Package },
   { id: 'PURCHASE', label: 'Purchase Orders', icon: ShoppingBag },
   { id: 'SALES', label: 'Sales Orders', icon: FileSpreadsheet },
+  { id: 'INVENTORY', label: 'Inventory Transactions', icon: Boxes },
 ];
 
 const isHeaderDetailCategory = (category: Category): category is 'PURCHASE' | 'SALES' =>
@@ -125,6 +129,10 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
       const { rows, attachmentLinks } = await getClientExportRows();
       appendRowsSheet(wb, 'Clients', rows, attachmentLinks);
       exportedCount = rows.length;
+    } else if (category === 'CONTACTS') {
+      const { rows, attachmentLinks } = await getContactExportRows();
+      appendRowsSheet(wb, 'Contacts', rows, attachmentLinks);
+      exportedCount = rows.length;
     } else if (category === 'MATERIAL') {
       const { rows, attachmentLinks } = await getMaterialExportRows();
       appendRowsSheet(wb, 'Material', rows, attachmentLinks);
@@ -138,6 +146,10 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
       appendRowsSheet(wb, 'Purchase_Items', itemRows);
       appendRowsSheet(wb, 'Purchase_Orders', headerRows, attachmentLinks);
       exportedCount = headerRows.length;
+    } else if (category === 'INVENTORY') {
+      const { rows } = await getInventoryExportRows();
+      appendRowsSheet(wb, 'Inventory_Transactions', rows);
+      exportedCount = rows.length;
     } else {
       const { headerRows, itemRows, attachmentLinks } = await getSalesExportSheets();
       appendRowsSheet(wb, 'Sales_Items', itemRows);
@@ -185,12 +197,14 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
     XLSX.writeFile(wb, 'Import_Errors.xlsx');
   };
 
-  const runFlatImport = async (category: 'VENDORS' | 'CLIENTS' | 'MATERIAL' | 'PRODUCT', rows: Record<string, any>[]) => {
+  const runFlatImport = async (category: 'VENDORS' | 'CLIENTS' | 'CONTACTS' | 'MATERIAL' | 'PRODUCT' | 'INVENTORY', rows: Record<string, any>[]) => {
     try {
       const result = category === 'VENDORS' ? await importVendors(rows)
         : category === 'CLIENTS' ? await importClients(rows)
+        : category === 'CONTACTS' ? await importContacts(rows)
         : category === 'MATERIAL' ? await importMaterials(rows)
-        : await importProducts(rows);
+        : category === 'PRODUCT' ? await importProducts(rows)
+        : await importInventoryTransactions(rows);
 
       setStatus({ type: 'success', message: 'Successfully completed import.', details: result.logs });
       toast.success('Import completed successfully.');
@@ -391,7 +405,7 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
             </span>
             <div>
               <h3 className="font-sans font-bold text-slate-900 text-sm">ERP Data Import & Export Hub</h3>
-              <p className="text-[10px] text-slate-500 font-mono">Load or export Vendors, Clients, Material, Product, Purchase and Sales orders</p>
+              <p className="text-[10px] text-slate-500 font-mono">Load or export Vendors, Clients, Contacts, Material, Product, Purchase, Sales and Inventory Transactions</p>
             </div>
           </div>
           <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-600 font-bold text-base p-1.5 leading-none bg-transparent">
@@ -470,7 +484,7 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
                 className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2.5 border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 hover:border-blue-300 hover:bg-blue-50/50 transition-all"
               >
                 <Download className="w-3.5 h-3.5" />
-                <span>Export All (6 categories)</span>
+                <span>Export All (8 categories)</span>
               </button>
             </div>
           </div>

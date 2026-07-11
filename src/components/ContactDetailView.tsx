@@ -211,15 +211,15 @@ export default function ContactDetailView({ company, companyType, onBack, onComp
               </div>
               <div className="flex flex-wrap gap-x-5 gap-y-1.5 text-xs text-slate-500">
                 {company.email && (
-                  <div className="flex items-center space-x-1.5 link" onClick={(e) => { e.stopPropagation(); window.open(`https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(company.email)}`, "_blank") }}>
+                  <div className="flex items-center space-x-1.5 cursor-pointer" onClick={(e) => { e.stopPropagation(); window.open(`https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(company.email)}`, "_blank") }}>
                     <Mail className="w-3.5 h-3.5 shrink-0 text-slate-400" />
-                    <span>{company.email}</span>
+                    <span className="font-mono text-primary hover:underline">{company.email}</span>
                   </div>
                 )}
                 {company.officeNo && (
-                  <div className="flex items-center space-x-1.5 link" onClick={(e) => { e.stopPropagation(); window.open(`https://wa.me/${company.officeNo}`, "_blank") }}>
+                  <div className="flex items-center space-x-1.5 cursor-pointer" onClick={(e) => { e.stopPropagation(); window.open(`https://wa.me/${company.officeNo}`, "_blank") }}>
                     <Phone className="w-3.5 h-3.5 shrink-0 text-slate-400" />
-                    <span>{company.officeNo}</span>
+                    <span className="font-mono text-primary hover:underline">{company.officeNo}</span>
                   </div>
                 )}
                 {company.address && (
@@ -307,10 +307,10 @@ export default function ContactDetailView({ company, companyType, onBack, onComp
                   </div>
                   <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-500">
                     {contact.contactNo && (
-                      <span className="flex items-center space-x-1 link" onClick={(e) => { e.stopPropagation(); window.open(`https://wa.me/${company.officeNo}`, "_blank") }}><Phone className="w-3 h-3 text-slate-400" /><span>{contact.contactNo}</span></span>
+                      <span className="flex items-center space-x-1 cursor-pointer" onClick={(e) => { e.stopPropagation(); window.open(`https://wa.me/${contact.contactNo}`, "_blank") }}><Phone className="w-3 h-3 text-slate-400" /><span className="font-mono text-primary hover:underline">{contact.contactNo}</span></span>
                     )}
                     {contact.email && (
-                      <span className="flex items-center space-x-1 link" onClick={(e) => { e.stopPropagation(); window.open(`https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(company.email)}`, "_blank") }}><Mail className="w-3 h-3 text-slate-400" /><span>{contact.email}</span></span>
+                      <span className="flex items-center space-x-1 cursor-pointer" onClick={(e) => { e.stopPropagation(); window.open(`https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(contact.email)}`, "_blank") }}><Mail className="w-3 h-3 text-slate-400" /><span className="font-mono text-primary hover:underline">{contact.email}</span></span>
                     )}
                     {/* {contact.attachments?.[0] && (
                       <a
@@ -401,7 +401,7 @@ export default function ContactDetailView({ company, companyType, onBack, onComp
           </FormField>
           <FormField label="Email" labelClassName="font-semibold block text-slate-700">
             <input
-              type="email" value={contactEmail} onChange={(e) => setContactEmail(e.target.value)}
+              type="email" value={contactEmail} onChange={(e) => setContactEmail(e.target.value.toLowerCase())}
               placeholder="e.g. name@company.com"
               className={fieldInputClassName}
             />

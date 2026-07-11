@@ -49,15 +49,15 @@ export default function SortMenu({ options, sortField, sortDir, onChange }: Sort
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center space-x-1.5 px-3 py-2 bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-lg text-xs font-medium transition-colors"
+        className="flex items-center space-x-1.5 px-3 py-2 bg-card border border-border hover:bg-secondary/60 text-foreground rounded-lg text-xs font-medium transition-colors"
       >
-        <ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />
+        <ArrowUpDown className="w-3.5 h-3.5 text-muted-foreground" />
         <span>{activeLabel}</span>
-        {sortDir === 'asc' ? <ArrowUp className="w-3 h-3 text-slate-400" /> : <ArrowDown className="w-3 h-3 text-slate-400" />}
+        {sortDir === 'asc' ? <ArrowUp className="w-3 h-3 text-muted-foreground" /> : <ArrowDown className="w-3 h-3 text-muted-foreground" />}
       </button>
 
       {open && (
-        <div className="absolute right-0 mt-1 w-56 bg-white border border-slate-200 rounded-lg shadow-lg z-50 overflow-hidden py-1">
+        <div className="absolute right-0 mt-1 w-56 bg-card border border-border rounded-lg shadow-lg z-50 overflow-hidden py-1 animate-in fade-in zoom-in-95 duration-100">
           {options.map((option) => {
             const active = option.value === sortField;
             return (
@@ -65,7 +65,7 @@ export default function SortMenu({ options, sortField, sortDir, onChange }: Sort
                 key={option.value}
                 type="button"
                 onClick={() => selectOption(option.value)}
-                className={`w-full flex items-center justify-between px-3 py-2 text-xs text-left transition-colors ${active ? 'text-blue-700 bg-blue-50/60' : 'text-slate-600 hover:bg-slate-50'}`}
+                className={`w-full flex items-center justify-between px-3 py-2 text-xs text-left transition-colors ${active ? 'text-primary bg-primary/10' : 'text-foreground hover:bg-secondary/50'}`}
               >
                 <span className="flex items-center space-x-1.5">
                   {active && <Check className="w-3 h-3" />}

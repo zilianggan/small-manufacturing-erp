@@ -50,7 +50,7 @@ const ROW_MAPPERS: Record<string, (row: any) => any> = {
         material_type: m.materialType || null, dimension: m.dimension || null,
         description: m.description || '', attachments: m.attachments || [],
         status: m.status || null, minimum_stock: m.minimumStock ?? 0,
-        reorder_quantity: m.reorderQuantity ?? 0, material_category_id: m.materialCategoryId || null
+        material_category_id: m.materialCategoryId || null
         // NOTE: quantity deliberately omitted — owned by the update_material_stock() DB
         // trigger (fires on inventory_transaction inserts); including it here would let
         // every material edit stomp the trigger-maintained stock value.

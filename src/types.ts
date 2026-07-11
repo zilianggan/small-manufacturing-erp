@@ -146,6 +146,7 @@ export interface PurchaseHeader {
   totalPrice: number;
   attachments?: Attachment[];
   salesHeaderId?: string; // FK -> sales_header.id, optional link to the sales order this purchase serves
+  salesNo?: string; // joined via sales_header.sales_no, display only
   details: PurchaseDetail[];
   createdAt?: string;
   updatedAt?: string;
@@ -176,11 +177,17 @@ export interface SalesDetail {
   product?: Product;
 }
 
+export type SalesPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
+
 export interface SalesHeader {
   id: string;
   salesNo: string;
   orderDate: string;
   deliveryDate?: string;
+  // Internal shop-floor deadline, distinct from deliveryDate (client-facing
+  // ship date) — the production board sorts and flags urgency against this.
+  productionDueDate?: string;
+  priority: SalesPriority;
   status: 'QUOTATION' | 'ORDERED' | 'IN_PRODUCTION' | 'DONE_IN_PRODUCTION' | 'DELIVERED' | 'CANCELLED';
   clientId: string;
   clientName: string; // joined, display only
@@ -196,6 +203,10 @@ export interface WorkflowTask {
   id: string;
   headerId: string; // joined via sales_detail.header_id — groups tasks by order
   salesNo: string; // joined via sales_detail.sales_header.sales_no
+  clientId: string; // joined via sales_detail.sales_header.client_id
+  clientName: string; // joined via sales_detail.sales_header.clients.company_name
+  productionDueDate?: string; // joined via sales_detail.sales_header.production_due_date
+  priority: SalesPriority; // joined via sales_detail.sales_header.priority
   productName: string; // joined via sales_detail.product_name
   quantity: number; // joined via sales_detail.quantity
   stage: 'PREPARATION' | 'ASSEMBLY' | 'QUALITY_CONTROL' | 'PACKAGING' | 'COMPLETED';
@@ -296,7 +307,6 @@ export interface Material {
   attachments?: Attachment[];
   status?: 'ACTIVE' | 'INACTIVE';
   minimumStock: number;
-  reorderQuantity: number;
   materialCategoryId?: string; // FK -> material_categories.id
   createdAt?: string;
   updatedAt?: string;

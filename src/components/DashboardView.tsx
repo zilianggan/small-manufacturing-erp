@@ -15,6 +15,7 @@ import type { TimelineEntry } from './shell';
 import { Progress, Badge } from './ui';
 import type { BadgeProps } from './ui';
 import { CardEmptyState } from './ui/Card';
+import { PRIORITY_META } from '../utils/priority';
 
 const EMPTY_DASHBOARD: DashboardData = {
   monthlyTotals: [],
@@ -61,9 +62,11 @@ export type QuickActionTarget = 'MATERIAL' | 'PRODUCT' | 'INVENTORY' | 'ORDERS' 
 
 interface DashboardViewProps {
   onNavigate?: (tab: QuickActionTarget) => void;
+  onViewSalesOrder?: (salesHeaderId: string) => void;
+  onViewPurchaseOrder?: (purchaseHeaderId: string) => void;
 }
 
-export default function DashboardView({ onNavigate }: DashboardViewProps) {
+export default function DashboardView({ onNavigate, onViewSalesOrder, onViewPurchaseOrder }: DashboardViewProps) {
   const [dashboard, setDashboard] = useState<DashboardData>(EMPTY_DASHBOARD);
   const [workflows, setWorkflows] = useState<WorkflowTask[]>([]);
   const [outstandingOrders, setOutstandingOrders] = useState(0);
@@ -284,11 +287,14 @@ export default function DashboardView({ onNavigate }: DashboardViewProps) {
                 <button
                   key={sale.id}
                   type="button"
-                  onClick={() => onNavigate?.('ORDERS')}
+                  onClick={() => (onViewSalesOrder ? onViewSalesOrder(sale.id) : onNavigate?.('ORDERS'))}
                   className="w-full flex items-center justify-between gap-3 py-2.5 text-left hover:bg-secondary/40 rounded-lg px-2 -mx-2 transition-colors"
                 >
                   <div className="min-w-0">
-                    <div className="text-sm font-medium text-card-foreground truncate">{sale.salesNo}</div>
+                    <div className="flex items-center gap-1.5">
+                      <div className="text-sm font-medium text-card-foreground truncate">{sale.salesNo}</div>
+                      <Badge variant={PRIORITY_META[sale.priority].variant} className="px-1.5 py-0 text-[10px] shrink-0">{PRIORITY_META[sale.priority].label}</Badge>
+                    </div>
                     <div className="text-xs text-muted-foreground truncate">{sale.clientName || '—'}</div>
                   </div>
                   <div className="flex flex-col items-end gap-1 shrink-0">
@@ -315,7 +321,7 @@ export default function DashboardView({ onNavigate }: DashboardViewProps) {
                 <button
                   key={purchase.id}
                   type="button"
-                  onClick={() => onNavigate?.('PURCHASES')}
+                  onClick={() => (onViewPurchaseOrder ? onViewPurchaseOrder(purchase.id) : onNavigate?.('PURCHASES'))}
                   className="w-full flex items-center justify-between gap-3 py-2.5 text-left hover:bg-secondary/40 rounded-lg px-2 -mx-2 transition-colors"
                 >
                   <div className="min-w-0">

@@ -293,7 +293,10 @@ BEGIN
                count(*) OVER() AS total_count
         FROM material m
         LEFT JOIN (
-            SELECT pd.material_id, MAX(ph.order_date) AS latest_date, MIN(ph.order_date) AS oldest_date
+            -- order_date is timestamptz now (production due-date/time change) but
+            -- latest/oldest_purchase_date is still declared `date` above — cast
+            -- down or RETURN QUERY EXECUTE throws "does not match expected type date".
+            SELECT pd.material_id, MAX(ph.order_date)::date AS latest_date, MIN(ph.order_date)::date AS oldest_date
             FROM purchase_detail pd
             JOIN purchase_header ph ON ph.id = pd.header_id
             GROUP BY pd.material_id
@@ -365,7 +368,10 @@ BEGIN
                count(*) OVER() AS total_count
         FROM product p
         LEFT JOIN (
-            SELECT sd.product_id, MAX(sh.order_date) AS latest_date, MIN(sh.order_date) AS oldest_date
+            -- order_date is timestamptz now but latest/oldest_sale_date is still
+            -- declared `date` above — cast down or RETURN QUERY EXECUTE throws
+            -- "does not match expected type date".
+            SELECT sd.product_id, MAX(sh.order_date)::date AS latest_date, MIN(sh.order_date)::date AS oldest_date
             FROM sales_detail sd
             JOIN sales_header sh ON sh.id = sd.header_id
             GROUP BY sd.product_id

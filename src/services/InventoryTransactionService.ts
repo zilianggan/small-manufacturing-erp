@@ -32,7 +32,7 @@ const mapTransactionRow = (row: any): InventoryTransaction => {
     status: purchaseHeader?.status || salesHeader?.status,
     purchaseHeaderId: purchaseHeader?.id,
     salesHeaderId: salesHeader?.id,
-    transactionDate: row.transaction_date?.slice(0, 10),
+    transactionDate: row.transaction_date,
     createdAt: row.created_at,
   };
 };
@@ -75,7 +75,9 @@ export const getInventoryTransactions = async (params: {
     query = query.in('transaction_type', typeFilters);
   }
   if (dateFrom) query = query.gte('transaction_date', dateFrom);
-  if (dateTo) query = query.lte('transaction_date', dateTo);
+  // transaction_date is timestamptz — bump a date-only "to" bound to
+  // end-of-day so same-day afternoon rows aren't excluded.
+  if (dateTo) query = query.lte('transaction_date', dateTo.length <= 10 ? `${dateTo}T23:59:59.999` : dateTo);
 
   const q = search.trim();
   if (q) {
@@ -138,7 +140,7 @@ const mapMovementRow = (row: any): InventoryListItem => {
     transactionType: row.transaction_type,
     refNo: purchaseHeader?.purchase_no || salesHeader?.sales_no,
     counterpartyName: purchaseHeader?.vendors?.company_name || salesHeader?.clients?.company_name,
-    orderDate: row.transaction_date?.slice(0, 10),
+    orderDate: row.transaction_date,
     quantity,
     unitCost,
     totalPrice: unitCost != null ? Math.abs(quantity) * unitCost : undefined,

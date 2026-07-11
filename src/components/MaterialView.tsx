@@ -238,7 +238,6 @@ export default function MaterialView({ onViewPurchaseOrder, onViewSalesOrder, in
   const [materialCategoryId, setMaterialCategoryId] = useState('');
   const [status, setStatus] = useState<'ACTIVE' | 'INACTIVE'>('ACTIVE');
   const [minimumStock, setMinimumStock] = useState(0);
-  const [reorderQuantity, setReorderQuantity] = useState(0);
   const [description, setDescription] = useState('');
   const [attachment, setAttachment] = useState<Attachment | undefined>(undefined);
   const [editQuantity, setEditQuantity] = useState(0);
@@ -253,7 +252,6 @@ export default function MaterialView({ onViewPurchaseOrder, onViewSalesOrder, in
     setMaterialCategoryId('');
     setStatus('ACTIVE');
     setMinimumStock(0);
-    setReorderQuantity(0);
     setDescription('');
     setAttachment(undefined);
     setEditQuantity(0);
@@ -273,7 +271,6 @@ export default function MaterialView({ onViewPurchaseOrder, onViewSalesOrder, in
     setMaterialCategoryId(item.materialCategoryId || '');
     setStatus(duplicate ? 'ACTIVE' : (item.status || 'ACTIVE'));
     setMinimumStock(item.minimumStock);
-    setReorderQuantity(item.reorderQuantity);
     setDescription(item.description || '');
     setAttachment(duplicate ? undefined : item.attachments?.[0]);
     setEditQuantity(duplicate ? 0 : item.quantity);
@@ -299,7 +296,6 @@ export default function MaterialView({ onViewPurchaseOrder, onViewSalesOrder, in
       attachments: attachment ? [attachment] : [],
       status,
       minimumStock,
-      reorderQuantity,
       materialCategoryId: materialCategoryId || undefined,
     };
 
@@ -462,7 +458,6 @@ export default function MaterialView({ onViewPurchaseOrder, onViewSalesOrder, in
               materialCategories={materialCategories}
               status={status} setStatus={setStatus}
               minimumStock={minimumStock} setMinimumStock={setMinimumStock}
-              reorderQuantity={reorderQuantity} setReorderQuantity={setReorderQuantity}
               description={description} setDescription={setDescription}
               attachment={attachment} setAttachment={setAttachment}
             />
@@ -486,7 +481,6 @@ export default function MaterialView({ onViewPurchaseOrder, onViewSalesOrder, in
               materialCategories={materialCategories}
               status={status} setStatus={setStatus}
               minimumStock={minimumStock} setMinimumStock={setMinimumStock}
-              reorderQuantity={reorderQuantity} setReorderQuantity={setReorderQuantity}
               description={description} setDescription={setDescription}
               attachment={attachment} setAttachment={setAttachment}
             />
@@ -504,7 +498,6 @@ export default function MaterialView({ onViewPurchaseOrder, onViewSalesOrder, in
               materialCategories={materialCategories}
               status={status} setStatus={setStatus}
               minimumStock={minimumStock} setMinimumStock={setMinimumStock}
-              reorderQuantity={reorderQuantity} setReorderQuantity={setReorderQuantity}
               description={description} setDescription={setDescription}
               attachment={attachment} setAttachment={setAttachment}
             />
@@ -631,7 +624,6 @@ export default function MaterialView({ onViewPurchaseOrder, onViewSalesOrder, in
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                   <MetricCard label="Stock" value={selectedMaterial.quantity} />
                   <MetricCard label="Minimum Stock" value={selectedMaterial.minimumStock} />
-                  <MetricCard label="Reorder Qty" value={selectedMaterial.reorderQuantity} />
                   <MetricCard label="Dimension" value={selectedMaterial.dimension || '—'} />
                   <MetricCard label="Description" value={selectedMaterial.description || '—'} />
                 </div>

@@ -89,7 +89,10 @@ export function DataTable<T>({
           </TableRow>
         </TableHeader>
         <TableBody>
-          {loading && rows.length === 0 &&
+          {loading ? (
+            // Sort/filter/search-triggered reloads land here too (not just the
+            // initial empty load) — the previous rows are always replaced by
+            // skeleton rows while a fetch is in flight, never left stale.
             Array.from({ length: 6 }).map((_, i) => (
               <TableRow key={`skeleton-${i}`}>
                 {(selectable ? [null, ...columns] : columns).map((col, j) => (
@@ -97,44 +100,45 @@ export function DataTable<T>({
                 ))}
                 {rowActions && <TableCell />}
               </TableRow>
-            ))}
-          {!loading && rows.length === 0 && (
+            ))
+          ) : rows.length === 0 ? (
             <tr>
               <td colSpan={columns.length + (selectable ? 1 : 0) + (rowActions ? 1 : 0)}>
                 <CardEmptyState>{emptyState ?? 'No records found.'}</CardEmptyState>
               </td>
             </tr>
+          ) : (
+            rows.map((row) => {
+              const key = rowKey(row);
+              const selected = selectedKeys?.has(key);
+              const active = activeKey !== undefined && key === activeKey;
+              return (
+                <TableRow
+                  key={key}
+                  data-fade-item
+                  data-state={selected ? 'selected' : undefined}
+                  onClick={() => onRowClick?.(row)}
+                  className={cn('group', onRowClick && 'cursor-pointer', active && 'bg-primary/10 hover:bg-primary/10 border-l-2 border-l-primary')}
+                >
+                  {selectable && (
+                    <TableCell onClick={(e) => e.stopPropagation()}>
+                      <input type="checkbox" checked={!!selected} onChange={() => onToggleSelect?.(key)} className="accent-primary rounded" />
+                    </TableCell>
+                  )}
+                  {columns.map((col) => (
+                    <TableCell key={col.key} className={cn(ALIGN_CLASS[col.align ?? 'left'], col.className)}>
+                      {col.render(row)}
+                    </TableCell>
+                  ))}
+                  {rowActions && (
+                    <TableCell onClick={(e) => e.stopPropagation()} className="opacity-0 group-hover:opacity-100 transition-opacity">
+                      {rowActions(row)}
+                    </TableCell>
+                  )}
+                </TableRow>
+              );
+            })
           )}
-          {rows.map((row) => {
-            const key = rowKey(row);
-            const selected = selectedKeys?.has(key);
-            const active = activeKey !== undefined && key === activeKey;
-            return (
-              <TableRow
-                key={key}
-                data-fade-item
-                data-state={selected ? 'selected' : undefined}
-                onClick={() => onRowClick?.(row)}
-                className={cn('group', onRowClick && 'cursor-pointer', active && 'bg-primary/10 hover:bg-primary/10 border-l-2 border-l-primary')}
-              >
-                {selectable && (
-                  <TableCell onClick={(e) => e.stopPropagation()}>
-                    <input type="checkbox" checked={!!selected} onChange={() => onToggleSelect?.(key)} className="accent-primary rounded" />
-                  </TableCell>
-                )}
-                {columns.map((col) => (
-                  <TableCell key={col.key} className={cn(ALIGN_CLASS[col.align ?? 'left'], col.className)}>
-                    {col.render(row)}
-                  </TableCell>
-                ))}
-                {rowActions && (
-                  <TableCell onClick={(e) => e.stopPropagation()} className="opacity-0 group-hover:opacity-100 transition-opacity">
-                    {rowActions(row)}
-                  </TableCell>
-                )}
-              </TableRow>
-            );
-          })}
         </TableBody>
       </Table>
       {footer}

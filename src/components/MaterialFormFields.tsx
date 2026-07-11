@@ -24,7 +24,6 @@ interface MaterialFormFieldsProps {
   materialCategories: MaterialCategory[];
   status: 'ACTIVE' | 'INACTIVE'; setStatus: (v: 'ACTIVE' | 'INACTIVE') => void;
   minimumStock: number; setMinimumStock: (v: number) => void;
-  reorderQuantity: number; setReorderQuantity: (v: number) => void;
   description: string; setDescription: (v: string) => void;
   attachment: Attachment | undefined; setAttachment: (a?: Attachment) => void;
   /** Which field group to render — lets the Material slide-over split these across tabs (General/Inventory/Attachment). Omit to render everything at once (legacy single-page form). */
@@ -41,7 +40,6 @@ export default function MaterialFormFields({
   materialCategories,
   status, setStatus,
   minimumStock, setMinimumStock,
-  reorderQuantity, setReorderQuantity,
   description, setDescription,
   attachment, setAttachment,
   section,
@@ -111,13 +109,6 @@ export default function MaterialFormFields({
             <input
               type="number" min={0} step="any" value={minimumStock}
               onChange={(e) => setMinimumStock(Number(e.target.value))}
-              className={fieldInputClassName}
-            />
-          </FormField>
-          <FormField label="Reorder Quantity">
-            <input
-              type="number" min={0} step="any" value={reorderQuantity}
-              onChange={(e) => setReorderQuantity(Number(e.target.value))}
               className={fieldInputClassName}
             />
           </FormField>

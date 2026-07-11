@@ -326,13 +326,13 @@ function CompanyCard({
           {company.email && (
             <div className="flex items-center space-x-2" >
               <Mail className="w-3.5 h-3.5 shrink-0 text-slate-400" />
-              <span className="truncate link" onClick={(e) => { e.stopPropagation(); window.open(`https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(company.email)}`, "_blank") }}>{company.email}</span>
+              <span className="truncate font-mono text-primary hover:underline cursor-pointer" onClick={(e) => { e.stopPropagation(); window.open(`https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(company.email)}`, "_blank") }}>{company.email}</span>
             </div>
           )}
           {company.officeNo && (
             <div className="flex items-center space-x-2">
               <Phone className="w-3.5 h-3.5 shrink-0 text-slate-400" />
-              <span className='link' onClick={(e) => { e.stopPropagation(); window.open(`https://wa.me/${company.officeNo}`, "_blank") }}>{company.officeNo}</span>
+              <span className="font-mono text-primary hover:underline cursor-pointer" onClick={(e) => { e.stopPropagation(); window.open(`https://wa.me/${company.officeNo}`, "_blank") }}>{company.officeNo}</span>
             </div>
           )}
           {company.address && (

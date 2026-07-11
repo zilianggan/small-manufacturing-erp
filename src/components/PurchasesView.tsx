@@ -7,19 +7,22 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   getPurchases, createPurchaseQuotation, updatePurchase, convertToPurchaseOrder,
   receivePurchaseOrder, cancelPurchaseOrder, deletePurchase, getMaterialCategories,
-  getPurchaseById,
+  getPurchaseById, getLatestUnitCost,
   PurchaseDetailInput, PurchaseFilters, PurchaseSortField, SortDir,
 } from '../services/PurchasesService';
-import { getMaterials } from '../services/MaterialService';
+import { getMaterials, getMaterialsPage } from '../services/MaterialService';
 import { getVendors } from '../services/ContactsService';
 import { getSalesOrdersForLinking, SalesOrderLinkOption, getSalesOrderMaterialRequirements, SalesOrderMaterialRequirement } from '../services/OrdersService';
 import { PurchaseHeader, Vendor, Material, Attachment, MaterialCategory } from '../types';
-import { Plus, Calendar, Check, Paperclip, Trash2, Edit, FileText, ArrowRightCircle, Eye } from 'lucide-react';
+import { Plus, Calendar, Check, Paperclip, Trash2, Edit, FileText, ArrowRightCircle, Eye, RotateCcw } from 'lucide-react';
 import AttachmentSection from './AttachmentSection';
 import QuotationModal from './QuotationModal';
 import PurchaseOrderDetailView from './PurchaseOrderDetailView';
 import ComboBox from './ComboBox';
 import FilterDialog from './FilterDialog';
+import { formatDateTime, toDateTimeLocal, fromDateTimeLocal, monthStart, monthEnd } from '../utils/date';
+import { QUICK_RANGES } from '../utils/dateRanges';
+import QuickRangePills from './QuickRangePills';
 import { PageHeader, SectionCard, FilterBar, DataTable } from './shell';
 import type { DataTableColumn, FilterChip } from './shell';
 import {
@@ -40,7 +43,11 @@ type FormMode = 'CREATE' | 'EDIT' | 'CONVERT';
 // over whatever's currently loaded instead, same trick InventoryView uses
 // for its joined/derived columns.
 type DisplaySortField = PurchaseSortField | 'items';
-const SERVER_SORT_FIELDS: readonly string[] = ['reference', 'supplier', 'date', 'totalCost'];
+// 'supplier'/'salesNo' are joined columns (vendors.company_name,
+// sales_header.sales_no) — PostgREST's order(col, {foreignTable}) doesn't
+// reliably sort by a nullable/embedded relation, so they're sorted
+// client-side below, same trick as 'items'.
+const SERVER_SORT_FIELDS: readonly string[] = ['reference', 'date', 'totalCost'];
 
 const STATUS_META: Record<PurchaseHeader['status'], { label: string; variant: 'default' | 'warning' | 'success' | 'destructive' }> = {
   QUOTATION: { label: 'Quotation', variant: 'default' },
@@ -63,6 +70,10 @@ interface PurchasesViewProps {
   // back to the originating Material detail page (or Inventory tab) rather
   // than this list.
   onReturnToOrigin?: () => void;
+  // Detail page's "View Sales Order" link (shown when this purchase was
+  // created against a linked sales order) — carries this purchase's own id
+  // so the Sales detail page's Back button can return to it specifically.
+  onViewSalesOrder?: (salesHeaderId: string, purchaseHeaderId: string) => void;
 }
 
 /**
@@ -73,7 +84,7 @@ interface PurchasesViewProps {
  * (Material/Inventory link straight into it), so a full page keeps the Back
  * button and origin-return behavior simple.
  */
-export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHandled, initialPurchaseOrigin, onReturnToOrigin }: PurchasesViewProps = {}) {
+export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHandled, initialPurchaseOrigin, onReturnToOrigin, onViewSalesOrder }: PurchasesViewProps = {}) {
   const toast = useToast();
   const confirm = useConfirm();
   const contentRef = useFadeInOnMount<HTMLDivElement>([]);
@@ -105,11 +116,11 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
   };
 
   const handlePurchaseDetailBack = () => {
-    if (detailOpenedExternally && onReturnToOrigin) {
-      onReturnToOrigin();
-    } else {
-      setSelectedPurchase(null);
-    }
+    // Always close the detail locally first — a Dashboard-opened drill-in
+    // (no material/inventory origin) has nothing for onReturnToOrigin to do,
+    // so without this the Back button silently no-op'd and the detail stuck.
+    setSelectedPurchase(null);
+    if (detailOpenedExternally) onReturnToOrigin?.();
   };
 
   // Cross-tab drill-in: fetch and open the purchase directly by id
@@ -149,14 +160,42 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
   );
 
   // ─── Filter dialog: vendor + material record pickers, date range ────────
-  const [appliedFilters, setAppliedFilters] = useState<PurchaseFilters>({});
+  // Defaults to the current month (like Inventory) — avoids pulling every
+  // order ever placed on first load.
+  const [appliedFilters, setAppliedFilters] = useState<PurchaseFilters>({ dateFrom: monthStart(0), dateTo: monthEnd(0) });
   const [showFilterDialog, setShowFilterDialog] = useState(false);
   const [filterDraftVendorIds, setFilterDraftVendorIds] = useState<string[]>([]);
   const [filterDraftMaterialIds, setFilterDraftMaterialIds] = useState<string[]>([]);
-  const [filterDraftDateFrom, setFilterDraftDateFrom] = useState('');
-  const [filterDraftDateTo, setFilterDraftDateTo] = useState('');
+  const [filterDraftDateFrom, setFilterDraftDateFrom] = useState(monthStart(0));
+  const [filterDraftDateTo, setFilterDraftDateTo] = useState(monthEnd(0));
   const [filterVendorSearch, setFilterVendorSearch] = useState('');
   const [filterMaterialSearch, setFilterMaterialSearch] = useState('');
+  const [filterVendorVisibleCount, setFilterVendorVisibleCount] = useState(20);
+  const [filterMaterialOptions, setFilterMaterialOptions] = useState<Material[]>([]);
+  const [filterMaterialOptionsLoading, setFilterMaterialOptionsLoading] = useState(false);
+  const [filterMaterialOffset, setFilterMaterialOffset] = useState(0);
+  const [filterMaterialHasMore, setFilterMaterialHasMore] = useState(false);
+  const [activeQuickRange, setActiveQuickRange] = useState<string | null>('thisMonth');
+
+  // Toggling the active pill off clears to all-time (matches Inventory);
+  // the Reset button below falls back to the current month instead.
+  const applyQuickRange = (key: string) => {
+    if (activeQuickRange === key) {
+      setActiveQuickRange(null);
+      setAppliedFilters(f => ({ ...f, dateFrom: undefined, dateTo: undefined }));
+      return;
+    }
+    const range = QUICK_RANGES.find(r => r.key === key);
+    if (!range) return;
+    setActiveQuickRange(key);
+    setAppliedFilters(f => ({ ...f, dateFrom: range.from(), dateTo: range.to() }));
+  };
+
+  const resetFilters = () => {
+    setAppliedFilters({ dateFrom: monthStart(0), dateTo: monthEnd(0) });
+    setActiveQuickRange('thisMonth');
+    setSearchQuery(prev => ({ ...prev, [activeTab]: '' }));
+  };
 
   // ─── Sort ─────────────────────────────────────────────────────────────
   const [sortField, setSortField] = useState<DisplaySortField>('date');
@@ -197,6 +236,26 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
     [activeTab, appliedFilters, sortField, sortDir]
   );
 
+  const loadFilterMaterialOptions = useMemo(() => debounce((q: string) => {
+    setFilterMaterialOptionsLoading(true);
+    CallAPI(() => getMaterialsPage({ search: q, offset: 0, limit: 20 }), {
+      onCompleted: ({ rows, hasMore }) => {
+        setFilterMaterialOptions(rows); setFilterMaterialHasMore(hasMore); setFilterMaterialOffset(rows.length); setFilterMaterialOptionsLoading(false);
+      },
+      onError: () => setFilterMaterialOptionsLoading(false),
+    });
+  }, 300), []);
+  const loadMoreFilterMaterialOptions = () => {
+    if (filterMaterialOptionsLoading || !filterMaterialHasMore) return;
+    setFilterMaterialOptionsLoading(true);
+    CallAPI(() => getMaterialsPage({ search: filterMaterialSearch, offset: filterMaterialOffset, limit: 20 }), {
+      onCompleted: ({ rows, hasMore }) => {
+        setFilterMaterialOptions(prev => [...prev, ...rows]); setFilterMaterialHasMore(hasMore); setFilterMaterialOffset(o => o + rows.length); setFilterMaterialOptionsLoading(false);
+      },
+      onError: () => setFilterMaterialOptionsLoading(false),
+    });
+  };
+
   const openFilterDialog = () => {
     setFilterDraftVendorIds(appliedFilters.vendorIds || []);
     setFilterDraftMaterialIds(appliedFilters.materialIds || []);
@@ -204,7 +263,10 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
     setFilterDraftDateTo(appliedFilters.dateTo || '');
     setFilterVendorSearch('');
     setFilterMaterialSearch('');
+    setFilterVendorVisibleCount(20);
+    setFilterMaterialOptions([]); setFilterMaterialOffset(0); setFilterMaterialHasMore(false);
     setShowFilterDialog(true);
+    loadFilterMaterialOptions('');
   };
 
   const toggleFilterDraftVendor = (id: string) => {
@@ -214,24 +276,24 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
     setFilterDraftMaterialIds(prev => (prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]));
   };
 
-  const filterVendorItems = useMemo(() => {
+  const filterVendorMatches = useMemo(() => {
     const q = filterVendorSearch.trim().toLowerCase();
-    return vendors
-      .filter(v => !q || v.companyName.toLowerCase().includes(q))
-      .map(v => ({ id: v.id, label: v.companyName }));
+    return vendors.filter(v => !q || v.companyName.toLowerCase().includes(q));
   }, [vendors, filterVendorSearch]);
+  const filterVendorItems = useMemo(
+    () => filterVendorMatches.slice(0, filterVendorVisibleCount).map(v => ({ id: v.id, label: v.companyName })),
+    [filterVendorMatches, filterVendorVisibleCount]
+  );
 
-  const filterMaterialItems = useMemo(() => {
-    const q = filterMaterialSearch.trim().toLowerCase();
-    return materials
-      .filter(m => !q || m.name.toLowerCase().includes(q) || (m.code || '').toLowerCase().includes(q))
-      .map(m => ({ id: m.id, label: m.name, sublabel: m.code }));
-  }, [materials, filterMaterialSearch]);
+  const filterMaterialItems = useMemo(
+    () => filterMaterialOptions.map(m => ({ id: m.id, label: m.name, sublabel: m.code })),
+    [filterMaterialOptions]
+  );
 
   const filterChips: FilterChip[] = [
     ...(appliedFilters.vendorIds?.length ? [{ key: 'vendors', label: `${appliedFilters.vendorIds.length} supplier${appliedFilters.vendorIds.length === 1 ? '' : 's'}`, onRemove: () => setAppliedFilters(f => ({ ...f, vendorIds: [] })) }] : []),
     ...(appliedFilters.materialIds?.length ? [{ key: 'materials', label: `${appliedFilters.materialIds.length} material${appliedFilters.materialIds.length === 1 ? '' : 's'}`, onRemove: () => setAppliedFilters(f => ({ ...f, materialIds: [] })) }] : []),
-    ...(appliedFilters.dateFrom || appliedFilters.dateTo ? [{ key: 'date', label: `${appliedFilters.dateFrom || '…'} → ${appliedFilters.dateTo || '…'}`, onRemove: () => setAppliedFilters(f => ({ ...f, dateFrom: undefined, dateTo: undefined })) }] : []),
+    ...(appliedFilters.dateFrom || appliedFilters.dateTo ? [{ key: 'date', label: `${appliedFilters.dateFrom || '…'} → ${appliedFilters.dateTo || '…'}`, onRemove: () => { setActiveQuickRange('thisMonth'); setAppliedFilters(f => ({ ...f, dateFrom: monthStart(0), dateTo: monthEnd(0) })); } }] : []),
   ];
   const activeFilterCount = (appliedFilters.vendorIds?.length || 0) + (appliedFilters.materialIds?.length || 0) + (appliedFilters.dateFrom || appliedFilters.dateTo ? 1 : 0);
 
@@ -241,13 +303,18 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
     else { setSortField(field); setSortDir('asc'); }
   };
 
-  // Client-side re-sort for the 'items' column — applied over whatever's
-  // currently loaded (server-sorted columns skip this and pass through).
+  // Client-side re-sort for 'items'/'supplier'/'salesNo' — applied over
+  // whatever's currently loaded (server-sorted columns skip this and pass
+  // through).
   const displayedPurchases = useMemo(() => {
     if (isServerSort) return purchases;
-    const firstItemLabel = (p: PurchaseHeader) => p.details[0]?.materialName || '';
+    const getValue = (p: PurchaseHeader): string => {
+      if (sortField === 'supplier') return p.vendorName || '';
+      if (sortField === 'salesNo') return p.salesNo || '';
+      return p.details[0]?.materialName || '';
+    };
     return [...purchases].sort((a, b) => {
-      const cmp = firstItemLabel(a).localeCompare(firstItemLabel(b));
+      const cmp = getValue(a).localeCompare(getValue(b));
       return sortDir === 'asc' ? cmp : -cmp;
     });
   }, [purchases, sortField, sortDir, isServerSort]);
@@ -294,7 +361,9 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
     setTempUnitCost(0);
   };
 
-  const todayStr = () => new Date().toISOString().split('T')[0];
+  // Purchase order date is a datetime now: form holds a "yyyy-MM-ddThh:mm"
+  // local value; convertToPurchaseOrder gets it back as an ISO string.
+  const nowLocal = () => toDateTimeLocal(new Date().toISOString());
 
   const openCreateForm = () => {
     resetForm();
@@ -331,13 +400,17 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
     setFormSalesHeaderId(purchase.salesHeaderId || '');
     setFormAttachment(purchase.attachments?.[0]);
     setFormDetails(detailsFromHeader(purchase));
-    setFormOrderDate(todayStr());
+    setFormOrderDate(nowLocal());
     setShowFormSheet(true);
   };
 
-  // Material catalog rows carry no per-vendor unit cost, so selecting a
-  // material doesn't prefill a price — the buyer types the quoted cost.
-  const handleMaterialSelect = (materialId: string) => setTempMaterialId(materialId);
+  // Material catalog rows carry no per-vendor unit cost, so prefill from
+  // whatever was last paid for this material instead (0 if never purchased)
+  // — the buyer can still override the quoted cost.
+  const handleMaterialSelect = (materialId: string) => {
+    setTempMaterialId(materialId);
+    getLatestUnitCost(materialId).then((cost) => setTempUnitCost(cost ?? 0)).catch(console.error);
+  };
 
   const handleAddTempItem = () => {
     if (!tempMaterialId || tempQuantity <= 0) return;
@@ -426,7 +499,7 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
         onError: (err) => { console.error(err); toast.error('Failed to update purchase.'); },
       });
     } else if (formMode === 'CONVERT' && editHeaderId) {
-      await CallAPI(() => convertToPurchaseOrder(editHeaderId, input, formOrderDate || todayStr()), {
+      await CallAPI(() => convertToPurchaseOrder(editHeaderId, input, fromDateTimeLocal(formOrderDate || nowLocal())), {
         onCompleted: () => { loadPurchases(activeTab); setSelectedPurchase(null); toast.success('Purchase order confirmed.'); },
         onError: (err) => { console.error(err); toast.error('Failed to confirm purchase order.'); },
       });
@@ -502,6 +575,14 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
     { key: 'reference', header: 'Reference', sortable: true, className: 'w-32', render: (p) => <span className="font-mono font-medium text-foreground">{p.purchaseNo}</span> },
     { key: 'supplier', header: 'Supplier', sortable: true, className: 'w-40', render: (p) => <span className="font-medium text-card-foreground truncate">{p.vendorName}</span> },
     {
+      key: 'salesNo', header: 'Sales Ref No', sortable: true, className: 'w-32',
+      render: (p) => p.salesNo && p.salesHeaderId ? (
+        <button type="button" onClick={(e) => { e.stopPropagation(); onViewSalesOrder?.(p.salesHeaderId!, p.id); }} className="font-mono text-primary hover:underline">
+          {p.salesNo}
+        </button>
+      ) : <span className="text-muted-foreground">—</span>,
+    },
+    {
       key: 'items', header: 'Material Details', sortable: true,
       render: (p) => (
         <div className="min-w-0 max-w-xs space-y-1.5">
@@ -533,7 +614,7 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
       render: (p) => (
         <div className="inline-flex items-center gap-1.5 text-muted-foreground font-mono text-[11px]">
           <Calendar className="w-3.5 h-3.5" />
-          <span>{activeTab === 'QUOTATION' ? p.quotationDate : p.orderDate}</span>
+          <span>{formatDateTime(activeTab === 'QUOTATION' ? p.quotationDate : p.orderDate)}</span>
         </div>
       )
     },
@@ -550,7 +631,7 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
         <PurchaseOrderDetailView
           purchase={selectedPurchase}
           onBack={handlePurchaseDetailBack}
-          backLabel={detailOpenedExternally ? (initialPurchaseOrigin === 'INVENTORY' ? 'Back to Inventory' : 'Back to Material') : 'Back to Purchases'}
+          backLabel={initialPurchaseOrigin === 'INVENTORY' ? 'Back to Inventory' : initialPurchaseOrigin === 'MATERIAL' ? 'Back to Material' : 'Back to Purchases'}
           receivingId={receivingId}
           onEdit={openEditForm}
           onConvert={openConvertForm}
@@ -558,265 +639,277 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
           onReceive={handleReceive}
           onCancel={handleCancel}
           onOpenQuotationDoc={openQuotationDoc}
+          onViewSalesOrder={onViewSalesOrder ? (salesHeaderId) => onViewSalesOrder(salesHeaderId, selectedPurchase.id) : undefined}
         />
       ) : (
-      <>
-      <PageHeader
-        title="Purchases"
-        description="Manage supplier quotations and purchase orders."
-        actions={activeTab === 'QUOTATION' && <Button onClick={openCreateForm}><Plus className="w-4 h-4" /> New Quotation</Button>}
-      />
-
-      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as PurchaseTab)}>
-        <TabsList>
-          <TabsTrigger value="QUOTATION">Quotation</TabsTrigger>
-          <TabsTrigger value="PO">Purchase Order</TabsTrigger>
-        </TabsList>
-      </Tabs>
-
-      <SectionCard title="Filters" className="shrink-0" contentClassName="p-4">
-        <FilterBar
-          search={searchQuery[activeTab]}
-          onSearchChange={(v) => { setSearchQuery(prev => ({ ...prev, [activeTab]: v })); search(v); }}
-          searchPlaceholder="Search by supplier or reference no..."
-          chips={filterChips}
-          onOpenFilters={openFilterDialog}
-          filterCount={activeFilterCount}
-        />
-      </SectionCard>
-
-      <SectionCard title={activeTab === 'QUOTATION' ? 'Quotations' : 'Purchase Orders'} description={`${purchases.length} record${purchases.length === 1 ? '' : 's'}`} className="flex-1 min-h-0" contentClassName="p-0 flex-1 min-h-0 flex flex-col">
-        <div className="flex-1 min-h-0 overflow-auto">
-          <DataTable
-            columns={columns}
-            rows={displayedPurchases}
-            rowKey={(p) => p.id}
-            sortField={sortField}
-            sortDir={sortDir}
-            onSort={toggleSort}
-            onRowClick={openPurchaseDetail}
-            rowActions={(p) => <ActionsMenu items={buildRowActions(p)} />}
-            loading={loading}
-            emptyState={`No ${activeTab === 'QUOTATION' ? 'quotations' : 'purchase orders'} logged yet.`}
+        <>
+          <PageHeader
+            title="Purchases"
+            description="Manage supplier quotations and purchase orders."
+            actions={activeTab === 'QUOTATION' && <Button onClick={openCreateForm}><Plus className="w-4 h-4" /> New Quotation</Button>}
           />
-        </div>
-      </SectionCard>
 
-      {/* Advanced filter dialog */}
-      <FilterDialog
-        open={showFilterDialog}
-        onClose={() => setShowFilterDialog(false)}
-        title="Filter Purchases"
-        sections={[
-          {
-            type: 'checklist',
-            key: 'vendors',
-            label: 'Supplier',
-            searchPlaceholder: 'Search suppliers...',
-            searchQuery: filterVendorSearch,
-            onSearchChange: setFilterVendorSearch,
-            items: filterVendorItems,
-            selectedIds: filterDraftVendorIds,
-            onToggle: toggleFilterDraftVendor,
-          },
-          {
-            type: 'checklist',
-            key: 'materials',
-            label: 'Material',
-            searchPlaceholder: 'Search materials...',
-            searchQuery: filterMaterialSearch,
-            onSearchChange: setFilterMaterialSearch,
-            items: filterMaterialItems,
-            selectedIds: filterDraftMaterialIds,
-            onToggle: toggleFilterDraftMaterial,
-          },
-          {
-            type: 'dateRange',
-            key: 'dateRange',
-            label: activeTab === 'QUOTATION' ? 'Quotation Date Range' : 'Order Date Range',
-            from: filterDraftDateFrom,
-            to: filterDraftDateTo,
-            onFromChange: setFilterDraftDateFrom,
-            onToChange: setFilterDraftDateTo,
-          },
-        ]}
-        onApply={() => setAppliedFilters({
-          vendorIds: filterDraftVendorIds,
-          materialIds: filterDraftMaterialIds,
-          dateFrom: filterDraftDateFrom || undefined,
-          dateTo: filterDraftDateTo || undefined,
-        })}
-        onClear={() => {
-          setFilterDraftVendorIds([]); setFilterDraftMaterialIds([]);
-          setFilterDraftDateFrom(''); setFilterDraftDateTo('');
-          setAppliedFilters({});
-        }}
-      />
+          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as PurchaseTab)}>
+            <TabsList>
+              <TabsTrigger value="QUOTATION">Quotation</TabsTrigger>
+              <TabsTrigger value="PO">Purchase Order</TabsTrigger>
+            </TabsList>
+          </Tabs>
 
-      {/* Create/Edit/Convert drawer */}
-      <Sheet
-        open={showFormSheet}
-        onClose={() => { clearTempMaterials(); setShowFormSheet(false); }}
-        title={sheetTitle}
-        width="w-full sm:max-w-2xl"
-        footer={
-          <div className="flex items-center justify-end gap-2">
-            <Button variant="outline" onClick={() => { clearTempMaterials(); setShowFormSheet(false); }}>Cancel</Button>
-            <Button onClick={handleSubmit} disabled={submitting || !formVendorId}>{submitting ? 'Saving...' : submitLabel}</Button>
-          </div>
-        }
-      >
-        <div className="p-5 space-y-5">
-          <div data-fade-item className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <FormField label="Select Vendor *" colSpan="sm:col-span-2">
-              <ComboBox
-                required
-                value={formVendorId}
-                onChange={setFormVendorId}
-                noneLabel="-- Select Vendor --"
-                options={vendors.map(v => ({ value: v.id, label: v.companyName, sublabel: v.officeNo || v.email }))}
-              />
-            </FormField>
-
-            <FormField label="Linked Sales Order (Optional)" colSpan="sm:col-span-2">
-              <ComboBox
-                value={formSalesHeaderId}
-                onChange={setFormSalesHeaderId}
-                noneLabel="-- No Linked Sales Order --"
-                options={salesLinkOptions.map(s => ({ value: s.id, label: s.salesNo, sublabel: s.clientName }))}
-              />
-            </FormField>
-
-            {formMode === 'CONVERT' && (
-              <FormField label="Order Date *" colSpan="sm:col-span-2">
-                <input type="date" required value={formOrderDate} onChange={(e) => setFormOrderDate(e.target.value)} className={fieldInputClassName} />
-              </FormField>
-            )}
-          </div>
-
-          {formSalesHeaderId && requiredMaterials.length > 0 && (
-            <div data-fade-item className="border border-primary/20 rounded-xl p-3 bg-primary/5 space-y-1.5">
-              <span className="font-semibold block text-[11px] text-primary">Required Materials for Linked Sales Order</span>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-0.5">
-                {requiredMaterials.map(r => (
-                  <div key={r.materialId} className="flex justify-between text-[11px] text-foreground font-mono bg-card/60 rounded px-2 py-1">
-                    <span>{r.materialName}</span>
-                    <span>{r.requiredQuantity}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          <div data-fade-item className="border border-border rounded-xl p-3 bg-secondary/30 space-y-2">
-            <span className="font-semibold block text-foreground text-xs">Materials to Procure ({formDetails.length})</span>
-            {formDetails.length === 0 ? (
-              <div className="text-center py-4 text-muted-foreground border border-dashed border-border rounded-lg bg-card text-[11px]">
-                No materials added yet. Specify material details below to add items.
-              </div>
-            ) : (
-              <div className="border border-border rounded-lg bg-card overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Material</TableHead>
-                      <TableHead className="text-right">Quantity</TableHead>
-                      <TableHead className="text-right">Unit Cost</TableHead>
-                      <TableHead className="text-right">Total (RM)</TableHead>
-                      <TableHead className="w-10" />
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {formDetails.map((item, idx) => (
-                      <TableRow key={idx}>
-                        <TableCell className="font-medium text-card-foreground">{item.materialName}</TableCell>
-                        <TableCell className="text-right">
-                          <input
-                            type="number" min="1" value={item.quantity}
-                            onChange={(e) => handleUpdateFormItemQuantity(idx, Number(e.target.value))}
-                            className="w-20 px-1.5 py-1 bg-background border border-input rounded text-right font-mono text-xs focus:outline-none focus:ring-2 focus:ring-ring/40 focus:border-ring"
-                          />
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <input
-                            type="number" min="0" step="0.01" value={item.unitCost}
-                            onChange={(e) => handleUpdateFormItemUnitCost(idx, Number(e.target.value))}
-                            className="w-24 px-1.5 py-1 bg-background border border-input rounded text-right font-mono text-xs focus:outline-none focus:ring-2 focus:ring-ring/40 focus:border-ring"
-                          />
-                        </TableCell>
-                        <TableCell className="text-right font-mono font-medium text-foreground">RM {item.totalPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
-                        <TableCell>
-                          <button type="button" onClick={() => handleRemoveFormItem(idx)} className="text-destructive hover:text-destructive/80 p-1" title="Remove item">
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            )}
-          </div>
-
-          <div data-fade-item className="border border-border rounded-xl p-4 bg-secondary/30 grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
-            <FormField label="Material Selection" labelClassName="font-semibold block text-muted-foreground text-[10px] uppercase tracking-wider" colSpan="sm:col-span-6">
-              <ComboBox
-                value={tempMaterialId}
-                onChange={handleMaterialSelect}
-                noneLabel="-- Choose Material --"
-                options={rawMaterials.map(m => {
-                  const category = materialCategoryMap.get(m.materialCategoryId || '');
-                  return { value: m.id, label: m.name, sublabel: category ? category.name : `Stock: ${m.quantity}` };
-                })}
-              />
-            </FormField>
-
-            <FormField label="Quantity" labelClassName="font-semibold block text-muted-foreground text-[10px] uppercase tracking-wider" colSpan="sm:col-span-2">
-              <input
-                type="number" min="1" value={tempQuantity}
-                onChange={(e) => setTempQuantity(Number(e.target.value))}
-                disabled={!formVendorId}
-                className={fieldInputClassName + ' disabled:bg-secondary/50'}
-              />
-            </FormField>
-
-            <FormField label="Unit Cost (RM)" labelClassName="font-semibold block text-muted-foreground text-[10px] uppercase tracking-wider" colSpan="sm:col-span-2">
-              <input
-                type="number" min="0" step="0.01" value={tempUnitCost}
-                onChange={(e) => setTempUnitCost(Number(e.target.value))}
-                disabled={!formVendorId}
-                className={fieldInputClassName + ' disabled:bg-secondary/50'}
-              />
-            </FormField>
-
-            <div className="sm:col-span-2">
-              <Button type="button" className="w-full" onClick={handleAddTempItem} disabled={!formVendorId || !tempMaterialId || tempQuantity <= 0}>
-                + Add Item
-              </Button>
-            </div>
-          </div>
-
-          <div data-fade-item className="bg-warning/10 border border-warning/20 rounded-xl p-3 flex items-center justify-between">
-            <div>
-              <span className="font-semibold block text-[11px] text-foreground">Total Purchase Cost:</span>
-              <span className="text-[10px] text-muted-foreground">Payment will be logged under company material costs.</span>
-            </div>
-            <div className="font-mono text-base font-bold text-foreground">
-              RM {Math.max(0, formDetails.reduce((sum, item) => sum + item.totalPrice, 0) + (tempMaterialId && tempQuantity > 0 ? tempQuantity * tempUnitCost : 0)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </div>
-          </div>
-
-          <div data-fade-item>
-            <AttachmentSection
-              attachment={formAttachment}
-              onAttachmentChange={setFormAttachment}
-              label="Quotation or Invoice Document (Optional)"
-              helperText="Upload any supplier quotation, invoice, specification, or receipt (Max 1MB)"
+          <SectionCard title="Filters" className="shrink-0" contentClassName="p-4 space-y-2.5">
+            <FilterBar
+              search={searchQuery[activeTab]}
+              onSearchChange={(v) => { setSearchQuery(prev => ({ ...prev, [activeTab]: v })); search(v); }}
+              searchPlaceholder="Search by supplier or reference no..."
+              chips={filterChips}
+              onOpenFilters={openFilterDialog}
+              filterCount={activeFilterCount}
+              right={<Button variant="outline" size="sm" onClick={resetFilters}><RotateCcw className="w-3.5 h-3.5" /> Reset</Button>}
             />
-          </div>
-        </div>
-      </Sheet>
-      </>
+            <QuickRangePills activeKey={activeQuickRange} onSelect={applyQuickRange} />
+          </SectionCard>
+
+          <SectionCard title={activeTab === 'QUOTATION' ? 'Quotations' : 'Purchase Orders'} description={`${purchases.length} record${purchases.length === 1 ? '' : 's'}`} className="flex-1 min-h-0" contentClassName="p-0 flex-1 min-h-0 flex flex-col">
+            <div className="flex-1 min-h-0 overflow-auto">
+              <DataTable
+                columns={columns}
+                rows={displayedPurchases}
+                rowKey={(p) => p.id}
+                sortField={sortField}
+                sortDir={sortDir}
+                onSort={toggleSort}
+                onRowClick={openPurchaseDetail}
+                rowActions={(p) => <ActionsMenu items={buildRowActions(p)} />}
+                loading={loading}
+                emptyState={`No ${activeTab === 'QUOTATION' ? 'quotations' : 'purchase orders'} logged yet.`}
+              />
+            </div>
+          </SectionCard>
+
+          {/* Advanced filter dialog */}
+          <FilterDialog
+            open={showFilterDialog}
+            onClose={() => setShowFilterDialog(false)}
+            title="Filter Purchases"
+            sections={[
+              {
+                type: 'dateRange',
+                key: 'dateRange',
+                label: activeTab === 'QUOTATION' ? 'Quotation Date Range' : 'Order Date Range',
+                from: filterDraftDateFrom,
+                to: filterDraftDateTo,
+                onFromChange: setFilterDraftDateFrom,
+                onToChange: setFilterDraftDateTo,
+              },
+              {
+                type: 'checklist',
+                key: 'vendors',
+                label: 'Supplier',
+                searchPlaceholder: 'Search suppliers...',
+                searchQuery: filterVendorSearch,
+                onSearchChange: (q) => { setFilterVendorSearch(q); setFilterVendorVisibleCount(20); },
+                items: filterVendorItems,
+                hasMore: filterVendorMatches.length > filterVendorVisibleCount,
+                onLoadMore: () => setFilterVendorVisibleCount(c => c + 20),
+                selectedIds: filterDraftVendorIds,
+                onToggle: toggleFilterDraftVendor,
+              },
+              {
+                type: 'checklist',
+                key: 'materials',
+                label: 'Material',
+                searchPlaceholder: 'Search materials...',
+                searchQuery: filterMaterialSearch,
+                onSearchChange: (q) => { setFilterMaterialSearch(q); loadFilterMaterialOptions(q); },
+                items: filterMaterialItems,
+                loading: filterMaterialOptionsLoading,
+                hasMore: filterMaterialHasMore,
+                onLoadMore: loadMoreFilterMaterialOptions,
+                selectedIds: filterDraftMaterialIds,
+                onToggle: toggleFilterDraftMaterial,
+              },
+            ]}
+            onApply={() => {
+              setActiveQuickRange(null);
+              setAppliedFilters({
+                vendorIds: filterDraftVendorIds,
+                materialIds: filterDraftMaterialIds,
+                dateFrom: filterDraftDateFrom || undefined,
+                dateTo: filterDraftDateTo || undefined,
+              });
+            }}
+            onClear={() => {
+              setFilterDraftVendorIds([]); setFilterDraftMaterialIds([]);
+              setFilterDraftDateFrom(monthStart(0)); setFilterDraftDateTo(monthEnd(0));
+              setActiveQuickRange('thisMonth');
+              setAppliedFilters({ dateFrom: monthStart(0), dateTo: monthEnd(0) });
+            }}
+          />
+
+          {/* Create/Edit/Convert drawer */}
+          <Sheet
+            open={showFormSheet}
+            onClose={() => { clearTempMaterials(); setShowFormSheet(false); }}
+            title={sheetTitle}
+            width="w-full sm:max-w-2xl"
+            footer={
+              <div className="flex items-center justify-end gap-2">
+                <Button variant="outline" onClick={() => { clearTempMaterials(); setShowFormSheet(false); }}>Cancel</Button>
+                <Button onClick={handleSubmit} disabled={submitting || !formVendorId}>{submitting ? 'Saving...' : submitLabel}</Button>
+              </div>
+            }
+          >
+            <div className="p-5 space-y-5">
+              <div data-fade-item className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <FormField label="Select Vendor *" colSpan="sm:col-span-2">
+                  <ComboBox
+                    required
+                    value={formVendorId}
+                    onChange={setFormVendorId}
+                    noneLabel="-- Select Vendor --"
+                    options={vendors.map(v => ({ value: v.id, label: v.companyName, sublabel: v.officeNo || v.email }))}
+                  />
+                </FormField>
+
+                <FormField label="Linked Sales Order (Optional)" colSpan="sm:col-span-2">
+                  <ComboBox
+                    value={formSalesHeaderId}
+                    onChange={setFormSalesHeaderId}
+                    noneLabel="-- No Linked Sales Order --"
+                    options={salesLinkOptions.map(s => ({ value: s.id, label: s.salesNo, sublabel: s.clientName }))}
+                  />
+                </FormField>
+
+                {formMode === 'CONVERT' && (
+                  <FormField label="Order Date & Time *" colSpan="sm:col-span-2">
+                    <input type="datetime-local" required value={formOrderDate} onChange={(e) => setFormOrderDate(e.target.value)} className={fieldInputClassName} />
+                  </FormField>
+                )}
+              </div>
+
+              {formSalesHeaderId && requiredMaterials.length > 0 && (
+                <div data-fade-item className="border border-primary/20 rounded-xl p-3 bg-primary/5 space-y-1.5">
+                  <span className="font-semibold block text-[11px] text-primary">Required Materials for Linked Sales Order</span>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-0.5">
+                    {requiredMaterials.map(r => (
+                      <div key={r.materialId} className="flex justify-between text-[11px] text-foreground font-mono bg-card/60 rounded px-2 py-1">
+                        <span>{r.materialName}</span>
+                        <span>{r.requiredQuantity}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div data-fade-item className="border border-border rounded-xl p-3 bg-secondary/30 space-y-2">
+                <span className="font-semibold block text-foreground text-xs">Materials to Procure ({formDetails.length})</span>
+                {formDetails.length === 0 ? (
+                  <div className="text-center py-4 text-muted-foreground border border-dashed border-border rounded-lg bg-card text-[11px]">
+                    No materials added yet. Specify material details below to add items.
+                  </div>
+                ) : (
+                  <div className="border border-border rounded-lg bg-card overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Material</TableHead>
+                          <TableHead className="text-right">Quantity</TableHead>
+                          <TableHead className="text-right">Unit Cost</TableHead>
+                          <TableHead className="text-right">Total (RM)</TableHead>
+                          <TableHead className="w-10" />
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {formDetails.map((item, idx) => (
+                          <TableRow key={idx}>
+                            <TableCell className="font-medium text-card-foreground">{item.materialName}</TableCell>
+                            <TableCell className="text-right">
+                              <input
+                                type="number" min="1" value={item.quantity}
+                                onChange={(e) => handleUpdateFormItemQuantity(idx, Number(e.target.value))}
+                                className="w-20 px-1.5 py-1 bg-background border border-input rounded text-right font-mono text-xs focus:outline-none focus:ring-2 focus:ring-ring/40 focus:border-ring"
+                              />
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <input
+                                type="number" min="0" step="0.01" value={item.unitCost}
+                                onChange={(e) => handleUpdateFormItemUnitCost(idx, Number(e.target.value))}
+                                className="w-24 px-1.5 py-1 bg-background border border-input rounded text-right font-mono text-xs focus:outline-none focus:ring-2 focus:ring-ring/40 focus:border-ring"
+                              />
+                            </TableCell>
+                            <TableCell className="text-right font-mono font-medium text-foreground">RM {item.totalPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
+                            <TableCell>
+                              <button type="button" onClick={() => handleRemoveFormItem(idx)} className="text-destructive hover:text-destructive/80 p-1" title="Remove item">
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </div>
+
+              <div data-fade-item className="border border-border rounded-xl p-4 bg-secondary/30 grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
+                <FormField label="Material Selection" labelClassName="font-semibold block text-muted-foreground text-[10px] uppercase tracking-wider" colSpan="sm:col-span-6">
+                  <ComboBox
+                    value={tempMaterialId}
+                    onChange={handleMaterialSelect}
+                    noneLabel="-- Choose Material --"
+                    options={rawMaterials.map(m => {
+                      const category = materialCategoryMap.get(m.materialCategoryId || '');
+                      return { value: m.id, label: m.name, sublabel: category ? category.name : `Stock: ${m.quantity}` };
+                    })}
+                  />
+                </FormField>
+
+                <FormField label="Quantity" labelClassName="font-semibold block text-muted-foreground text-[10px] uppercase tracking-wider" colSpan="sm:col-span-2">
+                  <input
+                    type="number" min="1" value={tempQuantity}
+                    onChange={(e) => setTempQuantity(Number(e.target.value))}
+                    disabled={!formVendorId}
+                    className={fieldInputClassName + ' disabled:bg-secondary/50'}
+                  />
+                </FormField>
+
+                <FormField label="Unit Cost (RM)" labelClassName="font-semibold block text-muted-foreground text-[10px] uppercase tracking-wider" colSpan="sm:col-span-2">
+                  <input
+                    type="number" min="0" step="0.01" value={tempUnitCost}
+                    onChange={(e) => setTempUnitCost(Number(e.target.value))}
+                    disabled={!formVendorId}
+                    className={fieldInputClassName + ' disabled:bg-secondary/50'}
+                  />
+                </FormField>
+
+                <div className="sm:col-span-2">
+                  <Button type="button" className="w-full" onClick={handleAddTempItem} disabled={!formVendorId || !tempMaterialId || tempQuantity <= 0}>
+                    + Add Item
+                  </Button>
+                </div>
+              </div>
+
+              <div data-fade-item className="bg-warning/10 border border-warning/20 rounded-xl p-3 flex items-center justify-between">
+                <div>
+                  <span className="font-semibold block text-[11px] text-foreground">Total Purchase Cost:</span>
+                  <span className="text-[10px] text-muted-foreground">Payment will be logged under company material costs.</span>
+                </div>
+                <div className="font-mono text-base font-bold text-foreground">
+                  RM {Math.max(0, formDetails.reduce((sum, item) => sum + item.totalPrice, 0) + (tempMaterialId && tempQuantity > 0 ? tempQuantity * tempUnitCost : 0)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </div>
+              </div>
+
+              <div data-fade-item>
+                <AttachmentSection
+                  attachment={formAttachment}
+                  onAttachmentChange={setFormAttachment}
+                  label="Quotation or Invoice Document (Optional)"
+                  helperText="Upload any supplier quotation, invoice, specification, or receipt (Max 1MB)"
+                />
+              </div>
+            </div>
+          </Sheet>
+        </>
       )}
 
       <QuotationModal

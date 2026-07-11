@@ -9,12 +9,14 @@
  */
 import { supabase } from "./supabase";
 import { upsertRecords } from "../helper";
-import { getVendors, getClients } from "./ContactsService";
+import { getVendors, getClients, getContacts } from "./ContactsService";
 import { getMaterials, getMaterialCategories } from "./MaterialService";
 import { getProducts, getProductCategories } from "./ProductService";
 import { getPurchases } from "./PurchasesService";
 import { getSalesOrders } from "./OrdersService";
-import { Vendor, Client, Material, Product, Attachment } from "../types";
+import { getInventoryTransactions, saveInventoryTransaction } from "./InventoryTransactionService";
+import { nowIso } from "../utils/date";
+import { Vendor, Client, Contact, Material, Product, Attachment } from "../types";
 
 // Groups per DB round-trip pair (header insert + detail insert) for
 // Purchase/Sales commit — keeps big files from firing one request per order.
@@ -104,6 +106,51 @@ export const importClients = async (rows: Record<string, any>[]): Promise<RowImp
   return { successCount: parsed.length, logs: [`Imported ${parsed.length} clients (created or updated by company name).`] };
 };
 
+export const CONTACT_COLUMNS: ImportColumn[] = [
+  { key: 'fullName', label: 'Contact Name', required: true },
+  { key: 'type', label: 'Type (Client/Vendor)', required: true },
+  { key: 'companyName', label: 'Company Name', required: true },
+  { key: 'email', label: 'Email', required: false },
+  { key: 'contactNo', label: 'Contact No.', required: false },
+];
+
+// Type + Company Name resolve which vendor/client the contact belongs to
+// (mirrors Contact.vendorId/clientId being mutually exclusive). Merge key is
+// name + owner id, so the same person name under two different companies
+// imports as two contacts instead of colliding.
+export const importContacts = async (rows: Record<string, any>[]): Promise<RowImportResult> => {
+  const [vendors, clients, existing] = await Promise.all([getVendors(''), getClients(''), getContacts({})]);
+  const vendorByName = new Map(vendors.map(v => [v.companyName.toLowerCase(), v]));
+  const clientByName = new Map(clients.map(c => [c.companyName.toLowerCase(), c]));
+  const existingByKey = new Map(existing.map(c => [`${c.fullName.toLowerCase()}::${c.vendorId || c.clientId || ''}`, c]));
+
+  const contacts: Contact[] = rows.map((raw, index) => {
+    const fullName = String(raw.fullName || '').trim();
+    if (!fullName) throw new Error(`Record #${index + 1} is missing a required 'fullName' field.`);
+
+    const type = String(raw.type || '').trim().toUpperCase();
+    if (type !== 'CLIENT' && type !== 'VENDOR') throw new Error(`Record #${index + 1}: 'type' must be Client or Vendor.`);
+
+    const companyName = String(raw.companyName || '').trim();
+    const owner = type === 'VENDOR' ? vendorByName.get(companyName.toLowerCase()) : clientByName.get(companyName.toLowerCase());
+    if (!owner) throw new Error(`Record #${index + 1}: ${type === 'VENDOR' ? 'Vendor' : 'Client'} "${companyName}" not found.`);
+
+    const match = existingByKey.get(`${fullName.toLowerCase()}::${owner.id}`);
+    return {
+      id: match?.id || generateId(),
+      fullName,
+      email: raw.email || '',
+      contactNo: raw.contactNo || '',
+      vendorId: type === 'VENDOR' ? owner.id : undefined,
+      clientId: type === 'CLIENT' ? owner.id : undefined,
+      attachments: match?.attachments,
+    };
+  });
+
+  await upsertRecords('erp_contacts', contacts);
+  return { successCount: contacts.length, logs: [`Imported ${contacts.length} contacts (created or updated by name + company).`] };
+};
+
 export const buildVendorExportRows = (vendors: Vendor[]) => vendors.map(v => ({
   id: v.id, companyName: v.companyName, email: v.email, officeNo: v.officeNo,
   address: v.address, description: v.description || '', attachment: attachmentName(v),
@@ -123,6 +170,20 @@ export const getClientExportRows = async () => {
   return { rows: buildClientExportRows(clients), attachmentLinks: clients.map(attachmentLink) };
 };
 
+export const getContactExportRows = async () => {
+  const [contacts, vendors, clients] = await Promise.all([getContacts({}), getVendors(''), getClients('')]);
+  const vendorNameById = new Map(vendors.map(v => [v.id, v.companyName]));
+  const clientNameById = new Map(clients.map(c => [c.id, c.companyName]));
+
+  const rows = contacts.map(c => ({
+    id: c.id, fullName: c.fullName,
+    type: c.vendorId ? 'VENDOR' : 'CLIENT',
+    companyName: c.vendorId ? (vendorNameById.get(c.vendorId) || '') : (clientNameById.get(c.clientId || '') || ''),
+    email: c.email || '', contactNo: c.contactNo || '', attachment: attachmentName(c),
+  }));
+  return { rows, attachmentLinks: contacts.map(attachmentLink) };
+};
+
 const VALID_MATERIAL_TYPES = ['RAW_MATERIAL', 'FINISHED_GOOD', 'CUSTOMER_STOCK'];
 
 export const MATERIAL_COLUMNS: ImportColumn[] = [
@@ -132,7 +193,6 @@ export const MATERIAL_COLUMNS: ImportColumn[] = [
   { key: 'dimension', label: 'Dimension', required: false },
   { key: 'description', label: 'Description', required: false },
   { key: 'minimumStock', label: 'Minimum Stock', required: false },
-  { key: 'reorderQuantity', label: 'Reorder Quantity', required: false },
   { key: 'category', label: 'Category', required: false },
 ];
 
@@ -161,7 +221,6 @@ export const importMaterials = async (rows: Record<string, any>[]): Promise<RowI
       dimension: raw.dimension || '',
       description: raw.description || '',
       minimumStock: Number(raw.minimumStock) || 0,
-      reorderQuantity: Number(raw.reorderQuantity) || 0,
       categoryName: String(raw.category || '').trim(),
     };
   });
@@ -184,7 +243,6 @@ export const importMaterials = async (rows: Record<string, any>[]): Promise<RowI
       attachments: match?.attachments, // preserve existing attachments on update; new records get none
       status: match?.status || 'ACTIVE',
       minimumStock: item.minimumStock,
-      reorderQuantity: item.reorderQuantity,
       materialCategoryId: categoryByName.get(item.categoryName.toLowerCase()) || undefined,
     };
   });
@@ -236,7 +294,7 @@ export const buildMaterialExportRows = (materials: Material[], categories: { id:
   return materials.map(m => ({
     id: m.id, name: m.name, code: m.code || '', materialType: m.materialType || '',
     dimension: m.dimension || '', quantity: m.quantity, description: m.description || '',
-    status: m.status || 'ACTIVE', minimumStock: m.minimumStock, reorderQuantity: m.reorderQuantity,
+    status: m.status || 'ACTIVE', minimumStock: m.minimumStock,
     category: m.materialCategoryId ? (categoryNameById.get(m.materialCategoryId) || '') : '',
     attachment: attachmentName(m),
   }));
@@ -610,31 +668,108 @@ export const getSalesExportSheets = async () => {
   return { headerRows, itemRows, attachmentLinks: all.map(attachmentLink) };
 };
 
+export const INVENTORY_COLUMNS: ImportColumn[] = [
+  { key: 'itemType', label: 'Item Type (Material/Product)', required: true },
+  { key: 'code', label: 'Item Code', required: true },
+  { key: 'quantity', label: 'Quantity (+/-)', required: true },
+  { key: 'unitCost', label: 'Unit Cost', required: false },
+  { key: 'remark', label: 'Remark', required: false },
+  { key: 'date', label: 'Date', required: false },
+];
+
+// Bulk stock adjustments only (ADJUSTMENT type) — PURCHASE/SALES/*_RETURN
+// rows are always system-generated off a purchase/sales order, never
+// hand-entered here.
+export const importInventoryTransactions = async (rows: Record<string, any>[]): Promise<RowImportResult> => {
+  const [materials, products] = await Promise.all([getMaterials(''), getProducts('')]);
+  const materialByCode = new Map(materials.filter(m => m.code).map(m => [m.code!.toLowerCase(), m]));
+  const productByCode = new Map(products.filter(p => p.code).map(p => [p.code!.toLowerCase(), p]));
+
+  const parsed = rows.map((raw, index) => {
+    const itemType = String(raw.itemType || '').trim().toUpperCase();
+    if (itemType !== 'MATERIAL' && itemType !== 'PRODUCT') throw new Error(`Record #${index + 1}: 'Item Type' must be Material or Product.`);
+
+    const code = String(raw.code || '').trim();
+    if (!code) throw new Error(`Record #${index + 1} is missing a required 'code' field.`);
+
+    const item = itemType === 'MATERIAL' ? materialByCode.get(code.toLowerCase()) : productByCode.get(code.toLowerCase());
+    if (!item) throw new Error(`Record #${index + 1}: ${itemType === 'MATERIAL' ? 'Material' : 'Product'} code "${code}" not found.`);
+
+    const quantity = Number(raw.quantity);
+    if (!quantity) throw new Error(`Record #${index + 1}: Quantity must be a non-zero number.`);
+
+    const date = String(raw.date || '').trim();
+    const transactionDate = date && !isNaN(Date.parse(date)) ? new Date(date).toISOString() : nowIso();
+
+    return {
+      id: generateId(),
+      transactionType: 'ADJUSTMENT' as const,
+      quantity,
+      unitCost: raw.unitCost !== undefined && raw.unitCost !== '' ? Number(raw.unitCost) : undefined,
+      remark: raw.remark ? String(raw.remark) : undefined,
+      materialId: itemType === 'MATERIAL' ? item.id : undefined,
+      productId: itemType === 'PRODUCT' ? item.id : undefined,
+      transactionDate,
+    };
+  });
+
+  for (const tx of parsed) {
+    await saveInventoryTransaction(tx);
+  }
+
+  return { successCount: parsed.length, logs: [`Imported ${parsed.length} inventory transaction(s) as stock adjustments.`] };
+};
+
+export const getInventoryExportRows = async () => {
+  const all = [];
+  let offset = 0;
+  const pageSize = 500;
+  while (true) {
+    const { rows, hasMore } = await getInventoryTransactions({ offset, limit: pageSize });
+    all.push(...rows);
+    if (!hasMore) break;
+    offset += rows.length;
+  }
+
+  const rows = all.map(t => ({
+    id: t.id, transactionType: t.transactionType,
+    itemType: t.materialId ? 'MATERIAL' : 'PRODUCT',
+    itemName: t.materialName || t.productName || '',
+    quantity: t.quantity, unitCost: t.unitCost ?? '',
+    remark: t.remark || '', refNo: t.refNo || '', counterpartyName: t.counterpartyName || '',
+    status: t.status || '', transactionDate: t.transactionDate,
+  }));
+  return { rows };
+};
+
 // "Export All" — one workbook, every category's own sheet builder (same
 // functions the per-category export buttons call), so it's always in sync
 // with whatever those export sheets currently look like. attachmentLinksBySheet
 // only lists sheets that actually carry an "attachment" column (item/detail
 // sheets don't — attachments live at the header/record level).
 export const getAllExportSheets = async () => {
-  const [vendors, clients, materials, products, purchase, sales] = await Promise.all([
-    getVendorExportRows(), getClientExportRows(), getMaterialExportRows(), getProductExportRows(),
-    getPurchaseExportSheets(), getSalesExportSheets(),
+  const [vendors, clients, contacts, materials, products, purchase, sales, inventory] = await Promise.all([
+    getVendorExportRows(), getClientExportRows(), getContactExportRows(), getMaterialExportRows(), getProductExportRows(),
+    getPurchaseExportSheets(), getSalesExportSheets(), getInventoryExportRows(),
   ]);
 
   return {
     sheets: {
       Vendors: vendors.rows,
       Clients: clients.rows,
+      Contacts: contacts.rows,
       Material: materials.rows,
       Product: products.rows,
       Purchase_Orders: purchase.headerRows,
       Purchase_Items: purchase.itemRows,
       Sales_Orders: sales.headerRows,
       Sales_Items: sales.itemRows,
+      Inventory_Transactions: inventory.rows,
     },
     attachmentLinksBySheet: {
       Vendors: vendors.attachmentLinks,
       Clients: clients.attachmentLinks,
+      Contacts: contacts.attachmentLinks,
       Material: materials.attachmentLinks,
       Product: products.attachmentLinks,
       Purchase_Orders: purchase.attachmentLinks,

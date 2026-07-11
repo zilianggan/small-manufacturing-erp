@@ -14,6 +14,8 @@ import { SectionCard, DataTable } from './shell';
 import type { DataTableColumn } from './shell';
 import { useFadeInOnMount } from '../hooks/useFadeInOnMount';
 import { sortByField } from '../utils/sortRows';
+import { PRIORITY_META, getDueUrgency } from '../utils/priority';
+import { formatDateTime, formatDate } from '../utils/date';
 
 type LineItemSortKey = 'productName' | 'quantity' | 'unitPrice' | 'totalPrice';
 const NUMERIC_KEYS: LineItemSortKey[] = ['quantity', 'unitPrice', 'totalPrice'];
@@ -124,19 +126,33 @@ export default function SalesOrderDetailView({
               <p className="text-xs text-muted-foreground mt-1">{order.clientName}</p>
             </div>
 
-            <Badge variant={status.variant}>{status.label}</Badge>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <Badge variant={status.variant}>{status.label}</Badge>
+              <Badge variant={PRIORITY_META[order.priority].variant}>{PRIORITY_META[order.priority].label} Priority</Badge>
+              {(() => {
+                const urgency = getDueUrgency(order.productionDueDate);
+                return urgency && <Badge variant={urgency.variant}>{urgency.label}</Badge>;
+              })()}
+            </div>
 
             <div className="flex flex-wrap gap-x-5 gap-y-1.5 text-xs text-muted-foreground">
               <div className="flex items-center gap-1.5">
                 <Calendar className="w-3.5 h-3.5" />
                 <span>Order Date:</span>
-                <span className="text-foreground">{order.orderDate}</span>
+                <span className="text-foreground">{formatDateTime(order.orderDate)}</span>
               </div>
               {order.deliveryDate && (
                 <div className="flex items-center gap-1.5">
                   <Calendar className="w-3.5 h-3.5" />
                   <span>Delivery Due:</span>
-                  <span className="text-foreground">{order.deliveryDate}</span>
+                  <span className="text-foreground">{formatDateTime(order.deliveryDate)}</span>
+                </div>
+              )}
+              {order.productionDueDate && (
+                <div className="flex items-center gap-1.5">
+                  <Calendar className="w-3.5 h-3.5" />
+                  <span>Production Due:</span>
+                  <span className="text-foreground">{formatDate(order.productionDueDate)}</span>
                 </div>
               )}
               <div className="flex items-center gap-1.5">

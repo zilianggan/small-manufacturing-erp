@@ -8,8 +8,8 @@ import {
   generateId, getInventoryTransactions, saveInventoryTransaction, getInventoryStatsSummary,
   InventoryLedgerSortField, SortDir, InventoryStatsSummary,
 } from '../services/InventoryTransactionService';
-import { getMaterials } from '../services/MaterialService';
-import { getProducts } from '../services/ProductService';
+import { getMaterials, getMaterialsPage } from '../services/MaterialService';
+import { getProducts, getProductsPage } from '../services/ProductService';
 import { getPurchaseById } from '../services/PurchasesService';
 import { getSalesOrderById } from '../services/OrdersService';
 import { getDashboardData } from '../services/DashboardService';
@@ -17,7 +17,7 @@ import { InventoryTransaction, InventoryTransactionType, Material, Product, Purc
 import {
   SlidersHorizontal, RotateCcw, BarChart3, ClipboardPlus, Eye, Copy,
   PackagePlus, PackageMinus, Factory, Undo2, ArrowUpCircle, ArrowDownCircle,
-  Paperclip, AlertTriangle, Upload, FileSpreadsheet,
+  Paperclip, AlertTriangle,
 } from 'lucide-react';
 import ComboBox from './ComboBox';
 import SegmentedControl from './SegmentedControl';
@@ -33,6 +33,9 @@ import {
 } from './ui';
 import type { ActionMenuItem } from './ui';
 import { useFadeInOnMount } from '../hooks/useFadeInOnMount';
+import { formatDateTime, toDateTimeLocal, fromDateTimeLocal, monthStart, monthEnd } from '../utils/date';
+import { QUICK_RANGES } from '../utils/dateRanges';
+import QuickRangePills from './QuickRangePills';
 import { openDataUrlInNewTab } from '../lib/utils';
 import { CallAPI } from './UIHelper';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
@@ -63,19 +66,6 @@ const MOVEMENT_META: Record<InventoryTransactionType, { label: string; icon: typ
 const TYPE_FILTER_OPTIONS: { value: InventoryTransactionType; label: string }[] =
   (Object.keys(MOVEMENT_META) as InventoryTransactionType[]).map(v => ({ value: v, label: MOVEMENT_META[v].label }));
 
-const todayStr = (): string => new Date().toISOString().split('T')[0];
-const daysAgo = (n: number): string => { const d = new Date(); d.setDate(d.getDate() - n); return d.toISOString().split('T')[0]; };
-const monthStart = (monthsBack: number): string => { const d = new Date(); d.setMonth(d.getMonth() - monthsBack, 1); return d.toISOString().split('T')[0]; };
-const monthEnd = (monthsBack: number): string => { const d = new Date(); d.setMonth(d.getMonth() - monthsBack + 1, 0); return d.toISOString().split('T')[0]; };
-
-const QUICK_RANGES: { key: string; label: string; from: () => string; to: () => string }[] = [
-  { key: 'today', label: 'Today', from: todayStr, to: todayStr },
-  { key: 'yesterday', label: 'Yesterday', from: () => daysAgo(1), to: () => daysAgo(1) },
-  { key: 'last7', label: 'Last 7 Days', from: () => daysAgo(6), to: todayStr },
-  { key: 'thisMonth', label: 'This Month', from: () => monthStart(0), to: () => monthEnd(0) },
-  { key: 'lastMonth', label: 'Last Month', from: () => monthStart(1), to: () => monthEnd(1) },
-];
-
 /**
  * Inventory Transactions — table-first ledger, styled like the Material
  * catalog's table (same search/filter toolbar, same DataTable). No permanent
@@ -102,9 +92,10 @@ export default function InventoryView({ onViewPurchaseOrder, onViewSalesOrder }:
   const [appliedTypeFilters, setAppliedTypeFilters] = useState<InventoryTransactionType[]>([]);
   const [appliedMaterialIds, setAppliedMaterialIds] = useState<string[]>([]);
   const [appliedProductIds, setAppliedProductIds] = useState<string[]>([]);
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
-  const [activeQuickRange, setActiveQuickRange] = useState<string | null>(null);
+  // Default to the current month — avoids pulling the whole ledger on load.
+  const [dateFrom, setDateFrom] = useState(monthStart(0));
+  const [dateTo, setDateTo] = useState(monthEnd(0));
+  const [activeQuickRange, setActiveQuickRange] = useState<string | null>('thisMonth');
 
   const [showFilterDialog, setShowFilterDialog] = useState(false);
   const [filterDraftTypes, setFilterDraftTypes] = useState<InventoryTransactionType[]>([]);
@@ -119,6 +110,10 @@ export default function InventoryView({ onViewPurchaseOrder, onViewSalesOrder }:
   const [filterProductOptions, setFilterProductOptions] = useState<Product[]>([]);
   const [filterMaterialOptionsLoading, setFilterMaterialOptionsLoading] = useState(false);
   const [filterProductOptionsLoading, setFilterProductOptionsLoading] = useState(false);
+  const [filterMaterialOffset, setFilterMaterialOffset] = useState(0);
+  const [filterProductOffset, setFilterProductOffset] = useState(0);
+  const [filterMaterialHasMore, setFilterMaterialHasMore] = useState(false);
+  const [filterProductHasMore, setFilterProductHasMore] = useState(false);
 
   // ─── Sort ─────────────────────────────────────────────────────────────
   // date/type/quantity are real columns — sorted server-side. reference/item/
@@ -184,12 +179,43 @@ export default function InventoryView({ onViewPurchaseOrder, onViewSalesOrder }:
 
   const loadFilterMaterialOptions = useMemo(() => debounce((q: string) => {
     setFilterMaterialOptionsLoading(true);
-    CallAPI(() => getMaterials(q), { onCompleted: (d) => { setFilterMaterialOptions(d); setFilterMaterialOptionsLoading(false); }, onError: () => setFilterMaterialOptionsLoading(false) });
+    CallAPI(() => getMaterialsPage({ search: q, offset: 0, limit: PAGE_SIZE }), {
+      onCompleted: ({ rows, hasMore }) => {
+        setFilterMaterialOptions(rows); setFilterMaterialHasMore(hasMore); setFilterMaterialOffset(rows.length); setFilterMaterialOptionsLoading(false);
+      },
+      onError: () => setFilterMaterialOptionsLoading(false),
+    });
   }, 300), []);
+  const loadMoreFilterMaterialOptions = () => {
+    if (filterMaterialOptionsLoading || !filterMaterialHasMore) return;
+    setFilterMaterialOptionsLoading(true);
+    CallAPI(() => getMaterialsPage({ search: filterMaterialSearch, offset: filterMaterialOffset, limit: PAGE_SIZE }), {
+      onCompleted: ({ rows, hasMore }) => {
+        setFilterMaterialOptions(prev => [...prev, ...rows]); setFilterMaterialHasMore(hasMore); setFilterMaterialOffset(o => o + rows.length); setFilterMaterialOptionsLoading(false);
+      },
+      onError: () => setFilterMaterialOptionsLoading(false),
+    });
+  };
+
   const loadFilterProductOptions = useMemo(() => debounce((q: string) => {
     setFilterProductOptionsLoading(true);
-    CallAPI(() => getProducts(q), { onCompleted: (d) => { setFilterProductOptions(d); setFilterProductOptionsLoading(false); }, onError: () => setFilterProductOptionsLoading(false) });
+    CallAPI(() => getProductsPage({ search: q, offset: 0, limit: PAGE_SIZE }), {
+      onCompleted: ({ rows, hasMore }) => {
+        setFilterProductOptions(rows); setFilterProductHasMore(hasMore); setFilterProductOffset(rows.length); setFilterProductOptionsLoading(false);
+      },
+      onError: () => setFilterProductOptionsLoading(false),
+    });
   }, 300), []);
+  const loadMoreFilterProductOptions = () => {
+    if (filterProductOptionsLoading || !filterProductHasMore) return;
+    setFilterProductOptionsLoading(true);
+    CallAPI(() => getProductsPage({ search: filterProductSearch, offset: filterProductOffset, limit: PAGE_SIZE }), {
+      onCompleted: ({ rows, hasMore }) => {
+        setFilterProductOptions(prev => [...prev, ...rows]); setFilterProductHasMore(hasMore); setFilterProductOffset(o => o + rows.length); setFilterProductOptionsLoading(false);
+      },
+      onError: () => setFilterProductOptionsLoading(false),
+    });
+  };
 
   const openFilterDialog = () => {
     setFilterDraftTypes(appliedTypeFilters);
@@ -199,6 +225,8 @@ export default function InventoryView({ onViewPurchaseOrder, onViewSalesOrder }:
     setFilterDraftDateTo(dateTo);
     setFilterSearchQuery(''); setFilterMaterialSearch(''); setFilterProductSearch('');
     setFilterMaterialOptions([]); setFilterProductOptions([]);
+    setFilterMaterialOffset(0); setFilterProductOffset(0);
+    setFilterMaterialHasMore(false); setFilterProductHasMore(false);
     setShowFilterDialog(true);
     loadFilterMaterialOptions(''); loadFilterProductOptions('');
   };
@@ -210,13 +238,15 @@ export default function InventoryView({ onViewPurchaseOrder, onViewSalesOrder }:
   const toggleFilterDraftMaterial = (id: string) => setFilterDraftMaterialIds(prev => (prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]));
   const toggleFilterDraftProduct = (id: string) => setFilterDraftProductIds(prev => (prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]));
 
+  // "Reset" lands back on the current month, not an unfiltered all-time view
+  // — matches the page's own default instead of pulling the whole ledger.
   const resetFilters = () => {
     setAppliedTypeFilters([]); setAppliedMaterialIds([]); setAppliedProductIds([]);
-    setDateFrom(''); setDateTo(''); setActiveQuickRange(null); setSearchQuery('');
+    setDateFrom(monthStart(0)); setDateTo(monthEnd(0)); setActiveQuickRange('thisMonth'); setSearchQuery('');
   };
 
   const filterChips: FilterChip[] = [
-    ...(dateFrom || dateTo ? [{ key: 'date', label: `${dateFrom || '…'} → ${dateTo || '…'}`, onRemove: () => { setDateFrom(''); setDateTo(''); setActiveQuickRange(null); } }] : []),
+    ...(dateFrom || dateTo ? [{ key: 'date', label: `${dateFrom || '…'} → ${dateTo || '…'}`, onRemove: () => { setDateFrom(monthStart(0)); setDateTo(monthEnd(0)); setActiveQuickRange('thisMonth'); } }] : []),
     ...(appliedTypeFilters.length > 0 ? [{ key: 'types', label: `${appliedTypeFilters.length} type${appliedTypeFilters.length === 1 ? '' : 's'}`, onRemove: () => setAppliedTypeFilters([]) }] : []),
     ...(appliedMaterialIds.length > 0 ? [{ key: 'materials', label: `${appliedMaterialIds.length} material${appliedMaterialIds.length === 1 ? '' : 's'}`, onRemove: () => setAppliedMaterialIds([]) }] : []),
     ...(appliedProductIds.length > 0 ? [{ key: 'products', label: `${appliedProductIds.length} product${appliedProductIds.length === 1 ? '' : 's'}`, onRemove: () => setAppliedProductIds([]) }] : []),
@@ -256,7 +286,7 @@ export default function InventoryView({ onViewPurchaseOrder, onViewSalesOrder }:
   const [stockQuantity, setStockQuantity] = useState(0);
   const [stockDirection, setStockDirection] = useState<'INCREASE' | 'DECREASE'>('INCREASE');
   const [stockUnitCost, setStockUnitCost] = useState(0);
-  const [stockDate, setStockDate] = useState(todayStr());
+  const [stockDate, setStockDate] = useState(toDateTimeLocal(new Date().toISOString()));
   const [stockRemark, setStockRemark] = useState('');
 
   useEffect(() => {
@@ -276,7 +306,7 @@ export default function InventoryView({ onViewPurchaseOrder, onViewSalesOrder }:
   const resetStockForm = () => {
     setStockTarget('MATERIAL'); setStockItemId(''); setStockItemQuery('');
     setStockQuantity(0); setStockDirection('INCREASE');
-    setStockUnitCost(0); setStockDate(todayStr()); setStockRemark('');
+    setStockUnitCost(0); setStockDate(toDateTimeLocal(new Date().toISOString())); setStockRemark('');
   };
 
   const openStockDrawer = () => { resetStockForm(); setShowStockDrawer(true); };
@@ -293,7 +323,7 @@ export default function InventoryView({ onViewPurchaseOrder, onViewSalesOrder }:
       remark: stockRemark.trim() || undefined,
       materialId: stockTarget === 'MATERIAL' ? stockItemId : undefined,
       productId: stockTarget === 'PRODUCT' ? stockItemId : undefined,
-      transactionDate: stockDate,
+      transactionDate: fromDateTimeLocal(stockDate),
     };
 
     await CallAPI(() => saveInventoryTransaction(record), {
@@ -305,69 +335,6 @@ export default function InventoryView({ onViewPurchaseOrder, onViewSalesOrder }:
       },
       onError: (err) => { console.error(err); toast.error('Failed to record stock adjustment.'); },
     });
-  };
-
-  // ─── Import Inventory drawer (bulk stock adjustment from a CSV) ─────────
-  const [showImportDrawer, setShowImportDrawer] = useState(false);
-  const [importFile, setImportFile] = useState<File | null>(null);
-  const [importRows, setImportRows] = useState<{ code: string; quantity: number; unitCost?: number; remark?: string }[]>([]);
-  const [importing, setImporting] = useState(false);
-
-  const openImportDrawer = () => { setImportFile(null); setImportRows([]); setShowImportDrawer(true); };
-
-  const handleParseImportFile = async (file: File) => {
-    setImportFile(file);
-    const text = await file.text();
-    const lines = text.split(/\r?\n/).filter(Boolean);
-    const [headerLine, ...dataLines] = lines;
-    const cols = headerLine.split(',').map(c => c.trim().toLowerCase());
-    const codeIdx = cols.indexOf('material code') !== -1 ? cols.indexOf('material code') : cols.indexOf('code');
-    const qtyIdx = cols.findIndex(c => c.includes('quantity'));
-    const costIdx = cols.findIndex(c => c.includes('cost'));
-    const remarkIdx = cols.findIndex(c => c.includes('remark'));
-    const parsed = dataLines.map(line => {
-      const cells = line.split(',');
-      return {
-        code: (cells[codeIdx] || '').trim(),
-        quantity: Number(cells[qtyIdx]) || 0,
-        unitCost: costIdx >= 0 ? Number(cells[costIdx]) || undefined : undefined,
-        remark: remarkIdx >= 0 ? cells[remarkIdx]?.trim() : undefined,
-      };
-    }).filter(r => r.code && r.quantity !== 0);
-    setImportRows(parsed);
-  };
-
-  const handleCommitImport = async () => {
-    if (importRows.length === 0) return;
-    setImporting(true);
-    const allMaterials = await getMaterials('');
-    const byCode = new Map(allMaterials.filter(m => m.code).map(m => [m.code!.toLowerCase(), m]));
-    let succeeded = 0;
-    let failed = 0;
-    for (const row of importRows) {
-      const material = byCode.get(row.code.toLowerCase());
-      if (!material) { failed++; continue; }
-      try {
-        await saveInventoryTransaction({
-          id: generateId(),
-          transactionType: 'ADJUSTMENT',
-          quantity: row.quantity,
-          unitCost: row.unitCost,
-          remark: row.remark || undefined,
-          materialId: material.id,
-          transactionDate: todayStr(),
-        });
-        succeeded++;
-      } catch (err) {
-        console.error('import row failed', row, err);
-        failed++;
-      }
-    }
-    setImporting(false);
-    loadTransactions(0, false, searchQuery);
-    toast.success(`Imported ${succeeded} row${succeeded === 1 ? '' : 's'}${failed > 0 ? `, ${failed} failed (unknown code)` : ''}.`);
-    setShowImportDrawer(false);
-    setImportFile(null); setImportRows([]);
   };
 
   // ─── Statistics dialog ────────────────────────────────────────────────────
@@ -417,7 +384,7 @@ export default function InventoryView({ onViewPurchaseOrder, onViewSalesOrder }:
   const columns: DataTableColumn<InventoryTransaction>[] = [
     {
       key: 'date', header: 'Date', sortable: true, className: 'w-30',
-      render: (tx) => <span className="text-muted-foreground">{tx.transactionDate}</span>
+      render: (tx) => <span className="text-muted-foreground">{formatDateTime(tx.transactionDate)}</span>
     },
     {
       key: 'reference', header: 'Reference', sortable: true, className: 'w-36',
@@ -466,7 +433,6 @@ export default function InventoryView({ onViewPurchaseOrder, onViewSalesOrder }:
         actions={
           <>
             <Button variant="outline" onClick={openStats}><BarChart3 className="w-4 h-4" /> Statistics</Button>
-            <Button variant="outline" onClick={openImportDrawer}><Upload className="w-4 h-4" /> Import</Button>
             <Button onClick={openStockDrawer}><ClipboardPlus className="w-4 h-4" /> Stock Adjustment</Button>
           </>
         }
@@ -483,18 +449,7 @@ export default function InventoryView({ onViewPurchaseOrder, onViewSalesOrder }:
           filterCount={activeFilterCount}
           right={<Button variant="outline" size="sm" onClick={resetFilters}><RotateCcw className="w-3.5 h-3.5" /> Reset</Button>}
         />
-        <div className="flex items-center gap-1.5 flex-wrap">
-          {QUICK_RANGES.map((r) => (
-            <button
-              key={r.key}
-              type="button"
-              onClick={() => applyQuickRange(r.key)}
-              className={`px-2.5 py-1 rounded-full text-[11px] font-medium border transition-colors ${activeQuickRange === r.key ? 'bg-primary text-primary-foreground border-primary' : 'bg-secondary/50 text-secondary-foreground border-transparent hover:bg-secondary'}`}
-            >
-              {r.label}
-            </button>
-          ))}
-        </div>
+        <QuickRangePills activeKey={activeQuickRange} onSelect={applyQuickRange} />
       </SectionCard>
 
       {/* Transaction table — the hero, gets almost the entire page */}
@@ -522,6 +477,7 @@ export default function InventoryView({ onViewPurchaseOrder, onViewSalesOrder }:
         onClose={() => setShowFilterDialog(false)}
         title="Filter Transactions"
         sections={[
+          { type: 'dateRange', key: 'dateRange', label: 'Date Range', from: filterDraftDateFrom, to: filterDraftDateTo, onFromChange: setFilterDraftDateFrom, onToChange: setFilterDraftDateTo },
           {
             type: 'checklist', key: 'types', label: 'Movement Type', searchPlaceholder: 'Search types...', searchQuery: filterSearchQuery, onSearchChange: setFilterSearchQuery,
             items: TYPE_FILTER_OPTIONS.filter(t => !filterSearchQuery.trim() || t.label.toLowerCase().includes(filterSearchQuery.trim().toLowerCase())).map(t => ({ id: t.value, label: t.label })),
@@ -531,15 +487,16 @@ export default function InventoryView({ onViewPurchaseOrder, onViewSalesOrder }:
             type: 'checklist', key: 'materials', label: 'Material', searchPlaceholder: 'Search materials...', searchQuery: filterMaterialSearch,
             onSearchChange: (q) => { setFilterMaterialSearch(q); loadFilterMaterialOptions(q); },
             items: filterMaterialOptions.map(m => ({ id: m.id, label: m.name, sublabel: m.code })), loading: filterMaterialOptionsLoading,
+            hasMore: filterMaterialHasMore, onLoadMore: loadMoreFilterMaterialOptions,
             selectedIds: filterDraftMaterialIds, onToggle: toggleFilterDraftMaterial
           },
           {
             type: 'checklist', key: 'products', label: 'Product', searchPlaceholder: 'Search products...', searchQuery: filterProductSearch,
             onSearchChange: (q) => { setFilterProductSearch(q); loadFilterProductOptions(q); },
             items: filterProductOptions.map(p => ({ id: p.id, label: p.name, sublabel: p.code })), loading: filterProductOptionsLoading,
+            hasMore: filterProductHasMore, onLoadMore: loadMoreFilterProductOptions,
             selectedIds: filterDraftProductIds, onToggle: toggleFilterDraftProduct
           },
-          { type: 'dateRange', key: 'dateRange', label: 'Date Range', from: filterDraftDateFrom, to: filterDraftDateTo, onFromChange: setFilterDraftDateFrom, onToChange: setFilterDraftDateTo },
         ]}
         onApply={() => {
           setAppliedTypeFilters(filterDraftTypes);
@@ -550,8 +507,8 @@ export default function InventoryView({ onViewPurchaseOrder, onViewSalesOrder }:
           setActiveQuickRange(null);
         }}
         onClear={() => {
-          setFilterDraftTypes([]); setFilterDraftMaterialIds([]); setFilterDraftProductIds([]); setFilterDraftDateFrom(''); setFilterDraftDateTo('');
-          setAppliedTypeFilters([]); setAppliedMaterialIds([]); setAppliedProductIds([]); setDateFrom(''); setDateTo(''); setActiveQuickRange(null);
+          setFilterDraftTypes([]); setFilterDraftMaterialIds([]); setFilterDraftProductIds([]); setFilterDraftDateFrom(monthStart(0)); setFilterDraftDateTo(monthEnd(0));
+          setAppliedTypeFilters([]); setAppliedMaterialIds([]); setAppliedProductIds([]); setDateFrom(monthStart(0)); setDateTo(monthEnd(0)); setActiveQuickRange('thisMonth');
         }}
       />
 
@@ -578,7 +535,7 @@ export default function InventoryView({ onViewPurchaseOrder, onViewSalesOrder }:
                   <div className="grid grid-cols-2 gap-4">
                     <MetricCard label="Vendor" value={refPurchase.vendorName} />
                     <MetricCard label="Status" value={<Badge variant="secondary">{refPurchase.status}</Badge>} />
-                    <MetricCard label="Order Date" value={refPurchase.orderDate || refPurchase.quotationDate} />
+                    <MetricCard label="Order Date" value={formatDateTime(refPurchase.orderDate || refPurchase.quotationDate)} />
                     <MetricCard label="Total" value={`RM ${refPurchase.totalPrice.toLocaleString()}`} />
                   </div>
                   {onViewPurchaseOrder && <Button variant="outline" size="sm" onClick={() => onViewPurchaseOrder(refPurchase.id)}>Open Full Purchase Order</Button>}
@@ -588,7 +545,7 @@ export default function InventoryView({ onViewPurchaseOrder, onViewSalesOrder }:
                   <div className="grid grid-cols-2 gap-4">
                     <MetricCard label="Client" value={refSales.clientName} />
                     <MetricCard label="Status" value={<Badge variant="secondary">{refSales.status}</Badge>} />
-                    <MetricCard label="Order Date" value={refSales.orderDate} />
+                    <MetricCard label="Order Date" value={formatDateTime(refSales.orderDate)} />
                     <MetricCard label="Total" value={`RM ${refSales.totalAmount.toLocaleString()}`} />
                   </div>
                   {onViewSalesOrder && <Button variant="outline" size="sm" onClick={() => onViewSalesOrder(refSales.id)}>Open Full Sales Order</Button>}
@@ -599,7 +556,7 @@ export default function InventoryView({ onViewPurchaseOrder, onViewSalesOrder }:
                     <MetricCard label="Item" value={refDrawerTx.materialName || refDrawerTx.productName || '—'} />
                     <MetricCard label="Quantity" value={refDrawerTx.quantity} />
                     <MetricCard label="Unit Cost" value={refDrawerTx.unitCost != null ? `RM ${refDrawerTx.unitCost.toFixed(2)}` : '—'} />
-                    <MetricCard label="Date" value={refDrawerTx.transactionDate} />
+                    <MetricCard label="Date" value={formatDateTime(refDrawerTx.transactionDate)} />
                   </div>
                   {refDrawerTx.remark && <p className="text-sm text-muted-foreground">{refDrawerTx.remark}</p>}
                 </div>
@@ -692,47 +649,11 @@ export default function InventoryView({ onViewPurchaseOrder, onViewSalesOrder }:
             <input type="number" min="0" step="0.01" value={stockUnitCost} onChange={(e) => setStockUnitCost(Number(e.target.value))} className={fieldInputClassName} />
           </FormField>
           <FormField label="Date *">
-            <input type="date" required value={stockDate} onChange={(e) => setStockDate(e.target.value)} className={fieldInputClassName} />
+            <input type="datetime-local" required value={stockDate} onChange={(e) => setStockDate(e.target.value)} className={fieldInputClassName} />
           </FormField>
           <FormField label="Remark">
             <textarea value={stockRemark} onChange={(e) => setStockRemark(e.target.value)} rows={2} placeholder="Optional note..." className={fieldInputClassName} />
           </FormField>
-        </div>
-      </Sheet>
-
-      {/* Import Inventory drawer */}
-      <Sheet
-        open={showImportDrawer}
-        onClose={() => setShowImportDrawer(false)}
-        title="Import Inventory"
-        description="Bulk stock adjustment from a CSV file."
-        footer={
-          <div className="flex items-center justify-end gap-2">
-            <Button variant="outline" onClick={() => setShowImportDrawer(false)}>Cancel</Button>
-            <Button onClick={handleCommitImport} disabled={importRows.length === 0 || importing}>{importing ? 'Importing...' : `Import ${importRows.length} Row${importRows.length === 1 ? '' : 's'}`}</Button>
-          </div>
-        }
-      >
-        <div className="p-5 space-y-3 text-xs text-muted-foreground">
-          <p>Upload a CSV with columns: <span className="font-mono text-foreground">Material Code, Quantity, Unit Cost, Remark</span>. A positive quantity adds stock, negative removes it.</p>
-          <div
-            className="border-2 border-dashed border-border rounded-xl p-6 text-center cursor-pointer hover:border-muted-foreground/40 transition-colors"
-            onClick={() => document.getElementById('inventory-import-input')?.click()}
-          >
-            <FileSpreadsheet className="w-6 h-6 mx-auto text-muted-foreground mb-2" />
-            <p>{importFile ? importFile.name : 'Click to choose a .csv file'}</p>
-            <input id="inventory-import-input" type="file" accept=".csv" className="hidden" onChange={(e) => e.target.files?.[0] && handleParseImportFile(e.target.files[0])} />
-          </div>
-          {importRows.length > 0 && (
-            <div className="border border-border rounded-lg divide-y divide-border max-h-64 overflow-y-auto">
-              {importRows.map((r, i) => (
-                <div key={i} className="flex items-center justify-between px-3 py-2">
-                  <span className="font-mono text-foreground">{r.code}</span>
-                  <span className={r.quantity >= 0 ? 'text-success' : 'text-destructive'}>{r.quantity >= 0 ? `+${r.quantity}` : r.quantity}</span>
-                </div>
-              ))}
-            </div>
-          )}
         </div>
       </Sheet>
 

@@ -115,16 +115,16 @@ export default function SignaturePad({ value, onChange }: SignaturePadProps) {
 
   return (
     <div className="space-y-1.5">
-      <div className="flex items-center justify-between text-[10px] text-slate-500 font-sans">
-        <span className="flex items-center space-x-1 font-semibold text-slate-700">
-          <Paintbrush className="w-3.5 h-3.5 text-blue-500" />
+      <div className="flex items-center justify-between text-[10px] text-muted-foreground font-sans">
+        <span className="flex items-center space-x-1 font-semibold text-foreground">
+          <Paintbrush className="w-3.5 h-3.5 text-primary" />
           <span>Draw with Mouse or Touch Screen</span>
         </span>
         {hasDrawn && (
           <button
             type="button"
             onClick={clearCanvas}
-            className="flex items-center space-x-0.5 text-red-600 hover:text-red-700 hover:bg-red-50 px-1 py-0.5 rounded transition-colors font-medium"
+            className="flex items-center space-x-0.5 text-destructive hover:bg-destructive/10 px-1 py-0.5 rounded transition-colors font-medium"
           >
             <RotateCcw className="w-3 h-3" />
             <span>Reset Drawing</span>
@@ -132,7 +132,9 @@ export default function SignaturePad({ value, onChange }: SignaturePadProps) {
         )}
       </div>
 
-      <div className="relative border border-slate-200 rounded-lg bg-white overflow-hidden shadow-inner group">
+      {/* Canvas surface stays white in both themes — the exported PNG is
+          placed onto white printed invoices, so dark-ink-on-white is required. */}
+      <div className="relative border border-border rounded-lg bg-white overflow-hidden shadow-inner group">
         <canvas
           ref={canvasRef}
           onMouseDown={startDrawing}
@@ -142,10 +144,10 @@ export default function SignaturePad({ value, onChange }: SignaturePadProps) {
           onTouchStart={startDrawing}
           onTouchMove={draw}
           onTouchEnd={stopDrawing}
-          className="w-full h-24 bg-slate-50/50 cursor-crosshair touch-none block"
+          className="w-full h-24 cursor-crosshair touch-none block"
           style={{ width: '100%', height: '96px' }}
         />
-        
+
         {!hasDrawn && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none text-slate-400 font-sans text-[10px] italic select-none">
             Sign here using your pointer or finger

@@ -184,6 +184,10 @@ export default function ComboBox({
           <ul
             ref={listRef}
             role="listbox"
+            // Portal renders outside the parent Sheet/Dialog's DOM subtree, so its
+            // scroll-lock (react-remove-scroll) swallows the native wheel scroll —
+            // drive scrollTop manually so the list still scrolls inside a drawer.
+            onWheel={(e) => { e.currentTarget.scrollTop += e.deltaY; }}
             className="max-h-52 overflow-y-auto py-1"
           >
             {filtered.length === 0 ? (

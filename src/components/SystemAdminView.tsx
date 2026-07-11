@@ -1,21 +1,17 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import {
-  Boxes,
-  BriefcaseBusiness,
-  Clock,
-  Edit,
-  Hash,
-  PackageCheck,
-  Plus,
-  Search,
-  Settings,
-  Trash2
-} from 'lucide-react';
+import { Clock, Edit, Plus, Trash2 } from 'lucide-react';
 import { CompanyProfile, JobPosition, MaterialCategory, ProductCategory } from '../types';
 import {
   generateId,
 } from '../services/db';
-import { Card, Dialog, DialogCancelButton, DialogFooter, DialogSubmitButton, FormField, fieldInputClassName, useToast, useConfirm, ActionsMenu } from './ui';
+import {
+  Badge, Button, Sheet,
+  FormField, fieldInputClassName, useToast, useConfirm, ActionsMenu,
+  Tabs, TabsList, TabsTrigger,
+} from './ui';
+import type { ActionMenuItem } from './ui';
+import { PageHeader, SectionCard, FilterBar, DataTable } from './shell';
+import type { DataTableColumn } from './shell';
 import { getJobPositions, getMaterialCategories, getProductCategories, loadSystemAdminData, saveJobPositions, saveMaterialCategories, saveProductCategories } from '../services/SystemAdminService';
 import { getCompanyProfile, saveCompanyProfile } from '../services/CompanyProfileService';
 import { CallAPI } from './UIHelper';
@@ -29,15 +25,13 @@ interface SectionConfig {
   kind: ParameterKind;
   title: string;
   shortTitle: string;
-  icon: React.ComponentType<{ className?: string }>;
-  accentClassName: string;
 }
 
 const SECTIONS: SectionConfig[] = [
-  { kind: 'JOB_POSITION', title: 'Job Position', shortTitle: 'Positions', icon: BriefcaseBusiness, accentClassName: 'bg-blue-50 text-blue-700 border-blue-100' },
-  { kind: 'MATERIAL_CATEGORY', title: 'Material Category', shortTitle: 'Materials', icon: Boxes, accentClassName: 'bg-amber-50 text-amber-800 border-amber-100' },
-  { kind: 'PRODUCT_CATEGORY', title: 'Product Category', shortTitle: 'Products', icon: PackageCheck, accentClassName: 'bg-emerald-50 text-emerald-700 border-emerald-100' },
-  { kind: 'NUMBERING', title: 'Document Numbering', shortTitle: 'Numbering', icon: Hash, accentClassName: 'bg-slate-50 text-slate-700 border-slate-200' },
+  { kind: 'JOB_POSITION', title: 'Job Position', shortTitle: 'Positions' },
+  { kind: 'MATERIAL_CATEGORY', title: 'Material Category', shortTitle: 'Materials' },
+  { kind: 'PRODUCT_CATEGORY', title: 'Product Category', shortTitle: 'Products' },
+  { kind: 'NUMBERING', title: 'Document Numbering', shortTitle: 'Auto Numbering' },
 ];
 
 const emptyNumberingForm = {
@@ -147,7 +141,6 @@ export default function SystemAdminView() {
   };
 
   const activeSection = SECTIONS.find(s => s.kind === activeKind) || SECTIONS[0];
-  const ActiveIcon = activeSection.icon;
 
   const records = useMemo<ParameterRecord[]>(() => {
     if (activeKind === 'JOB_POSITION') return jobPositions;
@@ -183,8 +176,7 @@ export default function SystemAdminView() {
     return records.some(r => r.id !== editing?.id && r.name.trim().toLowerCase() === needle);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = () => {
     const trimmedName = form.name.trim();
     if (!trimmedName) return;
 
@@ -226,278 +218,173 @@ export default function SystemAdminView() {
     }
   };
 
+  const buildRowActions = (record: ParameterRecord): ActionMenuItem[] => [
+    { label: 'Edit', icon: <Edit className="w-3.5 h-3.5" />, onClick: () => openEditDialog(record) },
+    { label: 'Delete', icon: <Trash2 className="w-3.5 h-3.5" />, onClick: () => handleDelete(record), danger: true },
+  ];
+
+  const columns: DataTableColumn<ParameterRecord>[] = [
+    { key: 'name', header: 'Name', render: (r) => <span className="font-medium text-card-foreground">{r.name}</span> },
+    {
+      key: 'status', header: 'Status', className: 'w-24',
+      render: (r) => (
+        <button type="button" onClick={() => handleToggleActive(r)}>
+          <Badge variant={r.is_active ? 'success' : 'secondary'}>{r.is_active ? 'Active' : 'Inactive'}</Badge>
+        </button>
+      ),
+    },
+    {
+      key: 'created', header: 'Created', className: 'w-32',
+      render: (r) => (
+        <div className="inline-flex items-center gap-1.5 text-muted-foreground font-mono text-[11px]">
+          <Clock className="w-3 h-3" />
+          <span>{formatDate(r.created_at)}</span>
+        </div>
+      ),
+    },
+    {
+      key: 'modified', header: 'Modified', className: 'w-32',
+      render: (r) => (
+        <div className="inline-flex items-center gap-1.5 text-muted-foreground font-mono text-[11px]">
+          <Clock className="w-3 h-3" />
+          <span>{formatDate(r.updated_at)}</span>
+        </div>
+      ),
+    },
+  ];
+
   return (
-    <div className="space-y-6" id="system-admin-view">
-      {/* Header */}
-      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-        <div className="flex items-center space-x-3">
-          <span className="p-2 bg-slate-900 text-white rounded-lg">
-            <Settings className="w-5 h-5" />
-          </span>
-          <div>
-            <h2 className="font-sans font-bold text-slate-900 text-lg">System Admin</h2>
-            <p className="text-xs text-slate-500 mt-1">
-              {activeKind === 'NUMBERING' ? 'Document numbering' : `Parameters · ${activeCount} active of ${records.length} total`}
-            </p>
-          </div>
-        </div>
+    <div className="flex flex-col gap-5 h-full min-h-0" id="system-admin-view">
+      <PageHeader
+        title="System Admin"
+        description="Manage lookup lists and document numbering."
+        actions={activeKind !== 'NUMBERING' && <Button onClick={openCreateDialog}><Plus className="w-4 h-4" /> Add {activeSection.title}</Button>}
+      />
 
-        {activeKind !== 'NUMBERING' && (
-          <button
-            type="button"
-            onClick={openCreateDialog}
-            className="inline-flex items-center justify-center space-x-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold transition-colors shadow-sm"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Add {activeSection.title}</span>
-          </button>
-        )}
-      </div>
+      <Tabs value={activeKind} onValueChange={(v) => { setActiveKind(v as ParameterKind); setSearchTerm(''); }}>
+        <TabsList>
+          {SECTIONS.map((section) => <TabsTrigger key={section.kind} value={section.kind}>{section.shortTitle}</TabsTrigger>)}
+        </TabsList>
+      </Tabs>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[220px_1fr] gap-5">
-        {/* Sidebar Navigation */}
-        <div className="space-y-2">
-          {SECTIONS.map(section => {
-            const Icon = section.icon;
-            const active = section.kind === activeKind;
-            const count = section.kind === 'JOB_POSITION'
-              ? jobPositions.length
-              : section.kind === 'MATERIAL_CATEGORY'
-                ? materialCategories.length
-                : section.kind === 'PRODUCT_CATEGORY'
-                  ? productCategories.length
-                  : null;
-
-            return (
-              <button
-                key={section.kind}
-                type="button"
-                onClick={() => { setActiveKind(section.kind); setSearchTerm(''); }}
-                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg border text-xs transition-all ${active
-                  ? 'bg-slate-900 text-white border-slate-900 shadow-sm'
-                  : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
-                  }`}
-              >
-                <span className="flex items-center gap-2 min-w-0">
-                  <Icon className="w-4 h-4 shrink-0" />
-                  <span className="font-semibold truncate">{section.shortTitle}</span>
-                </span>
-                <span className={`font-mono text-[10px] ${active ? 'text-slate-300' : 'text-slate-400'}`}>{count}</span>
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Main Content */}
-        <div className="space-y-4 min-w-0">
-          {activeKind === 'NUMBERING' ? (
-          <Card className="p-5">
-            <div className="flex items-center space-x-3 mb-4">
-              <span className={`p-2 rounded-lg border ${activeSection.accentClassName}`}>
-                <ActiveIcon className="w-4 h-4" />
-              </span>
-              <div>
-                <h3 className="font-sans font-bold text-slate-900 text-sm">Document Numbering</h3>
-                <p className="text-[10px] text-slate-500 mt-0.5">Format uses a run of zeros to mark the padded number, e.g. SO-0000 → SO-0001</p>
-              </div>
-            </div>
-
-            {!companyProfile ? (
-              <p className="text-xs text-slate-400">Loading...</p>
-            ) : (
-              <form onSubmit={handleSaveNumbering} className="space-y-5 text-xs text-slate-600">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <FormField label="Sales Order Format" labelClassName="font-semibold text-slate-700 block">
-                    <input
-                      type="text"
-                      value={numberingForm.so_number_format}
-                      onChange={(e) => setNumberingForm(p => ({ ...p, so_number_format: e.target.value }))}
-                      placeholder="SO-0000"
-                      className={`${fieldInputClassName} text-slate-800 font-mono`}
-                    />
-                  </FormField>
-                  <FormField label="Sales Order Start Number" labelClassName="font-semibold text-slate-700 block">
-                    <input
-                      type="number"
-                      min={1}
-                      value={numberingForm.so_next_number}
-                      onChange={(e) => setNumberingForm(p => ({ ...p, so_next_number: Number(e.target.value) || 1 }))}
-                      className={`${fieldInputClassName} text-slate-800`}
-                    />
-                  </FormField>
-                  <FormField label="Purchase Order Format" labelClassName="font-semibold text-slate-700 block">
-                    <input
-                      type="text"
-                      value={numberingForm.po_number_format}
-                      onChange={(e) => setNumberingForm(p => ({ ...p, po_number_format: e.target.value }))}
-                      placeholder="PO-0000"
-                      className={`${fieldInputClassName} text-slate-800 font-mono`}
-                    />
-                  </FormField>
-                  <FormField label="Purchase Order Start Number" labelClassName="font-semibold text-slate-700 block">
-                    <input
-                      type="number"
-                      min={1}
-                      value={numberingForm.po_next_number}
-                      onChange={(e) => setNumberingForm(p => ({ ...p, po_next_number: Number(e.target.value) || 1 }))}
-                      className={`${fieldInputClassName} text-slate-800`}
-                    />
-                  </FormField>
-                </div>
-                <div className="flex justify-end">
-                  <button
-                    type="submit"
-                    disabled={numberingSaving}
-                    className="inline-flex items-center justify-center px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-xs font-semibold transition-colors shadow-sm"
-                  >
-                    {numberingSaving ? 'Saving...' : 'Save Numbering'}
-                  </button>
-                </div>
-              </form>
-            )}
-          </Card>
+      {activeKind === 'NUMBERING' ? (
+        <SectionCard title="Document Numbering" description="Format uses a run of zeros to mark the padded number, e.g. SO-0000 → SO-0001" className="flex-1 min-h-0" contentClassName="p-5 overflow-auto">
+          {!companyProfile ? (
+            <p className="text-sm text-muted-foreground">Loading...</p>
           ) : (
-          <>
-          {/* Search Bar */}
-          <Card className="p-4">
-            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-              <div className="flex items-center space-x-3 min-w-0">
-                <span className={`p-2 rounded-lg border ${activeSection.accentClassName}`}>
-                  <ActiveIcon className="w-4 h-4" />
-                </span>
-                <div className="min-w-0">
-                  <h3 className="font-sans font-bold text-slate-900 text-sm">{activeSection.title}</h3>
-                  <p className="text-[10px] text-slate-500 mt-0.5">{records.length} total · {activeCount} active</p>
-                </div>
+            <form onSubmit={handleSaveNumbering} className="space-y-5 max-w-2xl">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <FormField label="Sales Order Format">
+                  <input
+                    type="text"
+                    value={numberingForm.so_number_format}
+                    onChange={(e) => setNumberingForm(p => ({ ...p, so_number_format: e.target.value }))}
+                    placeholder="SO-0000"
+                    className={`${fieldInputClassName} font-mono`}
+                  />
+                </FormField>
+                <FormField label="Sales Order Start Number">
+                  <input
+                    type="number"
+                    min={1}
+                    value={numberingForm.so_next_number}
+                    onChange={(e) => setNumberingForm(p => ({ ...p, so_next_number: Number(e.target.value) || 1 }))}
+                    className={fieldInputClassName}
+                  />
+                </FormField>
+                <FormField label="Purchase Order Format">
+                  <input
+                    type="text"
+                    value={numberingForm.po_number_format}
+                    onChange={(e) => setNumberingForm(p => ({ ...p, po_number_format: e.target.value }))}
+                    placeholder="PO-0000"
+                    className={`${fieldInputClassName} font-mono`}
+                  />
+                </FormField>
+                <FormField label="Purchase Order Start Number">
+                  <input
+                    type="number"
+                    min={1}
+                    value={numberingForm.po_next_number}
+                    onChange={(e) => setNumberingForm(p => ({ ...p, po_next_number: Number(e.target.value) || 1 }))}
+                    className={fieldInputClassName}
+                  />
+                </FormField>
               </div>
-
-              <div className="relative w-full md:w-64">
-                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5 pointer-events-none" />
-                <input
-                  type="text"
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  placeholder={`Search ${activeSection.shortTitle.toLowerCase()}...`}
-                  className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                />
+              <div className="flex justify-end">
+                <Button type="submit" disabled={numberingSaving}>{numberingSaving ? 'Saving...' : 'Save Numbering'}</Button>
               </div>
-            </div>
-          </Card>
-
-          {/* Records Table */}
-          <Card className="overflow-hidden">
-            {filteredRecords.length === 0 ? (
-              <div className="p-12 text-center">
-                <p className="text-xs text-slate-400 font-medium">No records found</p>
-              </div>
-            ) : (
-              <div className="divide-y divide-slate-100">
-                {/* Header (desktop only) */}
-                <div className="hidden sm:grid sm:grid-cols-[1fr_100px_110px_110px_80px] gap-4 px-4 py-3 bg-slate-50/50 text-xs font-semibold text-slate-600 sticky top-0">
-                  <div>Name</div>
-                  <div>Status</div>
-                  <div>Created</div>
-                  <div>Modified</div>
-                  <div className="text-right">Actions</div>
-                </div>
-
-                {/* Rows */}
-                {filteredRecords.map(record => (
-                  <div
-                    key={record.id}
-                    className="p-4 grid grid-cols-1 sm:grid-cols-[1fr_100px_110px_110px_80px] gap-4 sm:items-center sm:gap-4 hover:bg-slate-50/50 transition-colors"
-                  >
-                    {/* Name */}
-                    <div className="min-w-0">
-                      <h4 className="font-sans font-bold text-slate-900 text-sm truncate">{record.name}</h4>
-                    </div>
-
-                    {/* Status */}
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => handleToggleActive(record)}
-                        className={`px-2 py-1 rounded text-xs font-semibold whitespace-nowrap border ${record.is_active
-                          ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                          : 'bg-slate-50 text-slate-500 border-slate-200'
-                          }`}
-                      >
-                        {record.is_active ? 'Active' : 'Inactive'}
-                      </button>
-                    </div>
-
-                    {/* Created Date */}
-                    <div className="flex items-center gap-1 text-[10px] text-slate-500 font-mono">
-                      <Clock className="w-3 h-3 shrink-0" />
-                      <span>{formatDate(record.created_at)}</span>
-                    </div>
-
-                    {/* Modified Date */}
-                    <div className="flex items-center gap-1 text-[10px] text-slate-500 font-mono">
-                      <Clock className="w-3 h-3 shrink-0" />
-                      <span>{formatDate(record.updated_at)}</span>
-                    </div>
-
-                    {/* Actions */}
-                    <div className="flex items-center justify-end gap-1.5">
-                      <ActionsMenu items={[
-                        { label: 'Edit', icon: <Edit className="w-3.5 h-3.5" />, onClick: () => openEditDialog(record) },
-                        { label: 'Delete', icon: <Trash2 className="w-3.5 h-3.5" />, onClick: () => handleDelete(record), danger: true },
-                      ]} />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </Card>
-          </>
+            </form>
           )}
-        </div>
-      </div>
+        </SectionCard>
+      ) : (
+        <>
+          <SectionCard title="Filters" className="shrink-0" contentClassName="p-4">
+            <FilterBar
+              search={searchTerm}
+              onSearchChange={setSearchTerm}
+              searchPlaceholder={`Search ${activeSection.shortTitle.toLowerCase()}...`}
+            />
+          </SectionCard>
 
-      {/* Dialog */}
-      <Dialog
+          <SectionCard title={activeSection.title} description={`${records.length} total · ${activeCount} active`} className="flex-1 min-h-0" contentClassName="p-0 flex-1 min-h-0 flex flex-col">
+            <div className="flex-1 min-h-0 overflow-auto">
+              <DataTable
+                columns={columns}
+                rows={filteredRecords}
+                rowKey={(r) => r.id}
+                rowActions={(r) => <ActionsMenu items={buildRowActions(r)} />}
+                emptyState="No records found."
+              />
+            </div>
+          </SectionCard>
+        </>
+      )}
+
+      {/* Add/Edit drawer */}
+      <Sheet
         open={dialogOpen}
         onClose={() => setDialogOpen(false)}
-        maxWidth="max-w-md"
         title={editing ? `Edit ${activeSection.title}` : `Add ${activeSection.title}`}
-        titleIcon={<span className={`p-1 rounded border ${activeSection.accentClassName}`}><ActiveIcon className="w-4 h-4" /></span>}
+        footer={
+          <div className="flex items-center justify-end gap-2">
+            <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
+            <Button onClick={handleSubmit} disabled={!form.name.trim()}>{editing ? 'Save' : 'Create'}</Button>
+          </div>
+        }
       >
-        <form onSubmit={handleSubmit} className="p-5 space-y-4 text-xs text-slate-600">
+        <div className="p-5 space-y-4">
           {formError && (
-            <div className="p-2.5 bg-red-50 border border-red-100 text-red-700 rounded-lg font-medium">
+            <div data-fade-item className="p-2.5 bg-destructive/10 border border-destructive/20 text-destructive rounded-lg text-xs font-medium">
               {formError}
             </div>
           )}
 
-          <FormField label="Name *" labelClassName="font-semibold text-slate-700 block">
-            <input
-              type="text"
-              required
-              value={form.name}
-              onChange={(e) => { setForm(p => ({ ...p, name: e.target.value })); setFormError(''); }}
-              placeholder={activeSection.title}
-              className={`${fieldInputClassName} text-slate-800`}
-              autoFocus
-            />
-          </FormField>
+          <div data-fade-item>
+            <FormField label="Name *">
+              <input
+                type="text"
+                required
+                value={form.name}
+                onChange={(e) => { setForm(p => ({ ...p, name: e.target.value })); setFormError(''); }}
+                placeholder={activeSection.title}
+                className={fieldInputClassName}
+                autoFocus
+              />
+            </FormField>
+          </div>
 
-          <label className="flex items-center justify-between gap-3 p-3 rounded-lg border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-700 cursor-pointer hover:bg-slate-100 transition-colors">
+          <label data-fade-item className="flex items-center justify-between gap-3 p-3 rounded-lg border border-border bg-secondary/30 text-xs font-semibold text-foreground cursor-pointer hover:bg-secondary/50 transition-colors">
             <span>Active</span>
             <input
               type="checkbox"
               checked={form.is_active}
               onChange={(e) => setForm(p => ({ ...p, is_active: e.target.checked }))}
-              className="w-4 h-4 accent-blue-600 cursor-pointer"
+              className="w-4 h-4 accent-primary cursor-pointer"
             />
           </label>
-
-          <DialogFooter>
-            <DialogCancelButton onClick={() => setDialogOpen(false)} />
-            <DialogSubmitButton>{editing ? 'Save' : 'Create'}</DialogSubmitButton>
-          </DialogFooter>
-        </form>
-      </Dialog>
+        </div>
+      </Sheet>
     </div>
   );
 }

@@ -6,12 +6,13 @@
 import React, { useMemo, useState } from 'react';
 import { PurchaseHeader, PurchaseDetail } from '../types';
 import {
-  ArrowLeft, Calendar, Paperclip, Trash2, Edit, FileText, ArrowRightCircle, Check, Boxes,
+  ArrowLeft, Calendar, Paperclip, Trash2, Edit, FileText, ArrowRightCircle, Check, Boxes, FileSpreadsheet,
 } from 'lucide-react';
 import { Card, Badge, Button } from './ui';
 import { SectionCard, DataTable } from './shell';
 import type { DataTableColumn } from './shell';
 import { useFadeInOnMount } from '../hooks/useFadeInOnMount';
+import { formatDateTime, formatDate } from '../utils/date';
 
 type LineItemSortKey = 'materialName' | 'quantity' | 'unitCost' | 'totalPrice' | 'receivedQuantity';
 const NUMERIC_KEYS: LineItemSortKey[] = ['quantity', 'unitCost', 'totalPrice', 'receivedQuantity'];
@@ -38,6 +39,9 @@ interface PurchaseOrderDetailViewProps {
   onReceive: (purchase: PurchaseHeader) => void;
   onCancel: (id: string) => void;
   onOpenQuotationDoc: (purchase: PurchaseHeader) => void;
+  // Present only when purchase.salesHeaderId is set — jumps to the sales
+  // order this purchase was raised against.
+  onViewSalesOrder?: (salesHeaderId: string) => void;
 }
 
 const sortByField = <K extends LineItemSortKey>(rows: PurchaseDetail[], key: K, dir: 'asc' | 'desc'): PurchaseDetail[] => {
@@ -63,7 +67,7 @@ const sortByField = <K extends LineItemSortKey>(rows: PurchaseDetail[], key: K, 
  */
 export default function PurchaseOrderDetailView({
   purchase, onBack, backLabel = 'Back to Purchases', receivingId,
-  onEdit, onConvert, onDelete, onReceive, onCancel, onOpenQuotationDoc
+  onEdit, onConvert, onDelete, onReceive, onCancel, onOpenQuotationDoc, onViewSalesOrder
 }: PurchaseOrderDetailViewProps) {
   const contentRef = useFadeInOnMount<HTMLDivElement>([purchase.id]);
   const status = STATUS_META[purchase.status];
@@ -103,82 +107,100 @@ export default function PurchaseOrderDetailView({
 
       {/* Header summary card */}
       <div data-fade-item>
-      <Card className="p-5">
-        <div className="flex items-start justify-between gap-4 flex-wrap">
-          <div className="space-y-2.5 min-w-0">
-            <div>
-              <h2 className="font-mono font-bold text-foreground text-lg leading-snug">{purchase.purchaseNo}</h2>
-              <p className="text-xs text-muted-foreground mt-1">{purchase.vendorName}</p>
-            </div>
-
-            <Badge variant={status.variant}>{status.label}</Badge>
-
-            <div className="flex flex-wrap gap-x-5 gap-y-1.5 text-xs text-muted-foreground">
-              <div className="flex items-center gap-1.5">
-                <Calendar className="w-3.5 h-3.5" />
-                <span>Quotation Date:</span>
-                <span className="text-foreground">{purchase.quotationDate}</span>
+        <Card className="p-5">
+          <div className="flex items-start justify-between gap-4 flex-wrap">
+            <div className="space-y-2.5 min-w-0">
+              <div>
+                <h2 className="font-mono font-bold text-foreground text-lg leading-snug">{purchase.purchaseNo}</h2>
+                <p className="text-xs text-muted-foreground mt-1">{purchase.vendorName}</p>
               </div>
-              {purchase.orderDate && (
-                <div className="flex items-center gap-1.5">
-                  <Calendar className="w-3.5 h-3.5" />
-                  <span>Order Date:</span>
-                  <span className="text-foreground">{purchase.orderDate}</span>
+
+              <Badge variant={status.variant}>{status.label}</Badge>
+
+              {purchase.salesNo && purchase.salesHeaderId && (
+                <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <FileSpreadsheet className="w-3.5 h-3.5" />
+                  <span>Sales Ref No:</span>
+                  {onViewSalesOrder ? (
+                    <button
+                      type="button"
+                      onClick={() => onViewSalesOrder(purchase.salesHeaderId!)}
+                      className="font-mono text-primary hover:underline"
+                    >
+                      {purchase.salesNo}
+                    </button>
+                  ) : (
+                    <span className="font-mono text-foreground">{purchase.salesNo}</span>
+                  )}
                 </div>
               )}
-              {purchase.receivedDate && (
+
+              <div className="flex flex-wrap gap-x-5 gap-y-1.5 text-xs text-muted-foreground">
                 <div className="flex items-center gap-1.5">
                   <Calendar className="w-3.5 h-3.5" />
-                  <span>Received Date:</span>
-                  <span className="text-foreground">{purchase.receivedDate}</span>
+                  <span>Quotation Date:</span>
+                  <span className="text-foreground">{formatDateTime(purchase.quotationDate)}</span>
                 </div>
-              )}
-              <div className="flex items-center gap-1.5">
-                <span>Total Cost:</span>
-                <span className="font-mono font-semibold text-foreground">RM {purchase.totalPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                {purchase.orderDate && (
+                  <div className="flex items-center gap-1.5">
+                    <Calendar className="w-3.5 h-3.5" />
+                    <span>Order Date:</span>
+                    <span className="text-foreground">{formatDateTime(purchase.orderDate)}</span>
+                  </div>
+                )}
+                {purchase.receivedDate && (
+                  <div className="flex items-center gap-1.5">
+                    <Calendar className="w-3.5 h-3.5" />
+                    <span>Received Date:</span>
+                    <span className="text-foreground">{formatDate(purchase.receivedDate)}</span>
+                  </div>
+                )}
+                <div className="flex items-center gap-1.5">
+                  <span>Total Cost:</span>
+                  <span className="font-mono font-semibold text-foreground">RM {purchase.totalPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                </div>
               </div>
+
+              {purchase.attachments?.[0] && (
+                <a
+                  href={purchase.attachments[0].dataUrl}
+                  download={purchase.attachments[0].name}
+                  className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-primary/10 hover:bg-primary/20 text-primary rounded text-[10px] font-mono transition-colors"
+                  title="Download attachment"
+                >
+                  <Paperclip className="w-2.5 h-2.5 shrink-0" />
+                  <span className="truncate max-w-[200px]">{purchase.attachments[0].name}</span>
+                </a>
+              )}
             </div>
 
-            {purchase.attachments?.[0] && (
-              <a
-                href={purchase.attachments[0].dataUrl}
-                download={purchase.attachments[0].name}
-                className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-primary/10 hover:bg-primary/20 text-primary rounded text-[10px] font-mono transition-colors"
-                title="Download attachment"
-              >
-                <Paperclip className="w-2.5 h-2.5 shrink-0" />
-                <span className="truncate max-w-[200px]">{purchase.attachments[0].name}</span>
-              </a>
-            )}
-          </div>
+            {/* Status-appropriate lifecycle actions (mirrors PurchasesView.tsx's row actions) */}
+            <div className="flex items-center flex-wrap gap-1.5 shrink-0">
+              {purchase.status === 'QUOTATION' && (
+                <>
+                  <Button variant="outline" size="sm" onClick={() => onEdit(purchase)}><Edit className="w-3.5 h-3.5" /> Edit</Button>
+                  <Button variant="outline" size="sm" onClick={() => onOpenQuotationDoc(purchase)}><FileText className="w-3.5 h-3.5" /> Generate Quotation</Button>
+                  <Button size="sm" onClick={() => onConvert(purchase)}><ArrowRightCircle className="w-3.5 h-3.5" /> Proceed to Purchase Order</Button>
+                  <Button variant="destructive" size="sm" onClick={() => onDelete(purchase.id)}><Trash2 className="w-3.5 h-3.5" /> Delete</Button>
+                </>
+              )}
 
-          {/* Status-appropriate lifecycle actions (mirrors PurchasesView.tsx's row actions) */}
-          <div className="flex items-center flex-wrap gap-1.5 shrink-0">
-            {purchase.status === 'QUOTATION' && (
-              <>
-                <Button variant="outline" size="sm" onClick={() => onEdit(purchase)}><Edit className="w-3.5 h-3.5" /> Edit</Button>
-                <Button variant="outline" size="sm" onClick={() => onOpenQuotationDoc(purchase)}><FileText className="w-3.5 h-3.5" /> Generate Quotation</Button>
-                <Button size="sm" onClick={() => onConvert(purchase)}><ArrowRightCircle className="w-3.5 h-3.5" /> Proceed to Purchase Order</Button>
+              {purchase.status === 'ORDERED' && (
+                <>
+                  <Button variant="outline" size="sm" onClick={() => onEdit(purchase)}><Edit className="w-3.5 h-3.5" /> Edit</Button>
+                  <Button size="sm" onClick={() => onReceive(purchase)} disabled={receivingId === purchase.id}>
+                    <Check className="w-3.5 h-3.5" /> {receivingId === purchase.id ? 'Receiving...' : 'Mark as Received'}
+                  </Button>
+                  <Button variant="destructive" size="sm" onClick={() => onCancel(purchase.id)}>Cancel Order</Button>
+                </>
+              )}
+
+              {purchase.status === 'CANCELLED' && (
                 <Button variant="destructive" size="sm" onClick={() => onDelete(purchase.id)}><Trash2 className="w-3.5 h-3.5" /> Delete</Button>
-              </>
-            )}
-
-            {purchase.status === 'ORDERED' && (
-              <>
-                <Button variant="outline" size="sm" onClick={() => onEdit(purchase)}><Edit className="w-3.5 h-3.5" /> Edit</Button>
-                <Button size="sm" onClick={() => onReceive(purchase)} disabled={receivingId === purchase.id}>
-                  <Check className="w-3.5 h-3.5" /> {receivingId === purchase.id ? 'Receiving...' : 'Mark as Received'}
-                </Button>
-                <Button variant="destructive" size="sm" onClick={() => onCancel(purchase.id)}>Cancel Order</Button>
-              </>
-            )}
-
-            {purchase.status === 'CANCELLED' && (
-              <Button variant="destructive" size="sm" onClick={() => onDelete(purchase.id)}><Trash2 className="w-3.5 h-3.5" /> Delete</Button>
-            )}
+              )}
+            </div>
           </div>
-        </div>
-      </Card>
+        </Card>
       </div>
 
       {/* Material line items */}

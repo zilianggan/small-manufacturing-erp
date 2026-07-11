@@ -12,8 +12,13 @@ import { getVendors } from "./ContactsService";
 import { getMaterialCategories } from "./SystemAdminService";
 import { saveInventoryTransaction } from "./InventoryTransactionService";
 import { Attachment, PurchaseHeader, PurchaseDetail } from "../types";
+import { nowIso } from "../utils/date";
 
 export { getMaterialCategories };
+
+// quotation_date/order_date are timestamptz now — bump a date-only filter
+// "to" bound to end-of-day so same-day afternoon rows aren't excluded.
+const endOfDay = (value: string): string => (value.length <= 10 ? `${value}T23:59:59.999` : value);
 
 export const generateId = (): string => crypto.randomUUID();
 
@@ -58,12 +63,13 @@ const mapPurchaseHeaderRow = (row: any): PurchaseHeader => ({
   totalPrice: Number(row.total_price) || 0,
   attachments: row.attachments || [],
   salesHeaderId: row.sales_header_id || undefined,
+  salesNo: row.sales_header?.sales_no || undefined,
   details: (row.purchase_detail || []).map(mapPurchaseDetailRow),
   createdAt: row.created_at,
   updatedAt: row.updated_at,
 });
 
-export type PurchaseSortField = 'reference' | 'supplier' | 'date' | 'totalCost';
+export type PurchaseSortField = 'reference' | 'supplier' | 'date' | 'totalCost' | 'salesNo';
 export type SortDir = 'asc' | 'desc';
 
 export interface PurchaseFilters {
@@ -90,8 +96,8 @@ export const getPurchases = async (
   let query = supabase
     .from('purchase_header')
     .select(useMaterialFilter
-      ? '*, vendors(company_name), purchase_detail!inner(*, material(name, code, dimension))'
-      : '*, vendors(company_name), purchase_detail(*, material(name, code, dimension))');
+      ? '*, vendors(company_name), sales_header(sales_no), purchase_detail!inner(*, material(name, code, dimension))'
+      : '*, vendors(company_name), sales_header(sales_no), purchase_detail(*, material(name, code, dimension))');
 
   query = tab === 'QUOTATION'
     ? query.eq('status', 'QUOTATION')
@@ -116,7 +122,7 @@ export const getPurchases = async (
     query = query.in('purchase_detail.material_id', filters.materialIds!);
   }
   if (filters.dateFrom) query = query.gte(dateColumn, filters.dateFrom);
-  if (filters.dateTo) query = query.lte(dateColumn, filters.dateTo);
+  if (filters.dateTo) query = query.lte(dateColumn, endOfDay(filters.dateTo));
 
   switch (sortField) {
     case 'reference':
@@ -124,6 +130,9 @@ export const getPurchases = async (
       break;
     case 'supplier':
       query = query.order('company_name', { ascending: sortDir === 'asc', foreignTable: 'vendors' });
+      break;
+    case 'salesNo':
+      query = query.order('sales_no', { ascending: sortDir === 'asc', foreignTable: 'sales_header' });
       break;
     case 'totalCost':
       query = query.order('total_price', { ascending: sortDir === 'asc' });
@@ -143,13 +152,31 @@ export const getPurchases = async (
   return (data || []).map(mapPurchaseHeaderRow);
 };
 
+// Prefills the "add item" unit cost field with what was last paid for this
+// material — one row, most recent purchase_detail first. undefined when the
+// material has never been purchased (caller defaults to 0).
+export const getLatestUnitCost = async (materialId: string): Promise<number | undefined> => {
+  const { data, error } = await supabase
+    .from('purchase_detail')
+    .select('unit_cost, created_at')
+    .eq('material_id', materialId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    console.error('getLatestUnitCost', error);
+    return undefined;
+  }
+  return data ? Number(data.unit_cost) || 0 : undefined;
+};
+
 // Fetches a single purchase regardless of its status/tab or the list's
 // current search filter — used by PurchaseOrderDetailView.tsx and to
 // refresh an open detail page after an edit/transition.
 export const getPurchaseById = async (id: string): Promise<PurchaseHeader | null> => {
   const { data, error } = await supabase
     .from('purchase_header')
-    .select('*, vendors(company_name), purchase_detail(*, material(name, code, dimension))')
+    .select('*, vendors(company_name), sales_header(sales_no), purchase_detail(*, material(name, code, dimension))')
     .eq('id', id)
     .maybeSingle();
   if (error) {
@@ -187,7 +214,6 @@ const replaceDetails = async (headerId: string, details: PurchaseDetailInput[]):
 export const createPurchaseQuotation = async (input: PurchaseFormInput): Promise<void> => {
   const id = generateId();
   const totalPrice = input.details.reduce((sum, d) => sum + d.totalPrice, 0);
-  const today = new Date().toISOString().split('T')[0];
 
   const { data: purchaseNo, error: numberError } = await supabase.rpc('next_document_number', { p_kind: 'PO' });
   if (numberError) {
@@ -198,7 +224,7 @@ export const createPurchaseQuotation = async (input: PurchaseFormInput): Promise
   const { error: headerError } = await supabase.from('purchase_header').insert({
     id,
     purchase_no: purchaseNo,
-    quotation_date: today,
+    quotation_date: nowIso(),
     status: 'QUOTATION',
     vendor_id: input.vendorId,
     sales_header_id: input.salesHeaderId || null,
@@ -277,7 +303,7 @@ export const receivePurchaseOrder = async (purchase: PurchaseHeader): Promise<vo
       unitCost: detail.unitCost,
       materialId: detail.materialId,
       purchaseDetailId: detail.detailId,
-      transactionDate: today,
+      transactionDate: nowIso(),
     });
 
     const { error: detailError } = await supabase

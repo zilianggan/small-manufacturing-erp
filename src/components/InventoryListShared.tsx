@@ -9,6 +9,7 @@ import { InventoryListItem, InventoryTransactionType } from '../types';
 import { Card } from './ui';
 import SortableTh from './SortableTh';
 import { sortByField } from '../utils/sortRows';
+import { formatDateTime } from '../utils/date';
 
 // Shared badge styling for InventoryListItem.transactionType, used by both
 // MaterialView's and ProductView's "Inventory List" detail-panel tables.
@@ -84,7 +85,7 @@ export function InventoryHistoryTable({ items, loading, emptyMessage = 'No inven
                     </td>
                     <td className="px-4 py-2.5 font-mono text-card-foreground">{item.refNo || '-'}</td>
                     <td className="px-4 py-2.5 text-muted-foreground">{item.counterpartyName || '-'}</td>
-                    <td className="px-4 py-2.5 text-muted-foreground">{item.orderDate || '-'}</td>
+                    <td className="px-4 py-2.5 text-muted-foreground">{item.orderDate ? formatDateTime(item.orderDate) : '-'}</td>
                     <td className="px-4 py-2.5 text-muted-foreground">{item.quantity}</td>
                     <td className="px-4 py-2.5 text-muted-foreground">{item.unitCost != null ? item.unitCost.toFixed(2) : '-'}</td>
                     <td className="px-4 py-2.5 text-muted-foreground">{item.totalPrice != null ? item.totalPrice.toFixed(2) : '-'}</td>

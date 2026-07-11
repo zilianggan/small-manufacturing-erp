@@ -33,7 +33,6 @@ const mapMaterialRow = (row: any): Material => ({
   attachments: row.attachments || [],
   status: row.status || 'ACTIVE',
   minimumStock: Number(row.minimum_stock) || 0,
-  reorderQuantity: Number(row.reorder_quantity) || 0,
   materialCategoryId: row.material_category_id,
   createdAt: row.created_at,
   updatedAt: row.updated_at
