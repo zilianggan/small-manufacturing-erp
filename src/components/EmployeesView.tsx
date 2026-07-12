@@ -8,15 +8,24 @@ import {
   Phone,
   Briefcase,
 } from 'lucide-react';
-import { Employee, JobPosition } from '../types';
-import { generateId, getEmployees, saveEmployee, deleteEmployee, getJobPositions } from '../services/EmployeesService';
+import { Employee, EmployeeConsumableUsageItem, JobPosition } from '../types';
+import { generateId, getEmployees, getEmployeeById, getEmployeeConsumableUsage, saveEmployee, deleteEmployee, getJobPositions } from '../services/EmployeesService';
 import ComboBox from './ComboBox';
+import EmployeeDetailView from './EmployeeDetailView';
 import { PageHeader } from './shell';
 import { Sheet, Card, FormField, fieldInputClassName, SearchInput, Button, Badge, Skeleton, useToast, useConfirm } from './ui';
 import { CallAPI } from './UIHelper';
 import { useFadeInOnMount } from '../hooks/useFadeInOnMount';
 
-export default function EmployeesView() {
+interface EmployeesViewProps {
+  // Cross-tab drill-in from MaterialView's Usage History employee link.
+  initialEmployeeId?: string | null;
+  onInitialEmployeeHandled?: () => void;
+  onReturnToOrigin?: () => void;
+  onViewSalesOrder?: (salesHeaderId: string, fromEmployeeId?: string) => void;
+}
+
+export default function EmployeesView({ initialEmployeeId, onInitialEmployeeHandled, onReturnToOrigin, onViewSalesOrder }: EmployeesViewProps = {}) {
   const toast = useToast();
   const confirm = useConfirm();
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -36,6 +45,46 @@ export default function EmployeesView() {
   };
 
   useEffect(() => { loadEmployees(); }, []);
+
+  // ─── Drill-down detail page ───────────────────────────────────────────────
+  const [detailEmployee, setDetailEmployee] = useState<Employee | null>(null);
+  const [detailRows, setDetailRows] = useState<EmployeeConsumableUsageItem[]>([]);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailOpenedExternally, setDetailOpenedExternally] = useState(false);
+
+  const loadDetailUsage = (employeeId: string) => {
+    setDetailLoading(true);
+    CallAPI(() => getEmployeeConsumableUsage(employeeId), {
+      onCompleted: (data) => { setDetailRows(data); setDetailLoading(false); },
+      onError: (err) => { console.error(err); setDetailLoading(false); },
+    });
+  };
+
+  const openDetail = (emp: Employee) => {
+    setDetailEmployee(emp);
+    setDetailRows([]);
+    loadDetailUsage(emp.id);
+  };
+
+  const handleDetailBack = () => {
+    const external = detailOpenedExternally;
+    setDetailEmployee(null);
+    setDetailOpenedExternally(false);
+    if (external) onReturnToOrigin?.();
+  };
+
+  // Cross-tab drill-in: open a specific employee's detail page on arrival.
+  useEffect(() => {
+    if (!initialEmployeeId) return;
+    CallAPI(() => getEmployeeById(initialEmployeeId), {
+      onCompleted: (emp) => {
+        if (emp) { setDetailEmployee(emp); setDetailRows([]); setDetailOpenedExternally(true); loadDetailUsage(emp.id); }
+        onInitialEmployeeHandled?.();
+      },
+      onError: (err) => { console.error(err); onInitialEmployeeHandled?.(); },
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialEmployeeId]);
 
   // Search and Filters
   const [searchTerm, setSearchTerm] = useState('');
@@ -139,6 +188,20 @@ export default function EmployeesView() {
     setIsFormOpen(false);
   };
 
+  if (detailEmployee) {
+    return (
+      <EmployeeDetailView
+        employee={detailEmployee}
+        jobPositionName={detailEmployee.jobPositionId ? jobPositionMap.get(detailEmployee.jobPositionId) : undefined}
+        onBack={handleDetailBack}
+        backLabel={detailOpenedExternally ? 'Back to Material' : 'Back to Employees'}
+        rows={detailRows}
+        loading={detailLoading}
+        onViewSalesOrder={onViewSalesOrder ? (id) => onViewSalesOrder(id, detailEmployee.id) : undefined}
+      />
+    );
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -187,7 +250,8 @@ export default function EmployeesView() {
             <Card
               key={emp.id}
               id={`emp-card-${emp.id}`}
-              className="p-5 hover:border-slate-300 hover:shadow-md transition-all flex flex-col justify-between relative group animate-in fade-in slide-in-from-bottom-2 duration-150"
+              onClick={() => openDetail(emp)}
+              className="p-5 hover:border-slate-300 hover:shadow-md transition-all flex flex-col justify-between relative group animate-in fade-in slide-in-from-bottom-2 duration-150 cursor-pointer"
             >
               <div className="space-y-3">
                 <div className="flex items-start justify-between">
@@ -230,7 +294,7 @@ export default function EmployeesView() {
                 <Button
                   id={`btn-edit-emp-${emp.id}`}
                   variant="ghost" size="icon"
-                  onClick={() => handleOpenEditForm(emp)}
+                  onClick={(e) => { e.stopPropagation(); handleOpenEditForm(emp); }}
                   className="h-7 w-7 text-muted-foreground hover:text-primary"
                   title="Edit details"
                 >
@@ -239,7 +303,7 @@ export default function EmployeesView() {
                 <Button
                   id={`btn-delete-emp-${emp.id}`}
                   variant="ghost" size="icon"
-                  onClick={() => handleDelete(emp.id, emp.fullName)}
+                  onClick={(e) => { e.stopPropagation(); handleDelete(emp.id, emp.fullName); }}
                   className="h-7 w-7 text-muted-foreground hover:text-destructive"
                   title="Remove employee"
                 >

@@ -18,6 +18,7 @@ const mapMaterialRow = (row: any): Material => ({
   name: row.name,
   code: row.code || '',
   materialType: row.material_type,
+  consumptionMode: row.consumption_mode || undefined,
   dimension: row.dimension || '',
   quantity: Number(row.quantity) || 0,
   description: row.description || '',
@@ -128,8 +129,32 @@ const mapPurchaseHistoryRow = (row: any): InventoryListItem => ({
 // that consumed it) and stock ADJUSTMENTs. PURCHASE is excluded from the
 // ledger side since purchase_detail above already covers it with richer,
 // pre-receipt data.
+// Consumable usage recorded on the Kanban (production_material_usage) carries
+// the sales order + workflow assignee, but for MANUAL consumables (and any
+// consumable before its order is completed) there's no linked
+// inventory_transaction, so it wouldn't otherwise appear. Surface those rows
+// directly so "who used this consumable" is always traceable.
+const mapConsumableUsageRow = (row: any): InventoryListItem => {
+  const header = row.sales_detail?.sales_header;
+  const task = row.sales_detail?.workflow_tasks?.[0];
+  const qty = Number(row.actual_quantity) || 0;
+  return {
+    id: row.id,
+    transactionType: 'SALES', // consumed in production against a sales order
+    refNo: header?.sales_no,
+    counterpartyName: header?.clients?.company_name,
+    orderDate: row.created_at,
+    quantity: -qty,
+    status: header?.status,
+    salesHeaderId: header?.id,
+    employeeId: task?.employee_id || undefined,
+    employeeName: task?.employees?.full_name || undefined,
+    productionMaterialUsageId: row.id,
+  };
+};
+
 export const getMaterialInventoryList = async (materialId: string): Promise<InventoryListItem[]> => {
-  const [purchaseRows, movementRows] = await Promise.all([
+  const [purchaseRows, movementRows, consumableUsageRows] = await Promise.all([
     (async () => {
       const { data, error } = await supabase
         .from('purchase_detail')
@@ -142,7 +167,42 @@ export const getMaterialInventoryList = async (materialId: string): Promise<Inve
       return (data || []).map(mapPurchaseHistoryRow);
     })(),
     getInventoryMovements({ materialId }, ['PURCHASE']),
+    (async () => {
+      // Only consumable usage rows (material!inner filter) — raw-material usage
+      // already surfaces via its SALES reservation movement.
+      const { data, error } = await supabase
+        .from('production_material_usage')
+        .select('id, actual_quantity, created_at, material!inner(material_type), sales_detail(sales_header(id, sales_no, status, clients(company_name)), workflow_tasks(employee_id, employees(full_name)))')
+        .eq('material_id', materialId)
+        .eq('material.material_type', 'CONSUMABLE_MATERIAL');
+      if (error) {
+        console.error('getMaterialInventoryList(consumableUsage)', error);
+        return [];
+      }
+      return (data || []).map(mapConsumableUsageRow);
+    })(),
   ]);
 
-  return [...purchaseRows, ...movementRows].sort((a, b) => (b.orderDate || '').localeCompare(a.orderDate || ''));
+  // AUTOMATIC consumables already appear as their linked auto-deduction (which
+  // resolves the employee via the same join) — drop the duplicate usage row.
+  const linkedUsageIds = new Set(movementRows.map(m => m.productionMaterialUsageId).filter(Boolean));
+  const unlinkedUsage = consumableUsageRows.filter(u => !linkedUsageIds.has(u.id));
+
+  return [...purchaseRows, ...movementRows, ...unlinkedUsage].sort((a, b) => (b.orderDate || '').localeCompare(a.orderDate || ''));
 };
+
+// Active consumable materials — for the Production Kanban's consumable picker.
+export const getConsumableMaterials = async (): Promise<Material[]> => {
+  const { data, error } = await supabase
+    .from('material')
+    .select('*')
+    .eq('material_type', 'CONSUMABLE_MATERIAL')
+    .or('status.is.null,status.neq.INACTIVE') // null-status rows must still show
+    .order('name', { ascending: true });
+  if (error) {
+    console.error('getConsumableMaterials', error);
+    return [];
+  }
+  return (data || []).map(mapMaterialRow);
+};
+

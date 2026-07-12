@@ -131,7 +131,9 @@ export const saveInventoryTransaction = (tx: InventoryTransaction): Promise<void
 
 const mapMovementRow = (row: any): InventoryListItem => {
   const purchaseHeader = row.purchase_detail?.purchase_header;
-  const salesHeader = row.production_material_usage?.sales_detail?.sales_header;
+  const salesDetail = row.production_material_usage?.sales_detail;
+  const salesHeader = salesDetail?.sales_header;
+  const task = salesDetail?.workflow_tasks?.[0];
   const quantity = Number(row.quantity) || 0;
   const unitCost = row.unit_cost != null ? Number(row.unit_cost) : undefined;
 
@@ -147,6 +149,9 @@ const mapMovementRow = (row: any): InventoryListItem => {
     status: purchaseHeader?.status || salesHeader?.status,
     purchaseHeaderId: purchaseHeader?.id,
     salesHeaderId: salesHeader?.id,
+    employeeId: task?.employee_id || undefined,
+    employeeName: task?.employees?.full_name || undefined,
+    productionMaterialUsageId: row.production_material_usage?.id || undefined,
   };
 };
 
@@ -168,7 +173,7 @@ export const getInventoryMovements = async (
     .select(`
       id, transaction_type, quantity, unit_cost, transaction_date,
       purchase_detail(purchase_header(id, purchase_no, status, vendors(company_name))),
-      production_material_usage(sales_detail(sales_header(id, sales_no, status, clients(company_name))))
+      production_material_usage(id, sales_detail(sales_header(id, sales_no, status, clients(company_name)), workflow_tasks(employee_id, employees(full_name))))
     `)
     .order('transaction_date', { ascending: false })
     .order('created_at', { ascending: false });

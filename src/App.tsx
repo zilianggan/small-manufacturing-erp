@@ -115,6 +115,25 @@ export default function App() {
     }
   };
 
+  // Cross-tab drill-in to an employee's detail page (from Material's Usage
+  // History employee link). Same pattern as sales/purchase above; only origin
+  // is Material.
+  const [pendingEmployeeId, setPendingEmployeeId] = useState<string | null>(null);
+  const [employeeReturnTo, setEmployeeReturnTo] = useState<{ type: 'MATERIAL'; id: string } | null>(null);
+  const navigateToEmployee = (employeeId: string, fromMaterialId?: string) => {
+    setPendingEmployeeId(employeeId);
+    setEmployeeReturnTo(fromMaterialId ? { type: 'MATERIAL', id: fromMaterialId } : null);
+    setActiveTab('EMPLOYEES');
+  };
+  const returnFromEmployee = () => {
+    const returnTo = employeeReturnTo;
+    setEmployeeReturnTo(null);
+    if (returnTo?.type === 'MATERIAL') {
+      setPendingMaterialId(returnTo.id);
+      setActiveTab('MATERIAL');
+    }
+  };
+
   // Dark mode state and persistence
   const [darkMode, setDarkMode] = useState<boolean>(() => {
     const stored = localStorage.getItem('erp_dark_mode');
@@ -514,6 +533,7 @@ export default function App() {
             )}
             {activeTab === 'MATERIAL' && (
               <MaterialView
+                onViewEmployee={navigateToEmployee}
                 key={refreshKey}
                 onViewPurchaseOrder={navigateToPurchaseOrder}
                 onViewSalesOrder={navigateToSalesOrder}
@@ -530,7 +550,15 @@ export default function App() {
               />
             )}
             {activeTab === 'CONTACTS' && <ContactsView key={refreshKey} />}
-            {activeTab === 'EMPLOYEES' && <EmployeesView key={refreshKey} />}
+            {activeTab === 'EMPLOYEES' && (
+              <EmployeesView
+                key={refreshKey}
+                initialEmployeeId={pendingEmployeeId}
+                onInitialEmployeeHandled={() => setPendingEmployeeId(null)}
+                onReturnToOrigin={returnFromEmployee}
+                onViewSalesOrder={(salesHeaderId) => navigateToSalesOrder(salesHeaderId)}
+              />
+            )}
             {activeTab === 'ORDERS' && (
               <OrdersView
                 key={refreshKey}

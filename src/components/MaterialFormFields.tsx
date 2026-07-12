@@ -1,12 +1,17 @@
-import { Attachment, MaterialCategory, MaterialType } from '../types';
+import { Attachment, ConsumptionMode, MaterialCategory, MaterialType } from '../types';
 import AttachmentSection from './AttachmentSection';
 import ComboBox from './ComboBox';
 import { FormField, fieldInputClassName } from './ui';
 
 const MATERIAL_TYPE_OPTIONS = [
   { value: 'RAW_MATERIAL', label: 'Raw Material' },
-  { value: 'FINISHED_GOOD', label: 'Finished Good' },
+  { value: 'CONSUMABLE_MATERIAL', label: 'Consumable Material' },
   { value: 'CUSTOMER_STOCK', label: 'Customer Stock' },
+];
+
+const CONSUMPTION_MODE_OPTIONS = [
+  { value: 'AUTOMATIC', label: 'Automatic (deduct on completion)' },
+  { value: 'MANUAL', label: 'Manual (record only, adjust later)' },
 ];
 
 const STATUS_OPTIONS = [
@@ -18,6 +23,7 @@ interface MaterialFormFieldsProps {
   name: string; setName: (v: string) => void;
   code: string; setCode: (v: string) => void;
   materialType: MaterialType; setMaterialType: (v: MaterialType) => void;
+  consumptionMode: ConsumptionMode; setConsumptionMode: (v: ConsumptionMode) => void;
   dimension: string; setDimension: (v: string) => void;
   materialCategoryId: string; setMaterialCategoryId: (v: string) => void;
   materialCategories: MaterialCategory[];
@@ -34,6 +40,7 @@ export default function MaterialFormFields({
   name, setName,
   code, setCode,
   materialType, setMaterialType,
+  consumptionMode, setConsumptionMode,
   dimension, setDimension,
   materialCategoryId, setMaterialCategoryId,
   materialCategories,
@@ -84,6 +91,16 @@ export default function MaterialFormFields({
               required
             />
           </FormField>
+          {materialType === 'CONSUMABLE_MATERIAL' && (
+            <FormField label="Consumption Mode">
+              <ComboBox
+                value={consumptionMode}
+                onChange={(v) => setConsumptionMode(v as ConsumptionMode)}
+                options={CONSUMPTION_MODE_OPTIONS}
+                required
+              />
+            </FormField>
+          )}
           <FormField label="Material Category">
             <ComboBox
               value={materialCategoryId}

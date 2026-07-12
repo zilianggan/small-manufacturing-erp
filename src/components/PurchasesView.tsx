@@ -107,7 +107,11 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
   // initialPurchaseId drill-in (Back should return to that origin) or a
   // plain click on a row in this view's own list (Back should just close).
   const [detailOpenedExternally, setDetailOpenedExternally] = useState(false);
+  // Re-fetch the open detail page after a mutation. No-op when no detail is
+  // open (edit/cancel from the listing row menu) — otherwise it would pop the
+  // detail page open and yank the user off the list.
   const refreshSelectedPurchase = (id: string) => {
+    if (!selectedPurchase) return;
     getPurchaseById(id).then((purchase) => { if (purchase) setSelectedPurchase(purchase); }).catch(console.error);
   };
 
@@ -151,8 +155,10 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
     getSalesOrdersForLinking().then(setSalesLinkOptions).catch(console.error);
   }, []);
 
-  const rawMaterials = useMemo(
-    () => materials.filter(m => m.materialType === 'RAW_MATERIAL' && m.status !== 'INACTIVE'),
+  // Purchasable = raw materials + consumables (paint/glue/etc.); customer stock
+  // is customer-supplied so it's never bought.
+  const purchasableMaterials = useMemo(
+    () => materials.filter(m => (m.materialType === 'RAW_MATERIAL' || m.materialType === 'CONSUMABLE_MATERIAL') && m.status !== 'INACTIVE'),
     [materials]
   );
 
@@ -416,7 +422,7 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
 
   const handleAddTempItem = () => {
     if (!tempMaterialId || tempQuantity <= 0) return;
-    const material = rawMaterials.find(m => m.id === tempMaterialId);
+    const material = purchasableMaterials.find(m => m.id === tempMaterialId);
     if (!material) return;
 
     const existingIdx = formDetails.findIndex(d => d.materialId === tempMaterialId);
@@ -458,7 +464,7 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
 
     let finalDetails = [...formDetails];
     if (tempMaterialId && tempQuantity > 0) {
-      const material = rawMaterials.find(m => m.id === tempMaterialId);
+      const material = purchasableMaterials.find(m => m.id === tempMaterialId);
       if (material) {
         const existingIdx = finalDetails.findIndex(d => d.materialId === tempMaterialId);
         if (existingIdx !== -1) {
@@ -859,7 +865,7 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
                     value={tempMaterialId}
                     onChange={handleMaterialSelect}
                     noneLabel="-- Choose Material --"
-                    options={rawMaterials.map(m => {
+                    options={purchasableMaterials.map(m => {
                       const category = materialCategoryMap.get(m.materialCategoryId || '');
                       return { value: m.id, label: m.name, sublabel: category ? category.name : `Stock: ${m.quantity}` };
                     })}

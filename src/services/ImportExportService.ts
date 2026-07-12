@@ -182,7 +182,7 @@ export const getContactExportRows = async () => {
   return { rows, attachmentLinks: contacts.map(attachmentLink) };
 };
 
-const VALID_MATERIAL_TYPES = ['RAW_MATERIAL', 'FINISHED_GOOD', 'CUSTOMER_STOCK'];
+const VALID_MATERIAL_TYPES = ['RAW_MATERIAL', 'CONSUMABLE_MATERIAL', 'CUSTOMER_STOCK'];
 
 export const MATERIAL_COLUMNS: ImportColumn[] = [
   { key: 'name', label: 'Material Name', required: true },

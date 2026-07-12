@@ -52,6 +52,8 @@ const mapMaterialUsageRow = (row: any): ProductionMaterialUsage => ({
   materialId: row.material_id,
   materialName: row.material?.name || '',
   materialCode: row.material?.code || undefined,
+  materialType: row.material?.material_type || undefined,
+  consumptionMode: row.material?.consumption_mode || undefined,
   plannedQuantity: Number(row.planned_quantity) || 0,
   actualQuantity: Number(row.actual_quantity) || 0,
   returnedQuantity: Number(row.returned_quantity) || 0,
@@ -116,8 +118,8 @@ export const getSalesOrders = async (
   let query = supabase
     .from('sales_header')
     .select(useProductFilter
-      ? '*, clients(company_name), sales_detail!inner(*, product(name, code, dimension), production_material_usage(*, material(name, code)))'
-      : '*, clients(company_name), sales_detail(*, product(name, code, dimension), production_material_usage(*, material(name, code)))');
+      ? '*, clients(company_name), sales_detail!inner(*, product(name, code, dimension), production_material_usage(*, material(name, code, material_type, consumption_mode)))'
+      : '*, clients(company_name), sales_detail(*, product(name, code, dimension), production_material_usage(*, material(name, code, material_type, consumption_mode)))');
 
   query = tab === 'QUOTATION'
     ? query.eq('status', 'QUOTATION')
@@ -178,7 +180,7 @@ export const getSalesOrders = async (
 export const getSalesOrderById = async (id: string): Promise<SalesHeader | null> => {
   const { data, error } = await supabase
     .from('sales_header')
-    .select('*, clients(company_name), sales_detail(*, product(name, code, dimension), production_material_usage(*, material(name, code)))')
+    .select('*, clients(company_name), sales_detail(*, product(name, code, dimension), production_material_usage(*, material(name, code, material_type, consumption_mode)))')
     .eq('id', id)
     .maybeSingle();
   if (error) {
@@ -471,6 +473,26 @@ export const confirmProductionDone = async (
     if (error) {
       console.error('confirmProductionDone(reconciliation)', error);
       throw error;
+    }
+  }
+
+  // Consumables (paint/glue/etc.) are added during the Kanban stage, never
+  // reserved at Start Production, so they don't go through the reconciliation
+  // loop above (the modal filters them out). AUTOMATIC ones deduct their used
+  // qty now; MANUAL ones stay as history only — the user adjusts stock later
+  // via the Inventory stock-adjustment form.
+  for (const detail of header.details) {
+    for (const m of detail.materials) {
+      if (m.materialType !== 'CONSUMABLE_MATERIAL' || m.consumptionMode !== 'AUTOMATIC') continue;
+      if (m.actualQuantity <= 0) continue;
+      await saveInventoryTransaction({
+        id: generateId(),
+        transactionType: 'SALES', // consumed in production; matches how MANUAL consumable usage rows are shown
+        quantity: -m.actualQuantity,
+        materialId: m.materialId,
+        productionMaterialUsageId: m.id,
+        transactionDate: nowIso(),
+      });
     }
   }
 

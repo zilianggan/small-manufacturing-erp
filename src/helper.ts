@@ -52,6 +52,7 @@ const ROW_MAPPERS: Record<string, (row: any) => any> = {
     erp_material: (m) => ({
         id: m.id, name: m.name, code: m.code || null,
         material_type: m.materialType || null, dimension: m.dimension || null,
+        consumption_mode: m.materialType === 'CONSUMABLE_MATERIAL' ? (m.consumptionMode || null) : null,
         description: m.description || '', attachments: m.attachments || [],
         status: m.status || null, minimum_stock: m.minimumStock ?? 0,
         material_category_id: m.materialCategoryId || null

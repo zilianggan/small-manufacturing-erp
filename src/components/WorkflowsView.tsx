@@ -4,10 +4,12 @@
  */
 
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
-import { getWorkflowTasks, updateWorkflowStage, assignEmployee } from '../services/WorkflowsService';
+import { getWorkflowTasks, updateWorkflowStage, assignEmployee, getOrderConsumables, addOrderConsumable, removeOrderConsumable } from '../services/WorkflowsService';
+import type { OrderConsumable } from '../services/WorkflowsService';
 import { getEmployees } from '../services/EmployeesService';
+import { getConsumableMaterials } from '../services/MaterialService';
 import { getClients } from '../services/ContactsService';
-import { WorkflowTask, Employee, Client, SalesPriority } from '../types';
+import { WorkflowTask, Employee, Client, Material, SalesPriority } from '../types';
 import { ClipboardCheck } from 'lucide-react';
 import OrderAccordion from './OrderAccordion';
 import { Skeleton } from './ui';
@@ -56,11 +58,34 @@ export default function WorkflowsView() {
     });
   }, []);
 
+  const [consumableMaterials, setConsumableMaterials] = useState<Material[]>([]);
+  const [orderConsumables, setOrderConsumables] = useState<Record<string, OrderConsumable[]>>({});
+
   useEffect(() => {
     loadTasks();
     getEmployees().then((list) => setAllEmployees(list.filter(e => e.status === 'ACTIVE'))).catch(console.error);
     getClients().then(setClients).catch(console.error);
+    getConsumableMaterials().then(setConsumableMaterials).catch(console.error);
   }, [loadTasks]);
+
+  const loadOrderConsumables = useCallback((headerId: string) => {
+    getOrderConsumables(headerId)
+      .then((list) => setOrderConsumables(prev => ({ ...prev, [headerId]: list })))
+      .catch(console.error);
+  }, []);
+
+  const handleAddConsumable = async (headerId: string, materialId: string, quantity: number, remark?: string) => {
+    await CallAPI(() => addOrderConsumable(headerId, materialId, quantity, remark), {
+      onCompleted: () => loadOrderConsumables(headerId),
+      onError: console.error,
+    });
+  };
+  const handleRemoveConsumable = async (headerId: string, usageId: string) => {
+    await CallAPI(() => removeOrderConsumable(usageId), {
+      onCompleted: () => loadOrderConsumables(headerId),
+      onError: console.error,
+    });
+  };
 
   // ComboBox's own search-as-you-type (bulk/single assignment) — independent
   // of the filter dialog's client-side-filtered allEmployees list above.
@@ -91,7 +116,11 @@ export default function WorkflowsView() {
   const [dragOverCol, setDragOverCol] = useState<WorkflowTask['stage'] | null>(null);
 
   const toggleOrderAccordion = (headerId: string) => {
-    setExpandedOrders(prev => ({ ...prev, [headerId]: !prev[headerId] }));
+    setExpandedOrders(prev => {
+      const opening = !prev[headerId];
+      if (opening && !orderConsumables[headerId]) loadOrderConsumables(headerId);
+      return { ...prev, [headerId]: opening };
+    });
   };
 
   // ─── Filter dialog: assignee + client + priority checklists, due date range ───
@@ -408,6 +437,10 @@ export default function WorkflowsView() {
                         onRevert={handleRevertStep}
                         isOpen={!!expandedOrders[headerId]}
                         onToggle={() => toggleOrderAccordion(headerId)}
+                        consumableMaterials={consumableMaterials}
+                        consumables={orderConsumables[headerId]}
+                        onAddConsumable={handleAddConsumable}
+                        onRemoveConsumable={handleRemoveConsumable}
                         onDragStart={(e) => {
                           e.dataTransfer.setData('application/json', JSON.stringify({ headerId, fromStage: col.key }));
                           e.dataTransfer.effectAllowed = 'move';

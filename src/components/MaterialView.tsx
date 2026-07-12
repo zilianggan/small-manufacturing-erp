@@ -8,7 +8,7 @@ import {
   getMaterials, getMaterialsPage, saveMaterial, deleteMaterial, generateId, getMaterialCategories, getMaterialById,
   getMaterialInventoryList, MaterialSortField, SortDir
 } from '../services/MaterialService';
-import { Material, MaterialCategory, MaterialType, Attachment, InventoryListItem } from '../types';
+import { Material, MaterialCategory, MaterialType, ConsumptionMode, Attachment, InventoryListItem } from '../types';
 import {
   Plus, Edit, Trash2, Copy, Archive, ArchiveRestore, Boxes, AlertTriangle, Paperclip, ShoppingBag,
 } from 'lucide-react';
@@ -41,7 +41,7 @@ const SORT_OPTIONS: SortOption[] = [
 
 const MATERIAL_TYPE_LABEL: Record<MaterialType, string> = {
   RAW_MATERIAL: 'Raw Material',
-  FINISHED_GOOD: 'Finished Good',
+  CONSUMABLE_MATERIAL: 'Consumable Material',
   CUSTOMER_STOCK: 'Customer Stock',
 };
 
@@ -53,6 +53,8 @@ interface MaterialViewProps {
   // Cross-tab drill-in: same as above but for rows where this material was
   // consumed in production against a sales order — jumps to the Orders tab.
   onViewSalesOrder?: (salesHeaderId: string, fromProductId?: string, fromMaterialId?: string) => void;
+  // Cross-tab drill-in: Usage History's employee link jumps to the Employees tab.
+  onViewEmployee?: (employeeId: string, fromMaterialId?: string) => void;
   // Cross-tab return trip: reselects this material's detail panel after a
   // PurchaseOrderDetailView opened from here navigates back. Since switching
   // App.tsx tabs unmounts this view, local selectedMaterial state can't
@@ -67,7 +69,7 @@ interface MaterialViewProps {
  * Create/edit happens in a tabbed slide-over drawer instead of a modal so
  * the list and detail stay visible underneath.
  */
-export default function MaterialView({ onViewPurchaseOrder, onViewSalesOrder, initialMaterialId, onInitialMaterialHandled }: MaterialViewProps = {}) {
+export default function MaterialView({ onViewPurchaseOrder, onViewSalesOrder, onViewEmployee, initialMaterialId, onInitialMaterialHandled }: MaterialViewProps = {}) {
   const toast = useToast();
   const confirm = useConfirm();
   const [searchQuery, setSearchQuery] = useState('');
@@ -234,6 +236,7 @@ export default function MaterialView({ onViewPurchaseOrder, onViewSalesOrder, in
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
   const [materialType, setMaterialType] = useState<MaterialType>('RAW_MATERIAL');
+  const [consumptionMode, setConsumptionMode] = useState<ConsumptionMode>('AUTOMATIC');
   const [dimension, setDimension] = useState('');
   const [materialCategoryId, setMaterialCategoryId] = useState('');
   const [status, setStatus] = useState<'ACTIVE' | 'INACTIVE'>('ACTIVE');
@@ -248,6 +251,7 @@ export default function MaterialView({ onViewPurchaseOrder, onViewSalesOrder, in
     setName('');
     setCode('');
     setMaterialType('RAW_MATERIAL');
+    setConsumptionMode('AUTOMATIC');
     setDimension('');
     setMaterialCategoryId('');
     setStatus('ACTIVE');
@@ -267,6 +271,7 @@ export default function MaterialView({ onViewPurchaseOrder, onViewSalesOrder, in
     setName(duplicate ? `${item.name} (Copy)` : item.name);
     setCode(duplicate ? '' : (item.code || ''));
     setMaterialType(item.materialType || 'RAW_MATERIAL');
+    setConsumptionMode(item.consumptionMode || 'AUTOMATIC');
     setDimension(item.dimension || '');
     setMaterialCategoryId(item.materialCategoryId || '');
     setStatus(duplicate ? 'ACTIVE' : (item.status || 'ACTIVE'));
@@ -290,6 +295,7 @@ export default function MaterialView({ onViewPurchaseOrder, onViewSalesOrder, in
       name: name.trim(),
       code,
       materialType,
+      consumptionMode: materialType === 'CONSUMABLE_MATERIAL' ? consumptionMode : undefined,
       dimension,
       quantity: editQuantity,
       description,
@@ -405,7 +411,7 @@ export default function MaterialView({ onViewPurchaseOrder, onViewSalesOrder, in
     <div className="flex flex-col gap-4 sm:gap-5 min-[1440px]:h-full min-[1440px]:min-h-0" id="material-view">
       <PageHeader
         title="Material Catalog"
-        description="Search, filter, and manage every raw material, finished good, and customer-supplied stock item."
+        description="Search, filter, and manage every raw material, consumable, and customer-supplied stock item."
         actions={<Button onClick={openAddMaterial}><Plus className="w-4 h-4" />Add Material</Button>}
       />
 
@@ -453,6 +459,7 @@ export default function MaterialView({ onViewPurchaseOrder, onViewSalesOrder, in
               name={name} setName={setName}
               code={code} setCode={setCode}
               materialType={materialType} setMaterialType={setMaterialType}
+              consumptionMode={consumptionMode} setConsumptionMode={setConsumptionMode}
               dimension={dimension} setDimension={setDimension}
               materialCategoryId={materialCategoryId} setMaterialCategoryId={setMaterialCategoryId}
               materialCategories={materialCategories}
@@ -476,6 +483,7 @@ export default function MaterialView({ onViewPurchaseOrder, onViewSalesOrder, in
               name={name} setName={setName}
               code={code} setCode={setCode}
               materialType={materialType} setMaterialType={setMaterialType}
+              consumptionMode={consumptionMode} setConsumptionMode={setConsumptionMode}
               dimension={dimension} setDimension={setDimension}
               materialCategoryId={materialCategoryId} setMaterialCategoryId={setMaterialCategoryId}
               materialCategories={materialCategories}
@@ -493,6 +501,7 @@ export default function MaterialView({ onViewPurchaseOrder, onViewSalesOrder, in
               name={name} setName={setName}
               code={code} setCode={setCode}
               materialType={materialType} setMaterialType={setMaterialType}
+              consumptionMode={consumptionMode} setConsumptionMode={setConsumptionMode}
               dimension={dimension} setDimension={setDimension}
               materialCategoryId={materialCategoryId} setMaterialCategoryId={setMaterialCategoryId}
               materialCategories={materialCategories}
@@ -637,6 +646,8 @@ export default function MaterialView({ onViewPurchaseOrder, onViewSalesOrder, in
                     loading={purchaseHistoryLoading}
                     onViewPurchaseOrder={onViewPurchaseOrder ? (id) => onViewPurchaseOrder(id, selectedMaterial.id) : undefined}
                     onViewSalesOrder={onViewSalesOrder ? (id) => onViewSalesOrder(id, undefined, selectedMaterial.id) : undefined}
+                    showEmployee
+                    onViewEmployee={onViewEmployee ? (id) => onViewEmployee(id, selectedMaterial.id) : undefined}
                   />
                 </div>
               </>

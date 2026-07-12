@@ -100,7 +100,8 @@ CREATE TABLE material (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name TEXT NOT NULL,
   code TEXT,
-  material_type TEXT, -- RAW_MATERIAL or FINISHED_GOOD or CUSTOMER_STOCK
+  material_type TEXT, -- RAW_MATERIAL or CONSUMABLE_MATERIAL or CUSTOMER_STOCK
+  consumption_mode TEXT CHECK (consumption_mode IN ('AUTOMATIC','MANUAL')), -- CONSUMABLE_MATERIAL only; NULL otherwise
   dimension TEXT,
   quantity NUMERIC DEFAULT 0,
   description TEXT,
@@ -301,3 +302,11 @@ ALTER TABLE sales_header
 ALTER TABLE purchase_header
   ALTER COLUMN quotation_date TYPE timestamptz USING quotation_date::timestamptz,
   ALTER COLUMN order_date TYPE timestamptz USING order_date::timestamptz;
+
+-- Consumable materials (paint, glue, etc.): purchasable + used in production,
+-- never sold. FINISHED_GOOD retired (real finished goods live in `product`);
+-- convert any stray rows to RAW_MATERIAL. consumption_mode drives whether the
+-- consumable auto-deducts at production completion.
+ALTER TABLE material
+  ADD COLUMN consumption_mode TEXT CHECK (consumption_mode IN ('AUTOMATIC','MANUAL'));
+UPDATE material SET material_type = 'RAW_MATERIAL' WHERE material_type = 'FINISHED_GOOD';

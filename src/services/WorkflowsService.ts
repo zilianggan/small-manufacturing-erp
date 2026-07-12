@@ -12,7 +12,8 @@
  * effects; those live solely in OrdersService's confirmProductionDone.
  */
 import { supabase } from "./supabase";
-import { WorkflowTask } from "../types";
+import { generateId } from "../helper";
+import { ConsumptionMode, WorkflowTask } from "../types";
 
 const mapTaskRow = (row: any): WorkflowTask => ({
     id: row.id,
@@ -58,6 +59,78 @@ export const assignEmployee = async (taskId: string, employeeId: string | null):
     const { error } = await supabase.from('workflow_tasks').update({ employee_id: employeeId }).eq('id', taskId);
     if (error) {
         console.error('assignEmployee', error);
+        throw error;
+    }
+};
+
+// ─── Consumables used during production ──────────────────────────────────────
+// Recorded here (not on the sales order) since consumables like paint/glue are
+// added by the shop floor mid-job. Stored as production_material_usage rows on
+// the order's first sales_detail line — consumables are order-level, not
+// line-specific. confirmProductionDone deducts AUTOMATIC ones at completion.
+export interface OrderConsumable {
+    id: string;
+    materialId: string;
+    materialName: string;
+    materialCode?: string;
+    consumptionMode?: ConsumptionMode;
+    quantity: number;
+    remark?: string;
+}
+
+export const getOrderConsumables = async (headerId: string): Promise<OrderConsumable[]> => {
+    const { data, error } = await supabase
+        .from('production_material_usage')
+        .select('id, actual_quantity, remark, material_id, material!inner(name, code, material_type, consumption_mode), sales_detail!inner(header_id)')
+        .eq('sales_detail.header_id', headerId)
+        .eq('material.material_type', 'CONSUMABLE_MATERIAL');
+    if (error) {
+        console.error('getOrderConsumables', error);
+        return [];
+    }
+    return (data || []).map((row: any) => ({
+        id: row.id,
+        materialId: row.material_id,
+        materialName: row.material?.name || '',
+        materialCode: row.material?.code || undefined,
+        consumptionMode: row.material?.consumption_mode || undefined,
+        quantity: Number(row.actual_quantity) || 0,
+        remark: row.remark || undefined,
+    }));
+};
+
+export const addOrderConsumable = async (headerId: string, materialId: string, quantity: number, remark?: string): Promise<void> => {
+    const { data: firstLine, error: lineError } = await supabase
+        .from('sales_detail')
+        .select('detail_id')
+        .eq('header_id', headerId)
+        .order('created_at', { ascending: true })
+        .limit(1)
+        .maybeSingle();
+    if (lineError || !firstLine) {
+        console.error('addOrderConsumable(line)', lineError);
+        throw lineError || new Error('No sales_detail line for order');
+    }
+
+    const { error } = await supabase.from('production_material_usage').insert({
+        id: generateId(),
+        sales_detail_id: firstLine.detail_id,
+        material_id: materialId,
+        planned_quantity: 0,
+        actual_quantity: quantity,
+        returned_quantity: 0,
+        remark: remark || null,
+    });
+    if (error) {
+        console.error('addOrderConsumable', error);
+        throw error;
+    }
+};
+
+export const removeOrderConsumable = async (usageId: string): Promise<void> => {
+    const { error } = await supabase.from('production_material_usage').delete().eq('id', usageId);
+    if (error) {
+        console.error('removeOrderConsumable', error);
         throw error;
     }
 };

@@ -223,7 +223,7 @@ SELECT
         JOIN purchases_by_month p ON p.month_start = s.month_start
     ),
     (SELECT COALESCE(SUM(quantity), 0) FROM material WHERE material_type = 'RAW_MATERIAL'),
-    (SELECT COALESCE(SUM(quantity), 0) FROM material WHERE material_type = 'FINISHED_GOOD'),
+    (SELECT COALESCE(SUM(quantity), 0) FROM product),
     (SELECT jsonb_agg(t) FROM low_stock t),
     (SELECT COUNT(*)::int FROM material WHERE quantity <= minimum_stock);
 $$;

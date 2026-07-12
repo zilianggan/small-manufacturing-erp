@@ -110,7 +110,11 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, init
   // initialOrderId drill-in (Back should return to that origin) or a plain
   // click on a row in this view's own list (Back should just close locally).
   const [detailOpenedExternally, setDetailOpenedExternally] = useState(false);
+  // Re-fetch the open detail page after a mutation. No-op when no detail is
+  // open (e.g. edit/cancel triggered from the listing row menu) — otherwise it
+  // would pop the detail page open and yank the user off the list.
   const refreshSelectedOrder = (id: string) => {
+    if (!selectedOrder) return;
     getSalesOrderById(id).then((order) => { if (order) setSelectedOrder(order); }).catch(console.error);
   };
 
@@ -530,6 +534,22 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, init
           materials: tempMaterials,
         });
       }
+    } else if (tempMaterials.length > 0 && finalDetails.length > 0) {
+      // Materials staged after the product line was already committed via
+      // "+ Add Item" have no pending product to attach to and would otherwise
+      // be silently dropped (they never reach production_material_usage — the
+      // exact cause of "linked SO shows no required materials"). Recover them
+      // onto the most recently added line. ponytail: recency heuristic — right
+      // for single-line orders (the common case); dedupes by materialId.
+      const last = finalDetails.length - 1;
+      const merged = [...finalDetails[last].materials];
+      for (const tm of tempMaterials) {
+        const existing = merged.find(m => m.materialId === tm.materialId);
+        if (existing) existing.plannedQuantity += tm.plannedQuantity;
+        else merged.push(tm);
+      }
+      finalDetails[last] = { ...finalDetails[last], materials: merged };
+      toast.info(`Attached ${tempMaterials.length} staged material(s) to ${finalDetails[last].productName}.`);
     }
 
     if (finalDetails.length === 0) {

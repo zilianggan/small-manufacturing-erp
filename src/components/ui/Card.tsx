@@ -5,6 +5,7 @@ interface CardProps {
   className?: string;
   children: React.ReactNode;
   id?: string;
+  onClick?: () => void;
 }
 
 /**
@@ -13,9 +14,9 @@ interface CardProps {
  * direction, etc.) via `className` — the base surface classes always apply
  * so every card stays visually consistent, light and dark.
  */
-export function Card({ className = '', children, id }: CardProps) {
+export function Card({ className = '', children, id, onClick }: CardProps) {
   return (
-    <div id={id} className={cn('bg-card text-card-foreground border border-border rounded-lg shadow-sm dark:shadow-[0_4px_16px_rgba(0,0,0,0.4)]', className)}>
+    <div id={id} onClick={onClick} className={cn('bg-card text-card-foreground border border-border rounded-lg shadow-sm dark:shadow-[0_4px_16px_rgba(0,0,0,0.4)]', className)}>
       {children}
     </div>
   );

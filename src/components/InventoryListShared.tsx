@@ -4,7 +4,6 @@
  */
 
 import { useMemo, useState } from 'react';
-import { ChevronRight } from 'lucide-react';
 import { InventoryListItem, InventoryTransactionType } from '../types';
 import { Card } from './ui';
 import SortableTh from './SortableTh';
@@ -30,6 +29,10 @@ interface InventoryHistoryTableProps {
   emptyMessage?: string;
   onViewPurchaseOrder?: (purchaseHeaderId: string) => void;
   onViewSalesOrder?: (salesHeaderId: string) => void;
+  // Material detail opts in to an Employee column (who used the stock in
+  // production). Products don't, so it's off by default.
+  showEmployee?: boolean;
+  onViewEmployee?: (employeeId: string) => void;
 }
 
 /**
@@ -39,7 +42,7 @@ interface InventoryHistoryTableProps {
  * client-side since the whole list is already loaded (one item's history,
  * never heavy).
  */
-export function InventoryHistoryTable({ items, loading, emptyMessage = 'No inventory transactions yet.', onViewPurchaseOrder, onViewSalesOrder }: InventoryHistoryTableProps) {
+export function InventoryHistoryTable({ items, loading, emptyMessage = 'No inventory transactions yet.', onViewPurchaseOrder, onViewSalesOrder, showEmployee, onViewEmployee }: InventoryHistoryTableProps) {
   const [sortKey, setSortKey] = useState<SortKey>('orderDate');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
@@ -49,7 +52,14 @@ export function InventoryHistoryTable({ items, loading, emptyMessage = 'No inven
   };
 
   const sorted = useMemo(() => sortByField(items, sortKey, sortDir, NUMERIC_KEYS), [items, sortKey, sortDir]);
-  const showActionCol = !!(onViewPurchaseOrder || onViewSalesOrder);
+
+  // Ref No. is the drill-in link now (no separate View column). Resolves to the
+  // purchase or sales order that generated the row.
+  const refLink = (item: InventoryListItem): (() => void) | undefined => {
+    if (onViewPurchaseOrder && item.purchaseHeaderId) return () => onViewPurchaseOrder(item.purchaseHeaderId!);
+    if (onViewSalesOrder && item.salesHeaderId) return () => onViewSalesOrder(item.salesHeaderId!);
+    return undefined;
+  };
 
   return (
     <Card className="overflow-hidden">
@@ -70,7 +80,7 @@ export function InventoryHistoryTable({ items, loading, emptyMessage = 'No inven
                 <SortableTh label="Unit Cost" sortKey="unitCost" activeKey={sortKey} dir={sortDir} onClick={toggleSort} />
                 <SortableTh label="Total Price" sortKey="totalPrice" activeKey={sortKey} dir={sortDir} onClick={toggleSort} />
                 <SortableTh label="Status" sortKey="status" activeKey={sortKey} dir={sortDir} onClick={toggleSort} />
-                {showActionCol && <th className="px-4 py-2 font-semibold"></th>}
+                {showEmployee && <th className="px-4 py-2 font-semibold">Employee</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
@@ -83,7 +93,11 @@ export function InventoryHistoryTable({ items, loading, emptyMessage = 'No inven
                         {badge.label}
                       </span>
                     </td>
-                    <td className="px-4 py-2.5 font-mono text-card-foreground">{item.refNo || '-'}</td>
+                    <td className="px-4 py-2.5 font-mono">
+                      {item.refNo && refLink(item) ? (
+                        <button onClick={refLink(item)} className="text-primary hover:underline" title="View order">{item.refNo}</button>
+                      ) : <span className="text-card-foreground">{item.refNo || '-'}</span>}
+                    </td>
                     <td className="px-4 py-2.5 text-muted-foreground">{item.counterpartyName || '-'}</td>
                     <td className="px-4 py-2.5 text-muted-foreground">{item.orderDate ? formatDateTime(item.orderDate) : '-'}</td>
                     <td className="px-4 py-2.5 text-muted-foreground">{item.quantity}</td>
@@ -96,28 +110,11 @@ export function InventoryHistoryTable({ items, loading, emptyMessage = 'No inven
                         </span>
                       )}
                     </td>
-                    {showActionCol && (
-                      <td className="px-4 py-2.5 text-right">
-                        {onViewPurchaseOrder && item.purchaseHeaderId && (
-                          <button
-                            onClick={() => onViewPurchaseOrder(item.purchaseHeaderId!)}
-                            className="inline-flex items-center gap-0.5 text-[11px] font-medium text-primary hover:text-primary/80"
-                            title="View purchase order"
-                          >
-                            <span>View</span>
-                            <ChevronRight className="w-3 h-3" />
-                          </button>
-                        )}
-                        {onViewSalesOrder && item.salesHeaderId && (
-                          <button
-                            onClick={() => onViewSalesOrder(item.salesHeaderId!)}
-                            className="inline-flex items-center gap-0.5 text-[11px] font-medium text-primary hover:text-primary/80"
-                            title="View sales order"
-                          >
-                            <span>View</span>
-                            <ChevronRight className="w-3 h-3" />
-                          </button>
-                        )}
+                    {showEmployee && (
+                      <td className="px-4 py-2.5">
+                        {item.employeeId && item.employeeName && onViewEmployee ? (
+                          <button onClick={() => onViewEmployee(item.employeeId!)} className="text-primary hover:underline">{item.employeeName}</button>
+                        ) : <span className="text-muted-foreground">{item.employeeName || '-'}</span>}
                       </td>
                     )}
                   </tr>

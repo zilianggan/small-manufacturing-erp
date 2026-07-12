@@ -14,6 +14,11 @@ interface LeftoverDraft extends LeftoverMaterialInput {
   materialName: string;
 }
 
+// Consumables are added on the Kanban and deducted (AUTOMATIC) or recorded-only
+// (MANUAL) at completion by confirmProductionDone — they were never reserved, so
+// they don't belong in this modal's planned-vs-actual reconciliation.
+const isPlanned = (m: { materialType?: string }) => m.materialType !== 'CONSUMABLE_MATERIAL';
+
 interface ProductionCompletionModalProps {
   order: SalesHeader | null;
   isOpen: boolean;
@@ -41,7 +46,7 @@ export default function ProductionCompletionModal({ order, isOpen, materials, on
     if (!isOpen || !order) return;
     const initialActuals: Record<string, number> = {};
     order.details.forEach(d => {
-      d.materials.forEach(m => {
+      d.materials.filter(isPlanned).forEach(m => {
         initialActuals[m.id] = m.plannedQuantity;
       });
     });
@@ -78,7 +83,7 @@ export default function ProductionCompletionModal({ order, isOpen, materials, on
     e.preventDefault();
 
     const reconciliations: MaterialReconciliationInput[] = order.details.flatMap(d =>
-      d.materials.map(m => ({
+      d.materials.filter(isPlanned).map(m => ({
         usageId: m.id,
         materialId: m.materialId,
         plannedQuantity: m.plannedQuantity,
@@ -110,10 +115,10 @@ export default function ProductionCompletionModal({ order, isOpen, materials, on
           {order.details.map(detail => (
             <div key={detail.detailId} className="space-y-1.5">
               <span className="font-semibold text-slate-600 text-[11px]">{detail.productName}</span>
-              {detail.materials.length === 0 ? (
+              {detail.materials.filter(isPlanned).length === 0 ? (
                 <div className="text-[10px] text-slate-400 italic pl-2">No planned materials for this line.</div>
               ) : (
-                detail.materials.map(m => (
+                detail.materials.filter(isPlanned).map(m => (
                   <div key={m.id} className="flex items-center justify-between bg-white border border-slate-200 rounded px-2 py-1.5">
                     <span className="text-slate-700">{m.materialName} — planned {m.plannedQuantity}</span>
                     <input

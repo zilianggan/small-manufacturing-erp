@@ -158,9 +158,23 @@ export interface ProductionMaterialUsage {
   materialId: string;
   materialName: string; // joined, display only
   materialCode?: string; // joined, display only
+  materialType?: MaterialType; // joined — lets completion tell consumables apart
+  consumptionMode?: ConsumptionMode; // joined — AUTOMATIC consumables auto-deduct
   plannedQuantity: number;
   actualQuantity: number;
   returnedQuantity: number;
+}
+
+// One consumable a given employee worked on (EmployeeDetailView).
+export interface EmployeeConsumableUsageItem {
+  id: string;
+  materialName: string;
+  materialCode?: string;
+  quantity: number;
+  salesHeaderId?: string;
+  salesNo?: string;
+  stage?: string;
+  date?: string;
 }
 
 export interface SalesDetail {
@@ -294,13 +308,19 @@ export type JobPosition = NamedParameter;
 export type MaterialCategory = NamedParameter;
 export type ProductCategory = NamedParameter;
 
-export type MaterialType = 'RAW_MATERIAL' | 'FINISHED_GOOD' | 'CUSTOMER_STOCK';
+export type MaterialType = 'RAW_MATERIAL' | 'CONSUMABLE_MATERIAL' | 'CUSTOMER_STOCK';
+
+// Only meaningful for CONSUMABLE_MATERIAL. AUTOMATIC deducts stock at
+// confirmProductionDone; MANUAL records usage only (user adjusts later via the
+// Inventory stock-adjustment form).
+export type ConsumptionMode = 'AUTOMATIC' | 'MANUAL';
 
 export interface Material {
   id: string;
   name: string;
   code?: string;
   materialType?: MaterialType;
+  consumptionMode?: ConsumptionMode; // CONSUMABLE_MATERIAL only
   dimension?: string;
   quantity: number; // Read-only: maintained by the update_material_stock() DB trigger
   description?: string;
@@ -384,6 +404,9 @@ export interface InventoryListItem {
   status?: string;
   purchaseHeaderId?: string; // set for PURCHASE/PURCHASE_RETURN rows -> Purchases tab
   salesHeaderId?: string; // set for SALES/SALES_RETURN rows -> Orders tab
+  employeeId?: string; // production-linked rows: the workflow task's assignee
+  employeeName?: string; // joined, display only
+  productionMaterialUsageId?: string; // internal: dedup consumable usage rows vs their auto-deduction
 }
 
 export interface SystemAdminData {
