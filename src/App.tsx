@@ -50,6 +50,9 @@ import { CallAPI } from './components/UIHelper';
 
 type TabType = 'DASHBOARD' | 'INVENTORY' | 'MATERIAL' | 'PRODUCT' | 'CONTACTS' | 'EMPLOYEES' | 'ORDERS' | 'PURCHASES' | 'WORKFLOWS' | 'SYSTEM_ADMIN';
 
+// Keep in sync with the latest release header in version.txt
+const APP_VERSION = '1.0.5';
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabType>('DASHBOARD');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -349,6 +352,7 @@ export default function App() {
             <Upload className="w-3.5 h-3.5 animate-bounce-subtle shrink-0" />
             {!sidebarCollapsed && <span>Import / Export Hub</span>}
           </button>
+          {!sidebarCollapsed && <p className="px-2.5 text-right">v{APP_VERSION}</p>}
         </div>
 
       </aside>
@@ -443,6 +447,7 @@ export default function App() {
                 <Upload className="w-3.5 h-3.5" />
                 <span>Import / Export Hub</span>
               </button>
+              <p className="px-2.5 text-right">v{APP_VERSION}</p>
             </div>
           </div>
         </div>
