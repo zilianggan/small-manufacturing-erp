@@ -7,12 +7,12 @@
  * update/delete export, since stock is trigger-maintained on INSERT only.
  */
 import { supabase } from "./supabase";
-import { upsertRecord } from "../helper";
+import { upsertRecord, generateId } from "../helper";
 import { InventoryListItem, InventoryTransaction, InventoryTransactionType } from "../types";
 import { getMaterials } from "./MaterialService";
 import { getProducts } from "./ProductService";
 
-export const generateId = (): string => crypto.randomUUID();
+export { generateId };
 
 const mapTransactionRow = (row: any): InventoryTransaction => {
   const purchaseHeader = row.purchase_detail?.purchase_header;

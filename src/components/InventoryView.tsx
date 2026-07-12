@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   generateId, getInventoryTransactions, saveInventoryTransaction, getInventoryStatsSummary,
   InventoryLedgerSortField, SortDir, InventoryStatsSummary,
@@ -29,7 +29,7 @@ import {
 import type { DataTableColumn, FilterChip } from './shell';
 import {
   Button, Badge, ActionsMenu, Sheet, Dialog, FormField, fieldInputClassName,
-  Tabs, TabsList, TabsTrigger, TabsContent, useToast, useConfirm,
+  Tabs, TabsList, TabsTrigger, TabsContent, useToast,
 } from './ui';
 import type { ActionMenuItem } from './ui';
 import { useFadeInOnMount } from '../hooks/useFadeInOnMount';
@@ -76,7 +76,6 @@ const TYPE_FILTER_OPTIONS: { value: InventoryTransactionType; label: string }[] 
  */
 export default function InventoryView({ onViewPurchaseOrder, onViewSalesOrder }: InventoryViewProps = {}) {
   const toast = useToast();
-  const confirm = useConfirm();
   const contentRef = useFadeInOnMount<HTMLDivElement>([]);
 
   // ─── Ledger list ──────────────────────────────────────────────────────────

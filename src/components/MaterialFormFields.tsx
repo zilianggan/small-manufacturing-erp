@@ -1,4 +1,3 @@
-import React from 'react';
 import { Attachment, MaterialCategory, MaterialType } from '../types';
 import AttachmentSection from './AttachmentSection';
 import ComboBox from './ComboBox';

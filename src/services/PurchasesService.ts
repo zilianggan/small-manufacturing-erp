@@ -11,6 +11,7 @@ import { supabase } from "./supabase";
 import { getVendors } from "./ContactsService";
 import { getMaterialCategories } from "./SystemAdminService";
 import { saveInventoryTransaction } from "./InventoryTransactionService";
+import { generateId } from "../helper";
 import { Attachment, PurchaseHeader, PurchaseDetail } from "../types";
 import { nowIso } from "../utils/date";
 
@@ -19,8 +20,6 @@ export { getMaterialCategories };
 // quotation_date/order_date are timestamptz now — bump a date-only filter
 // "to" bound to end-of-day so same-day afternoon rows aren't excluded.
 const endOfDay = (value: string): string => (value.length <= 10 ? `${value}T23:59:59.999` : value);
-
-export const generateId = (): string => crypto.randomUUID();
 
 export interface PurchaseDetailInput {
   materialId: string;

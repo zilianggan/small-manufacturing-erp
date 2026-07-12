@@ -8,7 +8,7 @@
  * dump.
  */
 import { supabase } from "./supabase";
-import { upsertRecords } from "../helper";
+import { upsertRecords, generateId } from "../helper";
 import { getVendors, getClients, getContacts } from "./ContactsService";
 import { getMaterials, getMaterialCategories } from "./MaterialService";
 import { getProducts, getProductCategories } from "./ProductService";
@@ -21,8 +21,6 @@ import { Vendor, Client, Contact, Material, Product, Attachment } from "../types
 // Groups per DB round-trip pair (header insert + detail insert) for
 // Purchase/Sales commit — keeps big files from firing one request per order.
 const COMMIT_CHUNK_SIZE = 25;
-
-export const generateId = (): string => crypto.randomUUID();
 
 // Every record type in this file caps attachments at one (the UI's
 // AttachmentSection/detail views only ever read/write attachments[0]) — export

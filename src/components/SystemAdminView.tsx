@@ -1,9 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Clock, Edit, Plus, Trash2 } from 'lucide-react';
 import { CompanyProfile, JobPosition, MaterialCategory, ProductCategory } from '../types';
-import {
-  generateId,
-} from '../services/db';
+import { generateId } from '../helper';
 import {
   Badge, Button, Sheet,
   FormField, fieldInputClassName, useToast, useConfirm, ActionsMenu,

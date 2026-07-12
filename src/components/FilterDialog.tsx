@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { Check, ChevronDown } from 'lucide-react';
 import { Dialog, DialogFooter, DialogCancelButton, SearchInput, fieldInputClassName, Button, Badge } from './ui';
 import InfiniteScrollSentinel from './InfiniteScrollSentinel';

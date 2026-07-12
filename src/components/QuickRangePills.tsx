@@ -1,4 +1,3 @@
-import React from 'react';
 import { QUICK_RANGES } from '../utils/dateRanges';
 
 interface QuickRangePillsProps {

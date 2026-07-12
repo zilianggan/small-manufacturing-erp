@@ -1,6 +1,7 @@
 Version 1.0.5
 --------------------
 - Add android build app using capacitor
+- Clean code
 
 Version 1.0.4
 --------------------

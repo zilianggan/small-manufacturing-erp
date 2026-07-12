@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   getMaterials, getMaterialsPage, saveMaterial, deleteMaterial, generateId, getMaterialCategories, getMaterialById,
   getMaterialInventoryList, MaterialSortField, SortDir

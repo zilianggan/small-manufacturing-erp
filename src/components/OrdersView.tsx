@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import {
   getSalesOrders, createSalesQuotation, updateSalesOrder, convertToSalesOrder,
   startProduction, checkProductionStock, confirmProductionDone, markDelivered, cancelSalesOrder, deleteSalesOrder,
@@ -386,7 +386,6 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, init
     clearTempStaging();
   };
 
-  const todayStr = () => new Date().toISOString().split('T')[0];
   // datetime-local default: 14 days out, as "yyyy-MM-ddThh:mm" local.
   const defaultDeliveryDate = () => {
     const d = new Date();

@@ -1,4 +1,3 @@
-import React from 'react';
 import { Building2 } from 'lucide-react';
 import { Attachment } from '../types';
 

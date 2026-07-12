@@ -7,7 +7,6 @@ import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { getWorkflowTasks, updateWorkflowStage, assignEmployee } from '../services/WorkflowsService';
 import { getEmployees } from '../services/EmployeesService';
 import { getClients } from '../services/ContactsService';
-import { useTableData } from '../hooks/useTableData';
 import { WorkflowTask, Employee, Client, SalesPriority } from '../types';
 import { ClipboardCheck } from 'lucide-react';
 import OrderAccordion from './OrderAccordion';
@@ -66,7 +65,25 @@ export default function WorkflowsView() {
   // ComboBox's own search-as-you-type (bulk/single assignment) — independent
   // of the filter dialog's client-side-filtered allEmployees list above.
   const [employeeQuery, setEmployeeQuery] = useState('');
-  const { data: employees, loading: employeesSearchLoading } = useTableData<Employee>('employees', { search: employeeQuery, filters: { status: 'ACTIVE' } });
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [employeesSearchLoading, setEmployeesSearchLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setEmployeesSearchLoading(true);
+    getEmployees(employeeQuery)
+      .then((list) => {
+        if (cancelled) return;
+        setEmployees(list.filter(e => e.status === 'ACTIVE'));
+        setEmployeesSearchLoading(false);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        console.error(err);
+        setEmployeesSearchLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [employeeQuery]);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [expandedOrders, setExpandedOrders] = useState<Record<string, boolean>>({});

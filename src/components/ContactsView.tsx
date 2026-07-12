@@ -3,10 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { getVendors, getClients, saveVendor, saveClient, deleteVendor, deleteClient, generateId } from '../services/ContactsService';
 import { Vendor, Client, Attachment } from '../types';
-import { Plus, Mail, Phone, MapPin, Briefcase, Users, Paperclip, Edit, Trash2, ChevronRight, FileText, Image as ImageIcon } from 'lucide-react';
+import { Plus, Mail, Phone, MapPin, Briefcase, Users, Edit, Trash2, ChevronRight, FileText } from 'lucide-react';
 import CompanyFormFields from './CompanyFormFields';
 import ContactDetailView from './ContactDetailView';
 import SortMenu, { SortOption } from './SortMenu';
@@ -20,13 +20,6 @@ import { debounce } from 'lodash'
 type CompanyType = 'VENDORS' | 'CLIENTS';
 type Company = Vendor | Client;
 type CompanySortField = 'companyName' | 'email' | 'createdAt';
-
-// Attachment badge icon by mime type — image vs PDF vs generic file.
-const attachmentIcon = (type: string) => {
-  if (type.startsWith('image/')) return ImageIcon;
-  if (type === 'application/pdf') return FileText;
-  return Paperclip;
-};
 
 const SORT_OPTIONS: SortOption[] = [
   { value: 'companyName', label: 'Name' },

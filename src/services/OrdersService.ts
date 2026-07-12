@@ -10,6 +10,7 @@
 import { supabase } from "./supabase";
 import { getClients } from "./ContactsService";
 import { saveInventoryTransaction } from "./InventoryTransactionService";
+import { generateId } from "../helper";
 import { Attachment, SalesHeader, SalesDetail, ProductionMaterialUsage, Product, SalesPriority } from "../types";
 import { nowIso } from "../utils/date";
 
@@ -17,8 +18,6 @@ import { nowIso } from "../utils/date";
 // and delivery_date are timestamptz now — a bare `<= 2026-07-11` excludes
 // same-day afternoon rows, so bump a date-only bound to end-of-day.
 const endOfDay = (value: string): string => (value.length <= 10 ? `${value}T23:59:59.999` : value);
-
-export const generateId = (): string => crypto.randomUUID();
 
 export interface MaterialUsageInput {
   materialId: string;

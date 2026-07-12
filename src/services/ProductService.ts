@@ -6,21 +6,12 @@
  * cache, no server.ts REST hop, no useTableData hook.
  */
 import { supabase } from "./supabase";
-import { upsertRecord, deleteRecord } from "../helper";
+import { upsertRecord, deleteRecord, generateId } from "../helper";
 import { InventoryListItem, Product } from "../types";
 import { getProductCategories } from "./SystemAdminService";
 import { getInventoryMovements } from "./InventoryTransactionService";
 
-export { getProductCategories };
-
-export const generateId = (): string => {
-  if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
-    const v = c === 'x' ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
-  });
-};
+export { getProductCategories, generateId };
 
 const mapProductRow = (row: any): Product => ({
   id: row.id,

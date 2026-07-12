@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  DollarSign, Package, TrendingUp, AlertTriangle, ClipboardList, ShoppingCart, Wallet,
+  DollarSign, Package, AlertTriangle, ClipboardList, ShoppingCart, Wallet,
   FileSpreadsheet, ShoppingBag, Boxes, Tag, Shuffle, CheckCircle2, PackageCheck,
 } from 'lucide-react';
 import {

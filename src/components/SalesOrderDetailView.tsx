@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { SalesHeader, SalesDetail } from '../types';
 import {
   ArrowLeft, Calendar, Paperclip, Trash2, Edit, FileText, ArrowRightCircle,

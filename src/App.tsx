@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import {
   LayoutDashboard,
@@ -12,14 +12,11 @@ import {
   FileSpreadsheet,
   ShoppingBag,
   Shuffle,
-  BarChart3,
   Database,
   Download,
   Upload,
-  BookOpen,
   Menu,
   X,
-  ArrowUpRight,
   Factory,
   Cpu,
   Wrench,
@@ -33,10 +30,10 @@ import {
   ChevronsLeft,
   ChevronsRight,
 } from 'lucide-react';
-import { useSyncStore } from './services/db';
+import { useSyncStore } from './helper';
 import { CompanyProfile } from './types';
 import SignaturePad from './components/SignaturePad';
-import { useToast, useConfirm, Button, Sheet, FormField, fieldInputClassName } from './components/ui';
+import { useToast, Button, Sheet, FormField, fieldInputClassName } from './components/ui';
 import { useFadeInOnMount } from './hooks/useFadeInOnMount';
 
 import DashboardView from './components/DashboardView';
@@ -47,19 +44,16 @@ import ContactsView from './components/ContactsView';
 import OrdersView from './components/OrdersView';
 import PurchasesView from './components/PurchasesView';
 import WorkflowsView from './components/WorkflowsView';
-import ReportsView from './components/ReportsView';
-import ExportGuide from './components/ExportGuide';
 import ImportExportModal from './components/ImportExportModal';
 import EmployeesView from './components/EmployeesView';
 import SystemAdminView from './components/SystemAdminView';
 import { getCompanyProfile, saveCompanyProfile } from './services/CompanyProfileService';
 import { CallAPI } from './components/UIHelper';
 
-type TabType = 'DASHBOARD' | 'INVENTORY' | 'MATERIAL' | 'PRODUCT' | 'CONTACTS' | 'EMPLOYEES' | 'ORDERS' | 'PURCHASES' | 'WORKFLOWS' | 'SYSTEM_ADMIN' | 'REPORTS' | 'EXPORT_GUIDE';
+type TabType = 'DASHBOARD' | 'INVENTORY' | 'MATERIAL' | 'PRODUCT' | 'CONTACTS' | 'EMPLOYEES' | 'ORDERS' | 'PURCHASES' | 'WORKFLOWS' | 'SYSTEM_ADMIN';
 
 export default function App() {
   const toast = useToast();
-  const confirm = useConfirm();
   const [activeTab, setActiveTab] = useState<TabType>('DASHBOARD');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -303,8 +297,6 @@ export default function App() {
     { id: 'PURCHASES' as TabType, label: 'Material purchases', icon: ShoppingBag },
     { id: 'ORDERS' as TabType, label: 'Sales Contracts', icon: FileSpreadsheet },
     { id: 'WORKFLOWS' as TabType, label: 'Production Kanban', icon: Shuffle },
-    // { id: 'REPORTS' as TabType, label: 'AI Automated Reports', icon: BarChart3 },
-    // { id: 'EXPORT_GUIDE' as TabType, label: 'Desktop/Mobile Export', icon: BookOpen }
   ];
 
   return (
@@ -613,8 +605,6 @@ export default function App() {
             )}
             {activeTab === 'WORKFLOWS' && <WorkflowsView key={refreshKey} />}
             {activeTab === 'SYSTEM_ADMIN' && <SystemAdminView key={refreshKey} />}
-            {activeTab === 'REPORTS' && <ReportsView key={refreshKey} />}
-            {activeTab === 'EXPORT_GUIDE' && <ExportGuide key={refreshKey} />}
           </div>
         </div>
 

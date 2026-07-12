@@ -1,11 +1,27 @@
+import { create } from 'zustand';
 import { supabase } from "./services/supabase";
 
+interface SyncStore {
+    isSyncing: boolean;
+    setSyncing: (val: boolean) => void;
+}
+export const useSyncStore = create<SyncStore>((set) => ({ isSyncing: false, setSyncing: (val) => set({ isSyncing: val }) }));
+
+// Generates a real UUID v4 client-side so every new record's `id` matches
+// the `uuid` column type used across all Supabase tables.
+export const generateId = (): string => {
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
+    // Fallback (older environments without crypto.randomUUID)
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+        const r = (Math.random() * 16) | 0;
+        const v = c === 'x' ? r : (r & 0x3) | 0x8;
+        return v.toString(16);
+    });
+};
+
 const LS_TO_TABLE: Record<string, string> = {
-    erp_inventory: 'inventory_items',
     erp_vendors: 'vendors',
     erp_clients: 'clients',
-    erp_sales_orders: 'sales_orders',
-    erp_purchase_orders: 'purchase_orders',
     erp_employees: 'employees',
     erp_job_positions: 'job_positions',
     erp_material_categories: 'material_categories',
@@ -16,20 +32,8 @@ const LS_TO_TABLE: Record<string, string> = {
     erp_inventory_transaction: 'inventory_transaction',
 };
 
+// Serializes JS (camelCase) records -> DB (snake_case) rows for upsertRecord()/upsertRecords().
 const ROW_MAPPERS: Record<string, (row: any) => any> = {
-    erp_inventory: (i) => ({
-        id: i.id, name: i.name, sku: i.sku, type: i.type,
-        materialCategoryId: i.material_category_id,
-        productCategoryId: i.product_category_id,
-        quantity: Number(i.quantity), unit: i.unit, unitCost: Number(i.unit_cost),
-        reorderPoint: Number(i.reorder_point), supplierId: i.supplier_id,
-        description: i.description, attachments: i.attachments || [],
-        createdAt: i.created_at, updatedAt: i.updated_at
-    }),
-    // NOTE: unlike the other entries in this map (which deserialize DB rows
-    // for the now-unused loadTableProgressively path), these four serialize
-    // JS (camelCase) records -> DB (snake_case) rows, since upsertRecord()
-    // is their only live caller.
     erp_vendors: (v) => ({
         id: v.id, company_name: v.companyName, email: v.email, office_no: v.officeNo,
         address: v.address, description: v.description || '',
@@ -73,21 +77,6 @@ const ROW_MAPPERS: Record<string, (row: any) => any> = {
         production_material_usage_id: t.productionMaterialUsageId || null,
         transaction_date: t.transactionDate
     }),
-    erp_sales_orders: (o) => ({
-        id: o.id, clientId: o.client_id, clientName: o.client_name, itemId: o.item_id,
-        itemName: o.item_name, quantity: Number(o.quantity), unitPrice: Number(o.unit_price),
-        totalPrice: Number(o.total_price), orderDate: o.order_date, deliveryDate: o.delivery_date,
-        status: o.status, workflowTaskId: o.workflow_task_id,
-        attachments: o.attachments || [], items: o.items || [],
-        createdAt: o.created_at, updatedAt: o.updated_at
-    }),
-    erp_purchase_orders: (o) => ({
-        id: o.id, vendorId: o.vendor_id, vendorName: o.vendor_name, itemId: o.item_id,
-        itemName: o.item_name, quantity: Number(o.quantity), unitCost: Number(o.unit_cost),
-        totalCost: Number(o.total_cost), orderDate: o.order_date, status: o.status,
-        receivedDate: o.received_date, attachments: o.attachments || [], items: o.items || [],
-        createdAt: o.created_at, updatedAt: o.updated_at
-    }),
     erp_employees: (e) => ({
         id: e.id, full_name: e.fullName, contact_no: e.contactNo || null, email: e.email || null,
         job_position: e.jobPositionId || null, status: e.status || null
@@ -127,7 +116,7 @@ export const getStorageItem = <T>(key: string, defaultValue: T): T => {
     return JSON.parse(data);
 };
 
-export const removeStorageItem = <T>(key: string): void => {
+export const removeStorageItem = (key: string): void => {
     localStorage.removeItem(key);
 };
 
@@ -165,29 +154,6 @@ export const deleteRecord = async (lsKey: string, id: string): Promise<void> => 
     if (!tableName) return;
     const { error } = await supabase.from(tableName).delete().eq('id', id);
     if (error) console.error(`deleteRecord(${tableName}) error:`, error);
-};
-
-const isTabLoaded = (key: string): boolean => !!localStorage.getItem(key);
-
-const fetchAllRows = async (table: string): Promise<any> => {
-    const res = await fetch(`/api/data/${table}`);
-    if (!res.ok) throw new Error(`Failed to fetch ${table}: ${res.status}`);
-    return res.json();
-};
-
-// Loads a table's full contents into localStorage in one shot.
-const loadTableProgressively = async (key: string, tableName: string) => {
-    const mapper = ROW_MAPPERS[key] || ((r: any) => r);
-    const result = await fetchAllRows(tableName);
-    const rows = (result.data || []).map(mapper);
-    if (rows.length > 0) {
-        localStorage.setItem(key, JSON.stringify(rows));
-    }
-};
-
-export const loadTable = async (lsKey: string, tableName: string) => {
-    if (isTabLoaded(lsKey)) return; // already cached, skip
-    await loadTableProgressively(lsKey, tableName);
 };
 
 export const getRecords = async <T>(

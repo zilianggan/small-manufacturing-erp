@@ -9,7 +9,7 @@ import {
   saveContact, deleteContact, getContacts, generateId, getJobPositions
 } from '../services/ContactsService';
 import { Vendor, Client, Contact, JobPosition, Attachment } from '../types';
-import { Plus, Mail, Phone, MapPin, Paperclip, Edit, Trash2, ArrowLeft, Users, FileText } from 'lucide-react';
+import { Plus, Mail, Phone, MapPin, Edit, Trash2, ArrowLeft, Users } from 'lucide-react';
 import AttachmentSection from './AttachmentSection';
 import CompanyLogo from './CompanyLogo';
 import ComboBox from './ComboBox';

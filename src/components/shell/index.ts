@@ -14,6 +14,3 @@ export { FilterBar } from './FilterBar';
 export type { FilterChip } from './FilterBar';
 export { SplitView } from './SplitView';
 export { DetailPanel } from './DetailPanel';
-export { SlideOverForm } from './SlideOverForm';
-export type { SlideOverFormTab } from './SlideOverForm';
-export { Pagination } from './Pagination';

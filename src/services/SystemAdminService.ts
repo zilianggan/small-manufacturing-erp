@@ -1,5 +1,5 @@
 import { JobPosition, MaterialCategory, ProductCategory, SystemAdminData } from "../types";
-import { deleteRecord, getRecords, getStorageItem, loadTable, removeStorageItem, setStorageItem, upsertRecord } from "../helper";
+import { deleteRecord, getRecords, getStorageItem, removeStorageItem, setStorageItem, upsertRecord } from "../helper";
 import { supabase } from "./supabase";
 
 export const getJobPositions = async (): Promise<JobPosition[]> => {

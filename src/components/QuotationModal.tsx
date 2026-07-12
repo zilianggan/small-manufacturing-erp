@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { X, Printer, FileText, Mail, Phone, MapPin, Database, Factory, Cpu, Wrench } from 'lucide-react';
 import { PurchaseHeader, Vendor, CompanyProfile } from '../types';
 import { getVendors } from '../services/ContactsService';

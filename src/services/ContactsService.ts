@@ -10,20 +10,11 @@
  * (person) belongs to exactly one company via vendorId/clientId.
  */
 import { supabase } from "./supabase";
-import { upsertRecord, deleteRecord } from "../helper";
+import { upsertRecord, deleteRecord, generateId } from "../helper";
 import { Vendor, Client, Contact } from "../types";
 import { getJobPositions } from "./SystemAdminService";
 
-export { getJobPositions };
-
-export const generateId = (): string => {
-  if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
-    const v = c === 'x' ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
-  });
-};
+export { getJobPositions, generateId };
 
 // Vendors and Clients share an identical column shape.
 const mapCompanyRow = (row: any): Vendor & Client => ({
