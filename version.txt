@@ -3,6 +3,7 @@ Version 1.0.5
 - Add android build app using capacitor
 - Clean code
 - Update read me in README.md
+- Adjust quotation and invoice print view in mobile view
 
 Version 1.0.4
 --------------------

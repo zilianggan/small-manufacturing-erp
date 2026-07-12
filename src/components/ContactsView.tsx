@@ -15,6 +15,7 @@ import { Sheet, Card, SearchInput, Button, Tabs, TabsList, TabsTrigger, Skeleton
 import { CallAPI } from './UIHelper';
 import { sortByField } from '../utils/sortRows';
 import { useFadeInOnMount } from '../hooks/useFadeInOnMount';
+import { useAndroidBackButton } from '../hooks/useAndroidBackButton';
 import { debounce } from 'lodash'
 
 type CompanyType = 'VENDORS' | 'CLIENTS';
@@ -150,6 +151,9 @@ export default function ContactsView() {
     setSelectedCompany(item);
   };
 
+  const closeCompanyDetail = () => { setSelectedCompany(null); loadCompanies(activeTab); };
+  useAndroidBackButton(!!selectedCompany, closeCompanyDetail);
+
   const companies = useMemo(
     () => sortByField(activeTab === 'VENDORS' ? vendors : clients, sortField, sortDir),
     [vendors, clients, activeTab, sortField, sortDir]
@@ -164,7 +168,7 @@ export default function ContactsView() {
       <ContactDetailView
         company={selectedCompany}
         companyType={selectedType}
-        onBack={() => { setSelectedCompany(null); loadCompanies(activeTab); }}
+        onBack={closeCompanyDetail}
         onCompanyUpdated={(updated) => setSelectedCompany(updated)}
         onCompanyDeleted={() => { setSelectedCompany(null); loadCompanies(activeTab); }}
       />

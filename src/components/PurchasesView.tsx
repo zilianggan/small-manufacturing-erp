@@ -32,6 +32,7 @@ import {
 } from './ui';
 import type { ActionMenuItem } from './ui';
 import { useFadeInOnMount } from '../hooks/useFadeInOnMount';
+import { useAndroidBackButton } from '../hooks/useAndroidBackButton';
 import { CallAPI } from './UIHelper';
 import { debounce } from 'lodash';
 
@@ -122,6 +123,7 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
     setSelectedPurchase(null);
     if (detailOpenedExternally) onReturnToOrigin?.();
   };
+  useAndroidBackButton(!!selectedPurchase, handlePurchaseDetailBack);
 
   // Cross-tab drill-in: fetch and open the purchase directly by id
   // (independent of whatever tab/search filter is currently active), then

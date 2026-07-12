@@ -473,7 +473,7 @@ export default function InvoiceModal({ order, isOpen, onClose }: InvoiceModalPro
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm overflow-y-auto print:p-0 print:bg-white print:static">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-4 bg-slate-900/60 backdrop-blur-sm overflow-y-auto print:p-0 print:bg-white print:static">
 
       {/* Dynamic CSS Injection to handle clean single-page printing fallback */}
       <style dangerouslySetInnerHTML={{
@@ -522,17 +522,28 @@ export default function InvoiceModal({ order, isOpen, onClose }: InvoiceModalPro
       {/* Modal Container */}
       <div
         id="printable-invoice-container"
-        className="w-full max-w-3xl bg-white border border-slate-200 rounded-xl shadow-2xl overflow-hidden flex flex-col my-8 animate-in fade-in zoom-in-95 duration-200 print:shadow-none print:border-none print:my-0 print:rounded-none"
+        className="w-full h-full sm:h-auto sm:max-w-3xl bg-white border-0 sm:border border-slate-200 rounded-none sm:rounded-xl shadow-2xl overflow-hidden flex flex-col my-0 sm:my-8 animate-in fade-in zoom-in-95 duration-200 print:shadow-none print:border-none print:my-0 print:rounded-none"
       >
 
         {/* Modal Top Command Bar (Hidden on print) */}
-        <div className="p-4 border-b border-slate-100 bg-slate-50 flex flex-col md:flex-row md:items-center md:justify-between gap-4 print:hidden">
-          <div className="flex items-center space-x-2">
-            <FileText className="w-4 h-4 text-blue-600" />
-            <div>
-              <span className="font-sans font-bold text-slate-800 text-xs uppercase tracking-wider block leading-none">Automated Sales Invoice</span>
-              <span className="text-[10px] text-slate-400 mt-0.5 block">Configure print options and finalize document</span>
+        <div className="p-4 border-b border-slate-100 bg-slate-50 space-y-3 shrink-0 print:hidden">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center space-x-2 min-w-0">
+              <FileText className="w-4 h-4 text-blue-600 shrink-0" />
+              <div className="min-w-0">
+                <span className="font-sans font-bold text-slate-800 text-xs uppercase tracking-wider block leading-none">Automated Sales Invoice</span>
+                <span className="text-[10px] text-slate-400 mt-0.5 block">Configure print options and finalize document</span>
+              </div>
             </div>
+
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-1.5 hover:bg-slate-200 rounded-lg text-slate-500 hover:text-slate-700 transition-colors shrink-0"
+              title="Close modal"
+            >
+              <X className="w-4 h-4" />
+            </button>
           </div>
 
           {/* Controls to toggle Signature */}
@@ -558,20 +569,11 @@ export default function InvoiceModal({ order, isOpen, onClose }: InvoiceModalPro
               <Printer className="w-3.5 h-3.5" />
               <span>Print Invoice</span>
             </button>
-
-            <button
-              type="button"
-              onClick={onClose}
-              className="p-1.5 hover:bg-slate-200 rounded-lg text-slate-500 hover:text-slate-700 transition-colors"
-              title="Close modal"
-            >
-              <X className="w-4 h-4" />
-            </button>
           </div>
         </div>
 
-        {/* Printable Sheet Area */}
-        <div className="p-8 space-y-8 text-xs text-slate-600 print:p-0 font-sans bg-white" id="printable-invoice-sheet">
+        {/* Printable Sheet Area — scrolls independently so the command bar (incl. close button) stays put when the sheet is taller than the viewport */}
+        <div className="p-8 space-y-8 text-xs text-slate-600 print:p-0 font-sans bg-white flex-1 min-h-0 overflow-y-auto print:overflow-visible print:h-auto" id="printable-invoice-sheet">
 
           {/* Invoice Header */}
           <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-6 border-b border-slate-100 pb-6">
@@ -647,7 +649,7 @@ export default function InvoiceModal({ order, isOpen, onClose }: InvoiceModalPro
           {/* Line Items Table */}
           <div className="space-y-2">
             <span className="text-[9px] font-bold text-slate-400 uppercase font-mono block">CONTRACT LINE ITEMS</span>
-            <div className="border border-slate-200 rounded-lg overflow-hidden print:border-slate-300">
+            <div className="border border-slate-200 rounded-lg overflow-x-auto print:border-slate-300 print:overflow-visible">
               <table className="w-full text-left text-xs border-collapse">
                 <thead>
                   <tr className="bg-slate-100/80 border-b border-slate-200 text-slate-500 uppercase font-mono tracking-wider text-[9px] print:bg-slate-50">

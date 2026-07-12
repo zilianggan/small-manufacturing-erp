@@ -29,6 +29,7 @@ import SalesOrderDetailView from './SalesOrderDetailView';
 import ComboBox from './ComboBox';
 import FilterDialog from './FilterDialog';
 import { PageHeader, SectionCard, FilterBar, DataTable } from './shell';
+import { useAndroidBackButton } from '../hooks/useAndroidBackButton';
 import type { DataTableColumn, FilterChip } from './shell';
 import {
   Button, Badge, Sheet, FormField, fieldInputClassName, ActionsMenu,
@@ -125,6 +126,7 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, init
     setSelectedOrder(null);
     if (detailOpenedExternally) onReturnToOrigin?.();
   };
+  useAndroidBackButton(!!selectedOrder, handleDetailBack);
 
   // Cross-tab drill-in: fetch and open the order directly by id (independent
   // of whatever tab/search filter is currently active), then tell the parent

@@ -4,7 +4,6 @@
  */
 
 import { useState, useEffect } from 'react';
-import * as XLSX from 'xlsx';
 import {
   LayoutDashboard,
   Package,
@@ -13,7 +12,6 @@ import {
   ShoppingBag,
   Shuffle,
   Database,
-  Download,
   Upload,
   Menu,
   X,
@@ -33,7 +31,7 @@ import {
 import { useSyncStore } from './helper';
 import { CompanyProfile } from './types';
 import SignaturePad from './components/SignaturePad';
-import { useToast, Button, Sheet, FormField, fieldInputClassName } from './components/ui';
+import { Button, Sheet, FormField, fieldInputClassName } from './components/ui';
 import { useFadeInOnMount } from './hooks/useFadeInOnMount';
 
 import DashboardView from './components/DashboardView';
@@ -53,7 +51,6 @@ import { CallAPI } from './components/UIHelper';
 type TabType = 'DASHBOARD' | 'INVENTORY' | 'MATERIAL' | 'PRODUCT' | 'CONTACTS' | 'EMPLOYEES' | 'ORDERS' | 'PURCHASES' | 'WORKFLOWS' | 'SYSTEM_ADMIN';
 
 export default function App() {
-  const toast = useToast();
   const [activeTab, setActiveTab] = useState<TabType>('DASHBOARD');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -244,47 +241,6 @@ export default function App() {
     }
   };
 
-  // Automated Excel data backup helper
-  const downloadBackup = () => {
-    const keys = [
-      'erp_inventory',
-      'erp_vendors',
-      'erp_clients',
-      'erp_employees',
-      'erp_sales_orders',
-      'erp_purchase_orders',
-      'erp_workflow_tasks',
-      'erp_job_positions',
-      'erp_material_categories',
-      'erp_product_categories'
-    ];
-    const wb = XLSX.utils.book_new();
-    let hasData = false;
-
-    keys.forEach(key => {
-      const value = localStorage.getItem(key);
-      if (value) {
-        try {
-          const data = JSON.parse(value);
-          if (Array.isArray(data) && data.length > 0) {
-            const ws = XLSX.utils.json_to_sheet(data);
-            XLSX.utils.book_append_sheet(wb, ws, key);
-            hasData = true;
-          }
-        } catch (e) {
-          // ignore
-        }
-      }
-    });
-
-    if (hasData) {
-      XLSX.writeFile(wb, `ERP_Backup_${new Date().toISOString().split('T')[0]}.xlsx`);
-      toast.success('Backup file downloaded.');
-    } else {
-      toast.warning('No data found to export.');
-    }
-  };
-
   // Define Navigation Items
   const navItems = [
     { id: 'DASHBOARD' as TabType, label: 'Operations Board', icon: LayoutDashboard },
@@ -325,8 +281,8 @@ export default function App() {
             title="Click to edit company branding"
           >
             <div className="flex items-center space-x-2.5">
-              <span className="bg-primary p-1.5 rounded-lg text-sidebar-foreground shrink-0 group-hover:scale-105 transition-transform flex items-center justify-center">
-                {renderCompanyIcon("w-4.5 h-4.5")}
+              <span className="p-1 rounded-lg text-sidebar-foreground dark:bg-white shrink-0 group-hover:scale-105 transition-transform flex items-center justify-center">
+                {renderCompanyIcon("w-9 h-9")}
               </span>
               {!sidebarCollapsed && (
                 <div className="min-w-0">
@@ -385,11 +341,6 @@ export default function App() {
 
         {/* Sidebar Footer Operations */}
         <div className="p-4 border-t border-sidebar-foreground/10 space-y-2 text-[10px] text-sidebar-foreground/40 font-mono">
-          {!sidebarCollapsed && (
-            <div className="flex items-center justify-between text-[11px] text-sidebar-foreground/50 font-sans pb-1 font-semibold border-b border-sidebar-foreground/10">
-              <span>Data Import / Export</span>
-            </div>
-          )}
           <button
             onClick={() => setShowImportModal(true)}
             title={sidebarCollapsed ? 'Import / Export Hub' : undefined}
@@ -397,14 +348,6 @@ export default function App() {
           >
             <Upload className="w-3.5 h-3.5 animate-bounce-subtle shrink-0" />
             {!sidebarCollapsed && <span>Import / Export Hub</span>}
-          </button>
-          <button
-            onClick={downloadBackup}
-            title={sidebarCollapsed ? 'Export Full Excel Backup' : undefined}
-            className={`w-full flex items-center space-x-2 px-2.5 py-1.5 hover:text-sidebar-foreground hover:bg-sidebar-foreground/10 rounded-lg transition-colors text-left ${sidebarCollapsed ? 'justify-center px-0' : ''}`}
-          >
-            <Download className="w-3.5 h-3.5 shrink-0" />
-            {!sidebarCollapsed && <span>Export Full Excel Backup</span>}
           </button>
         </div>
 
@@ -430,8 +373,8 @@ export default function App() {
           className="flex items-center space-x-2 cursor-pointer active:bg-sidebar-foreground/10 rounded-md p-1 transition-colors select-none"
           title="Tap to edit company branding"
         >
-          <span className="p-1 bg-primary rounded-lg text-sidebar-foreground shrink-0 flex items-center justify-center">
-            {renderCompanyIcon("w-4 h-4")}
+          <span className="p-1 rounded-lg text-sidebar-foreground dark:bg-white shrink-0 flex items-center justify-center">
+            {renderCompanyIcon("w-6 h-6")}
           </span>
           <div>
             <h1 className="font-sans font-bold text-sidebar-foreground text-xs tracking-tight">{companyProfile.name}</h1>
@@ -499,13 +442,6 @@ export default function App() {
               >
                 <Upload className="w-3.5 h-3.5" />
                 <span>Import / Export Hub</span>
-              </button>
-              <button
-                onClick={downloadBackup}
-                className="w-full flex items-center space-x-2 px-2.5 py-1.5 hover:text-sidebar-foreground hover:bg-sidebar-foreground/10 rounded-md transition-colors text-left"
-              >
-                <Download className="w-3.5 h-3.5" />
-                <span>Export Full Excel Backup</span>
               </button>
             </div>
           </div>
