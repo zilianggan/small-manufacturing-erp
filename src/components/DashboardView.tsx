@@ -197,7 +197,7 @@ export default function DashboardView({ onNavigate, onViewSalesOrder, onViewPurc
               <PieChart>
                 <Tooltip formatter={(v) => [formatUnits(Number(v)), '']} contentStyle={{ background: 'var(--popover)', borderColor: 'var(--border)', borderRadius: '12px', color: 'var(--popover-foreground)', fontSize: '12px' }} />
                 <Pie data={inventoryChartData} cx="50%" cy="50%" innerRadius={54} outerRadius={72} paddingAngle={5} dataKey="value">
-                  {inventoryChartData.map((entry, index) => <Cell key={index} fill={entry.color} />)}
+                  {inventoryChartData.map((entry, index) => <Cell key={index} fill={entry.color} stroke="transparent" />)}
                 </Pie>
               </PieChart>
             </ResponsiveContainer>

@@ -211,7 +211,7 @@ export default function EmployeesView() {
 
                 <div className="pt-3 border-t border-slate-100 space-y-1.5 text-xs text-slate-600">
                   {emp.email && (
-                    <div className="flex items-center space-x-2 truncate cursor-pointer" onClick={(e) => { e.stopPropagation(); window.open(`https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(emp.email!)}`, "_blank") }}>
+                    <div className="flex items-center space-x-2 truncate cursor-pointer" onClick={(e) => { e.stopPropagation(); window.open(`mailto:${emp.email!}`, "_blank") }}>
                       <Mail className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                       <span className="font-mono text-[11px] text-primary hover:underline truncate">{emp.email}</span>
                     </div>

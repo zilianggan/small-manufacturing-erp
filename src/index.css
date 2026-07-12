@@ -59,15 +59,15 @@
 .dark {
   --background: #09090b;
   --foreground: #f4f4f5;
-  --card: #141417;
+  --card: #17171a;
   --card-foreground: #f4f4f5;
-  --popover: #17171b;
+  --popover: #1d1d22;
   --popover-foreground: #f4f4f5;
   --primary: #3b82f6;
-  --primary-foreground: #06090f;
-  --secondary: #1e1e22;
+  --primary-foreground: #ffffff;
+  --secondary: #1d1d22;
   --secondary-foreground: #f4f4f5;
-  --muted: #1e1e22;
+  --muted: #1d1d22;
   --muted-foreground: #a1a1aa;
   --accent: #15233f;
   --accent-foreground: #93c5fd;
@@ -77,20 +77,20 @@
   --success-foreground: #052e12;
   --warning: #fbbf24;
   --warning-foreground: #451a03;
-  --border: #232327;
-  --input: #232327;
+  --border: #2e2e35;
+  --input: #2e2e35;
   --ring: #3b82f6;
   --chart-1: #60a5fa;
   --chart-2: #34d399;
   --chart-3: #fbbf24;
   --chart-4: #a78bfa;
   --chart-5: #94a3b8;
-  --glass-bg: rgba(20, 20, 23, 0.72);
+  --glass-bg: rgba(23, 23, 26, 0.72);
   --glass-border: rgba(244, 244, 245, 0.08);
-  --sidebar: #17171b;
+  --sidebar: #17171a;
   --sidebar-foreground: #f4f4f5;
-  --sidebar-border: #232327;
-  --sidebar-hover: #1e1e22;
+  --sidebar-border: #2e2e35;
+  --sidebar-hover: #1d1d22;
   --sidebar-active: #15233f;
 }
 
@@ -180,7 +180,7 @@ button {
   color: #ffffff;
   margin-top: 1.5rem;
   margin-bottom: 0.75rem;
-  border-bottom: 1px solid #1e293b;
+  border-bottom: 1px solid #2e2e35;
   padding-pb: 0.5rem;
   font-family: var(--font-sans);
 }
@@ -228,7 +228,7 @@ button {
 .markdown-body code {
   font-family: var(--font-mono);
   font-size: 0.85em;
-  background-color: #0f172a;
+  background-color: #17171a;
   padding: 0.15rem 0.35rem;
   border-radius: 0.25rem;
   color: #38bdf8;
@@ -250,13 +250,13 @@ button {
 
 .markdown-body th,
 .markdown-body td {
-  border: 1px solid #1e293b;
+  border: 1px solid #2e2e35;
   padding: 0.5rem;
   text-align: left;
 }
 
 .markdown-body th {
-  background-color: #0f172a;
+  background-color: #17171a;
   color: #ffffff;
 }
 
@@ -272,14 +272,14 @@ button {
 .dark body,
 .dark .bg-slate-50,
 .dark main.bg-slate-50 {
-  background-color: #090d16 !important;
+  background-color: #09090b !important;
   color: #cbd5e1 !important;
 }
 
 /* Modals, Cards, and Dropdown containers */
 .dark .bg-white,
 .dark [role="dialog"]>div:not(.keep-light) {
-  background-color: #0f172a !important;
+  background-color: #17171a !important;
   color: #cbd5e1 !important;
 }
 
@@ -294,7 +294,7 @@ button {
 .dark .border-t,
 .dark .border-r,
 .dark .border-l {
-  border-color: #1e293b !important;
+  border-color: #2e2e35 !important;
 }
 
 /* Primary/Secondary Text overrides */
@@ -332,17 +332,20 @@ button {
 
 /* Light gray background panels/blocks */
 .dark .bg-slate-50\/70,
+.dark .bg-slate-50\/50,
 .dark .bg-slate-50,
 .dark .bg-slate-100\/50,
 .dark .bg-slate-100\/80,
 .dark .bg-slate-100 {
-  background-color: #1e293b !important;
+  background-color: #1d1d22 !important;
 }
 
 .dark .hover\:bg-slate-150:hover,
 .dark .hover\:bg-slate-50:hover,
-.dark .hover\:bg-slate-100:hover {
-  background-color: #1e293b !important;
+.dark .hover\:bg-slate-50\/50:hover,
+.dark .hover\:bg-slate-100:hover,
+.dark .hover\:bg-white:hover {
+  background-color: #232328 !important;
 }
 
 /* Forms & Inputs */
@@ -353,8 +356,8 @@ button {
 .dark input[type="date"],
 .dark select,
 .dark textarea {
-  background-color: #090d16 !important;
-  border-color: #1e293b !important;
+  background-color: #1d1d22 !important;
+  border-color: #2e2e35 !important;
   color: #f8fafc !important;
 }
 
@@ -397,8 +400,8 @@ button {
 
 /* Fix Recharts Tooltip */
 .dark .recharts-default-tooltip {
-  background-color: #0f172a !important;
-  border-color: #1e293b !important;
+  background-color: #17171a !important;
+  border-color: #2e2e35 !important;
   color: #cbd5e1 !important;
 }
 

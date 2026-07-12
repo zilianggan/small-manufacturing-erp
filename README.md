@@ -91,3 +91,11 @@ See `knowledge.md` for a detailed, module-by-module breakdown of the codebase.
 ## License
 
 Private/internal project — all rights reserved.
+
+## Email
+1. Open Chrome.
+2. Go to https://mail.google.com and sign in.
+3. Click the Protocol Handler (double-diamond) icon in the address bar.
+4. Choose Allow Gmail to open email links.
+5. On Windows, you may also need to set Chrome (or Gmail) as the handler for the MAILTO protocol in Settings → Apps → Default apps.
+Now, clicking a mailto: link can open Gmail in your browser.

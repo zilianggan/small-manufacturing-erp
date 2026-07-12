@@ -14,7 +14,7 @@ import AttachmentSection from './AttachmentSection';
 import CompanyLogo from './CompanyLogo';
 import ComboBox from './ComboBox';
 import CompanyFormFields from './CompanyFormFields';
-import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, FormField, fieldInputClassName, SearchInput, useToast, useConfirm } from './ui';
+import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, FormField, fieldInputClassName, SearchInput, Button, useToast, useConfirm } from './ui';
 import { CallAPI } from './UIHelper';
 
 type CompanyType = 'VENDORS' | 'CLIENTS';
@@ -211,7 +211,7 @@ export default function ContactDetailView({ company, companyType, onBack, onComp
               </div>
               <div className="flex flex-wrap gap-x-5 gap-y-1.5 text-xs text-slate-500">
                 {company.email && (
-                  <div className="flex items-center space-x-1.5 cursor-pointer" onClick={(e) => { e.stopPropagation(); window.open(`https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(company.email)}`, "_blank") }}>
+                  <div className="flex items-center space-x-1.5 cursor-pointer" onClick={(e) => { e.stopPropagation(); window.open(`mailto:${company.email}`, "_blank") }}>
                     <Mail className="w-3.5 h-3.5 shrink-0 text-slate-400" />
                     <span className="font-mono text-primary hover:underline">{company.email}</span>
                   </div>
@@ -243,20 +243,22 @@ export default function ContactDetailView({ company, companyType, onBack, onComp
             </div>
           </div>
           <div className="flex items-center space-x-1.5 shrink-0">
-            <button
+            <Button
+              variant="ghost" size="icon"
               onClick={openEditCompany}
-              className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-slate-50 rounded transition-colors"
+              className="h-8 w-8 text-muted-foreground hover:text-primary"
               title="Edit"
             >
               <Edit className="w-4 h-4" />
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="ghost" size="icon"
               onClick={handleDeleteCompany}
-              className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-slate-50 rounded transition-colors"
+              className="h-8 w-8 text-muted-foreground hover:text-destructive"
               title="Delete"
             >
               <Trash2 className="w-4 h-4" />
-            </button>
+            </Button>
           </div>
         </div>
       </Card>
@@ -294,7 +296,7 @@ export default function ContactDetailView({ company, companyType, onBack, onComp
             {contacts.map((contact) => (
               <div
                 key={contact.id}
-                className="p-4 flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 hover:bg-slate-50/50 transition-colors group"
+                className="p-4 flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 hover:bg-secondary/40 transition-colors group"
               >
                 <div className="flex-1 min-w-0 space-y-1">
                   <div className="flex items-center gap-2">
@@ -310,7 +312,7 @@ export default function ContactDetailView({ company, companyType, onBack, onComp
                       <span className="flex items-center space-x-1 cursor-pointer" onClick={(e) => { e.stopPropagation(); window.open(`https://wa.me/${contact.contactNo}`, "_blank") }}><Phone className="w-3 h-3 text-slate-400" /><span className="font-mono text-primary hover:underline">{contact.contactNo}</span></span>
                     )}
                     {contact.email && (
-                      <span className="flex items-center space-x-1 cursor-pointer" onClick={(e) => { e.stopPropagation(); window.open(`https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(contact.email)}`, "_blank") }}><Mail className="w-3 h-3 text-slate-400" /><span className="font-mono text-primary hover:underline">{contact.email}</span></span>
+                      <span className="flex items-center space-x-1 cursor-pointer" onClick={(e) => { e.stopPropagation(); window.open(`mailto:${contact.email}`, "_blank") }}><Mail className="w-3 h-3 text-slate-400" /><span className="font-mono text-primary hover:underline">{contact.email}</span></span>
                     )}
                     {/* {contact.attachments?.[0] && (
                       <a
@@ -326,20 +328,22 @@ export default function ContactDetailView({ company, companyType, onBack, onComp
                   </div>
                 </div>
                 <div className="flex items-center space-x-1.5 shrink-0">
-                  <button
+                  <Button
+                    variant="ghost" size="icon"
                     onClick={() => openEditContact(contact)}
-                    className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-white rounded transition-colors"
+                    className="h-8 w-8 text-muted-foreground hover:text-primary"
                     title="Edit"
                   >
                     <Edit className="w-3.5 h-3.5" />
-                  </button>
-                  <button
+                  </Button>
+                  <Button
+                    variant="ghost" size="icon"
                     onClick={() => handleDeleteContact(contact.id)}
-                    className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-white rounded transition-colors"
+                    className="h-8 w-8 text-muted-foreground hover:text-destructive"
                     title="Delete"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
-                  </button>
+                  </Button>
                 </div>
               </div>
             ))}
