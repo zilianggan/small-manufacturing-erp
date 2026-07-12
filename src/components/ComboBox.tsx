@@ -152,6 +152,7 @@ export default function ComboBox({
         <RadixPopover.Content
           align="start"
           sideOffset={4}
+          collisionPadding={8}
           style={{ width: 'var(--radix-popover-trigger-width)' }}
           onOpenAutoFocus={(e) => { e.preventDefault(); inputRef.current?.focus(); }}
           className="z-[100] min-w-[180px] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl overflow-hidden data-[state=open]:animate-in data-[state=open]:fade-in data-[state=open]:zoom-in-95 duration-100"
@@ -188,7 +189,7 @@ export default function ComboBox({
             // scroll-lock (react-remove-scroll) swallows the native wheel scroll —
             // drive scrollTop manually so the list still scrolls inside a drawer.
             onWheel={(e) => { e.currentTarget.scrollTop += e.deltaY; }}
-            className="max-h-52 overflow-y-auto py-1"
+            className="max-h-[min(13rem,var(--radix-popover-content-available-height,13rem))] overflow-y-auto py-1"
           >
             {filtered.length === 0 ? (
               <li className="px-3 py-2 text-xs text-slate-400 text-center">No results</li>

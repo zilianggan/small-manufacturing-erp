@@ -179,7 +179,7 @@ export default function SalesOrderDetailView({
           </div>
 
           {/* Status-appropriate lifecycle actions (mirrors OrdersView.tsx's row actions) */}
-          <div className="flex items-center flex-wrap gap-1.5 shrink-0">
+          <div className="flex items-center flex-wrap gap-1.5 w-full sm:w-auto sm:shrink-0">
             {order.status === 'QUOTATION' && (
               <>
                 <Button variant="outline" size="sm" onClick={() => onEdit(order)}><Edit className="w-3.5 h-3.5" /> Edit</Button>

@@ -626,7 +626,7 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
   ];
 
   return (
-    <div ref={contentRef} className="flex flex-col gap-5 h-full min-h-0" id="purchases-view">
+    <div ref={contentRef} className="flex flex-col gap-5 min-[1440px]:h-full min-[1440px]:min-h-0" id="purchases-view">
       {selectedPurchase ? (
         <PurchaseOrderDetailView
           purchase={selectedPurchase}

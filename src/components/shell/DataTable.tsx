@@ -131,7 +131,7 @@ export function DataTable<T>({
                     </TableCell>
                   ))}
                   {rowActions && (
-                    <TableCell onClick={(e) => e.stopPropagation()} className="opacity-0 group-hover:opacity-100 transition-opacity">
+                    <TableCell onClick={(e) => e.stopPropagation()}>
                       {rowActions(row)}
                     </TableCell>
                   )}

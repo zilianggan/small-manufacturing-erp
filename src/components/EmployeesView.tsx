@@ -225,8 +225,8 @@ export default function EmployeesView() {
                 </div>
               </div>
 
-              {/* Action buttons drawer overlay on hover */}
-              <div className="flex items-center justify-end space-x-1 mt-4 pt-3 border-t border-slate-50 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+              {/* Action buttons row */}
+              <div className="flex items-center justify-end space-x-1 mt-4 pt-3 border-t border-slate-50">
                 <Button
                   id={`btn-edit-emp-${emp.id}`}
                   variant="ghost" size="icon"

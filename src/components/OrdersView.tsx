@@ -756,7 +756,7 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, init
   ];
 
   return (
-    <div ref={contentRef} className="flex flex-col gap-5 h-full min-h-0" id="orders-view">
+    <div ref={contentRef} className="flex flex-col gap-5 min-[1440px]:h-full min-[1440px]:min-h-0" id="orders-view">
       {selectedOrder ? (
         <SalesOrderDetailView
           order={selectedOrder}

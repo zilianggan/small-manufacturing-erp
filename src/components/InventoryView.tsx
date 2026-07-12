@@ -425,7 +425,7 @@ export default function InventoryView({ onViewPurchaseOrder, onViewSalesOrder }:
   ];
 
   return (
-    <div ref={contentRef} className="flex flex-col gap-5 h-full min-h-0" id="inventory-view">
+    <div ref={contentRef} className="flex flex-col gap-5 min-[1440px]:h-full min-[1440px]:min-h-0" id="inventory-view">
       <PageHeader
         title="Inventory Transactions"
         description="Track all inventory movements and stock changes."

@@ -252,7 +252,7 @@ export default function SystemAdminView() {
   ];
 
   return (
-    <div className="flex flex-col gap-5 h-full min-h-0" id="system-admin-view">
+    <div className="flex flex-col gap-5 min-[1440px]:h-full min-[1440px]:min-h-0" id="system-admin-view">
       <PageHeader
         title="System Admin"
         description="Manage lookup lists and document numbering."

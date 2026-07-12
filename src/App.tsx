@@ -449,8 +449,14 @@ export default function App() {
 
       {/* Mobile Menu Drawer — same sidebar tokens as the desktop aside */}
       {mobileMenuOpen && (
-        <div className="md:hidden fixed inset-0 z-50 bg-foreground/60 backdrop-blur-sm flex justify-end overflow-hidden">
-          <div className="w-64 h-dvh bg-sidebar text-sidebar-foreground p-4 flex flex-col justify-between animate-fade-in-left overflow-hidden">
+        <div
+          className="md:hidden fixed inset-0 z-50 bg-foreground/60 backdrop-blur-sm flex justify-end overflow-hidden"
+          onClick={() => setMobileMenuOpen(false)}
+        >
+          <div
+            className="w-64 h-dvh bg-sidebar text-sidebar-foreground p-4 flex flex-col justify-between animate-fade-in-left overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="space-y-4 min-h-0 flex-1 overflow-y-auto overscroll-contain">
               <div className="flex items-center justify-between border-b border-sidebar-foreground/10 pb-3">
                 <span className="font-semibold text-sidebar-foreground text-xs">Menu Navigations</span>

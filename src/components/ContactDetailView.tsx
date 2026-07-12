@@ -325,7 +325,7 @@ export default function ContactDetailView({ company, companyType, onBack, onComp
                     )} */}
                   </div>
                 </div>
-                <div className="flex items-center space-x-1.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity shrink-0">
+                <div className="flex items-center space-x-1.5 shrink-0">
                   <button
                     onClick={() => openEditContact(contact)}
                     className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-white rounded transition-colors"

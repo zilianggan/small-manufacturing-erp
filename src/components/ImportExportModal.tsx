@@ -395,8 +395,8 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
   const activePreview = activeCategory === 'PURCHASE' ? purchasePreview : activeCategory === 'SALES' ? salesPreview : null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
-      <div className="w-full max-w-4xl bg-white border border-slate-200 rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in duration-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-4 bg-slate-900/60 backdrop-blur-sm">
+      <div className="w-full h-full sm:h-auto sm:max-w-4xl bg-white border-0 sm:border border-slate-200 rounded-none sm:rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-full sm:max-h-[90vh] animate-in fade-in zoom-in duration-200">
 
         <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50 shrink-0">
           <div className="flex items-center space-x-2.5">
