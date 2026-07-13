@@ -1,4 +1,4 @@
-<img width="2541" height="1303" alt="image" src="https://github.com/user-attachments/assets/e019cb61-c22a-4e33-99ae-1252e7a72b92" /># Small Manufacturing ERP System
+# Small Manufacturing ERP System
 
 <img width="2541" height="1303" alt="image" src="https://github.com/user-attachments/assets/4f8a3910-9962-44ae-9cc3-9899f42db4d0" />
 A manufacturing ERP desktop application for managing inventory, sales and purchase orders, production workflows, employees, and vendor/client contacts. Built with Electron, React, and Supabase.
