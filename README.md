@@ -1,4 +1,4 @@
-# Seng Jie Engineering ERP System
+# Small Manufacturing ERP System
 
 A manufacturing ERP desktop application for managing inventory, sales and purchase orders, production workflows, employees, and vendor/client contacts. Built with Electron, React, and Supabase.
 
