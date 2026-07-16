@@ -5,13 +5,19 @@ import { getVendors } from '../services/ContactsService';
 import { getCompanyProfile } from '../services/CompanyProfileService';
 import { formatDate } from '../utils/date';
 
-interface QuotationModalProps {
+// Code and dimension are both optional on a material — never fall back to the raw id when the code
+// is unset, that just leaks an opaque UUID onto a vendor-facing document. Omit whichever part is
+// missing instead of rendering "undefined" / a bare "Dimension:".
+const itemMeta = (code?: string, dimension?: string): string =>
+  [code, dimension ? `Dimension: ${dimension}` : ''].filter(Boolean).join(' | ');
+
+interface PurchaseInvoiceModalProps {
   purchase: PurchaseHeader | null;
   isOpen: boolean;
   onClose: () => void;
 }
 
-export default function QuotationModal({ purchase, isOpen, onClose }: QuotationModalProps) {
+export default function PurchaseInvoiceModal({ purchase, isOpen, onClose }: PurchaseInvoiceModalProps) {
   const [companyProfile, setCompanyProfile] = useState<CompanyProfile>(null);
   const [vendors, setVendors] = useState<Vendor[]>([]);
 
@@ -44,9 +50,10 @@ export default function QuotationModal({ purchase, isOpen, onClose }: QuotationM
 
   const referenceNo = purchase.purchaseNo;
   const grandTotal = purchase.totalPrice;
+  const invoiceDate = purchase.orderDate || purchase.quotationDate;
 
   const handlePrint = () => {
-    const sheet = document.getElementById('printable-quotation-sheet');
+    const sheet = document.getElementById('printable-purchase-invoice-sheet');
     if (!sheet) {
       window.print();
       return;
@@ -67,16 +74,16 @@ export default function QuotationModal({ purchase, isOpen, onClose }: QuotationM
           <!DOCTYPE html>
           <html>
             <head>
-              <title>Purchase Quotation - ${referenceNo}</title>
+              <title>Purchase Invoice - ${referenceNo}</title>
               <style>
                 body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: #1e293b; margin: 0; padding: 40px; background: #ffffff; }
-                .quotation-header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #f1f5f9; padding-bottom: 24px; margin-bottom: 30px; }
+                .invoice-header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #f1f5f9; padding-bottom: 24px; margin-bottom: 30px; }
                 .company-info { max-width: 380px; }
                 .company-name { font-size: 18px; font-weight: 800; color: #0f172a; margin: 6px 0 2px 0; }
                 .reg-no { font-size: 8px; font-family: monospace; color: #94a3b8; letter-spacing: 0.05em; text-transform: uppercase; }
                 .contact-details { font-size: 10px; color: #64748b; margin-top: 8px; line-height: 1.5; }
-                .quotation-title-block { text-align: right; }
-                .quotation-title { font-size: 24px; font-weight: 900; color: #0f172a; margin: 0 0 6px 0; }
+                .invoice-title-block { text-align: right; }
+                .invoice-title { font-size: 24px; font-weight: 900; color: #0f172a; margin: 0 0 6px 0; }
                 .meta-details { font-size: 10px; font-family: monospace; color: #475569; line-height: 1.5; }
                 .meta-label { font-weight: 700; }
                 .billing-block { display: grid; grid-template-cols: 1fr 1fr; gap: 40px; background-color: #f8fafc; border-radius: 12px; padding: 20px; margin-bottom: 30px; }
@@ -105,7 +112,7 @@ export default function QuotationModal({ purchase, isOpen, onClose }: QuotationM
               </style>
             </head>
             <body>
-              <div class="quotation-header">
+              <div class="invoice-header">
                 <div class="company-info">
                   <div style="display: flex; align-items: center; gap: 10px;">
                     ${logoHtml}
@@ -121,11 +128,11 @@ export default function QuotationModal({ purchase, isOpen, onClose }: QuotationM
                   </div>
                 </div>
 
-                <div class="quotation-title-block">
-                  <h1 class="quotation-title">PURCHASE QUOTATION</h1>
+                <div class="invoice-title-block">
+                  <h1 class="invoice-title">PURCHASE INVOICE</h1>
                   <div class="meta-details">
-                    <p style="margin: 2px 0;"><span class="meta-label">Reference No:</span> ${referenceNo}</p>
-                    <p style="margin: 2px 0;"><span class="meta-label">Quotation Date:</span> ${formatDate(purchase.quotationDate)}</p>
+                    <p style="margin: 2px 0;"><span class="meta-label">Invoice No:</span> ${referenceNo}</p>
+                    <p style="margin: 2px 0;"><span class="meta-label">Invoice Date:</span> ${formatDate(invoiceDate)}</p>
                     <p style="margin: 2px 0;"><span class="meta-label">Status:</span> <span style="font-weight: bold; color: #047857; text-transform: uppercase;">${purchase.status}</span></p>
                   </div>
                 </div>
@@ -133,7 +140,7 @@ export default function QuotationModal({ purchase, isOpen, onClose }: QuotationM
 
               <div class="billing-block">
                 <div>
-                  <div class="bill-to-title">QUOTATION REQUESTED FROM</div>
+                  <div class="bill-to-title">SUPPLIER</div>
                   <h3 class="vendor-name">${purchase.vendorName}</h3>
                   ${vendorDetails ? `
                     <div class="vendor-info">
@@ -145,9 +152,9 @@ export default function QuotationModal({ purchase, isOpen, onClose }: QuotationM
                 </div>
 
                 <div>
-                  <div class="bill-to-title">QUOTATION TERMS</div>
+                  <div class="bill-to-title">PAYMENT TERMS</div>
                   <p class="terms-details">
-                    Please confirm unit pricing and delivery lead time for the materials below. This document is a request for quotation and is not a binding purchase commitment until converted to a Purchase Order.
+                    Amount payable against Purchase Order ${referenceNo} for the materials listed below. Please quote this reference number on all invoices and correspondence.
                   </p>
                 </div>
               </div>
@@ -169,7 +176,7 @@ export default function QuotationModal({ purchase, isOpen, onClose }: QuotationM
                       <td class="text-mono" style="color: #94a3b8;">${String(idx + 1).padStart(2, '0')}</td>
                       <td>
                         <div class="item-name">${item.materialName}</div>
-                        <span class="item-desc">${item.materialCode || item.materialId} | Dimension: ${item.material.dimension}</span>
+                        ${itemMeta(item.material?.code || item.materialCode, item?.material?.dimension) ? `<span class="item-desc">${itemMeta(item.material?.code || item.materialCode, item?.material?.dimension)}</span>` : ''}
                       </td>
                       <td class="text-right text-mono">${item.quantity} units</td>
                       <td class="text-right text-mono">RM ${item.unitCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
@@ -181,15 +188,15 @@ export default function QuotationModal({ purchase, isOpen, onClose }: QuotationM
 
               <div class="totals-section">
                 <div class="declaration">
-                  <div class="declaration-title">QUOTATION DECLARATION</div>
+                  <div class="declaration-title">INVOICE DECLARATION</div>
                   <p style="margin: 0;">
-                    This quotation request is issued by ${companyProfile.name} for supply evaluation purposes only. All values expressed in Malaysian Ringgit (MYR).
+                    This invoice is issued against a purchase order raised by ${companyProfile.name}. All values expressed in Malaysian Ringgit (MYR).
                   </p>
                 </div>
 
                 <div class="totals-box">
                   <div class="totals-row-grand">
-                    <span>ESTIMATED TOTAL</span>
+                    <span>TOTAL AMOUNT DUE</span>
                     <span>RM ${grandTotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                   </div>
                 </div>
@@ -259,15 +266,15 @@ export default function QuotationModal({ purchase, isOpen, onClose }: QuotationM
         __html: `
         @media print {
           html, body { background-color: #ffffff !important; color: #000000 !important; margin: 0 !important; padding: 0 !important; height: auto !important; width: 100% !important; }
-          aside, header, main, nav, .print\\:hidden, [role="dialog"] > div:not(#printable-quotation-container) { display: none !important; visibility: hidden !important; }
-          #printable-quotation-container { position: absolute !important; left: 0 !important; top: 0 !important; width: 100% !important; max-width: 100% !important; border: none !important; box-shadow: none !important; margin: 0 !important; padding: 0 !important; background: #ffffff !important; visibility: visible !important; }
-          #printable-quotation-sheet { padding: 0 !important; margin: 0 !important; border: none !important; visibility: visible !important; }
-          #printable-quotation-sheet * { visibility: visible !important; }
+          aside, header, main, nav, .print\\:hidden, [role="dialog"] > div:not(#printable-purchase-invoice-container) { display: none !important; visibility: hidden !important; }
+          #printable-purchase-invoice-container { position: absolute !important; left: 0 !important; top: 0 !important; width: 100% !important; max-width: 100% !important; border: none !important; box-shadow: none !important; margin: 0 !important; padding: 0 !important; background: #ffffff !important; visibility: visible !important; }
+          #printable-purchase-invoice-sheet { padding: 0 !important; margin: 0 !important; border: none !important; visibility: visible !important; }
+          #printable-purchase-invoice-sheet * { visibility: visible !important; }
         }
       `}} />
 
       <div
-        id="printable-quotation-container"
+        id="printable-purchase-invoice-container"
         className="w-full h-full sm:h-auto sm:max-w-3xl bg-white border-0 sm:border border-slate-200 rounded-none sm:rounded-xl shadow-2xl overflow-hidden flex flex-col my-0 sm:my-8 animate-in fade-in zoom-in-95 duration-200 print:shadow-none print:border-none print:my-0 print:rounded-none"
       >
         <div className="p-4 border-b border-slate-100 bg-slate-50 space-y-3 shrink-0 print:hidden">
@@ -275,7 +282,7 @@ export default function QuotationModal({ purchase, isOpen, onClose }: QuotationM
             <div className="flex items-center space-x-2 min-w-0">
               <FileText className="w-4 h-4 text-blue-600 shrink-0" />
               <div className="min-w-0">
-                <span className="font-sans font-bold text-slate-800 text-xs uppercase tracking-wider block leading-none">Purchase Quotation</span>
+                <span className="font-sans font-bold text-slate-800 text-xs uppercase tracking-wider block leading-none">Purchase Invoice</span>
                 <span className="text-[10px] text-slate-400 mt-0.5 block">Configure print options and finalize document</span>
               </div>
             </div>
@@ -307,15 +314,15 @@ export default function QuotationModal({ purchase, isOpen, onClose }: QuotationM
               type="button"
               onClick={handlePrint}
               className="flex items-center space-x-1 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-sm transition-all hover:shadow cursor-pointer"
-              title="Print quotation"
+              title="Print invoice"
             >
               <Printer className="w-3.5 h-3.5" />
-              <span>Print Quotation</span>
+              <span>Print Invoice</span>
             </button>
           </div>
         </div>
 
-        <div className="p-8 space-y-8 text-xs text-slate-600 print:p-0 font-sans bg-white flex-1 min-h-0 overflow-y-auto print:overflow-visible print:h-auto" id="printable-quotation-sheet">
+        <div className="p-8 space-y-8 text-xs text-slate-600 print:p-0 font-sans bg-white flex-1 min-h-0 overflow-y-auto print:overflow-visible print:h-auto" id="printable-purchase-invoice-sheet">
           <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-6 border-b border-slate-100 pb-6">
             <div className="space-y-2">
               <div className="flex items-center space-x-2">
@@ -343,10 +350,10 @@ export default function QuotationModal({ purchase, isOpen, onClose }: QuotationM
             </div>
 
             <div className="text-left sm:text-right space-y-1 sm:min-w-[180px]">
-              <h1 className="font-sans font-black text-slate-900 text-xl tracking-tight uppercase print:text-2xl">Purchase Quotation</h1>
+              <h1 className="font-sans font-black text-slate-900 text-xl tracking-tight uppercase print:text-2xl">Purchase Invoice</h1>
               <div className="space-y-0.5 text-[10px] font-mono text-slate-500">
-                <p><span className="font-bold text-slate-700">Reference No:</span> {referenceNo}</p>
-                <p><span className="font-bold text-slate-700">Quotation Date:</span> {formatDate(purchase.quotationDate)}</p>
+                <p><span className="font-bold text-slate-700">Invoice No:</span> {referenceNo}</p>
+                <p><span className="font-bold text-slate-700">Invoice Date:</span> {formatDate(invoiceDate)}</p>
                 <p><span className="font-bold text-slate-700">Status:</span> <span className="text-emerald-700 font-bold uppercase">{purchase.status}</span></p>
               </div>
             </div>
@@ -354,7 +361,7 @@ export default function QuotationModal({ purchase, isOpen, onClose }: QuotationM
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-8 bg-slate-50/70 rounded-xl p-4 border border-slate-100 print:bg-white print:border-none print:p-0">
             <div>
-              <span className="text-[9px] font-bold text-slate-400 uppercase font-mono block mb-1">QUOTATION REQUESTED FROM</span>
+              <span className="text-[9px] font-bold text-slate-400 uppercase font-mono block mb-1">SUPPLIER</span>
               <h3 className="font-sans font-bold text-slate-900 text-xs">{purchase.vendorName}</h3>
               {vendorDetails ? (
                 <div className="text-[10px] text-slate-500 space-y-0.5 mt-1 leading-relaxed">
@@ -369,9 +376,9 @@ export default function QuotationModal({ purchase, isOpen, onClose }: QuotationM
 
             <div className="flex flex-col justify-between sm:text-right">
               <div>
-                <span className="text-[9px] font-bold text-slate-400 uppercase font-mono block mb-1">QUOTATION TERMS</span>
+                <span className="text-[9px] font-bold text-slate-400 uppercase font-mono block mb-1">PAYMENT TERMS</span>
                 <p className="text-[10px] text-slate-500 leading-relaxed">
-                  Please confirm unit pricing and delivery lead time for the materials below. Not a binding purchase commitment until converted to a Purchase Order.
+                  Amount payable against Purchase Order {referenceNo} for the materials listed below. Please quote this reference number on all correspondence.
                 </p>
               </div>
             </div>
@@ -396,7 +403,9 @@ export default function QuotationModal({ purchase, isOpen, onClose }: QuotationM
                       <td className="p-3 font-mono text-slate-400">{String(idx + 1).padStart(2, '0')}</td>
                       <td className="p-3 font-semibold text-slate-800">
                         <div>{item.materialName}</div>
-                        <span className="text-[9px] text-slate-400 font-normal">{item.materialCode || item.materialId} | Dimension: {item.material.dimension}</span>
+                        {itemMeta(item.material?.code || item.materialCode, item?.material?.dimension) && (
+                          <span className="text-[9px] text-slate-400 font-normal">{itemMeta(item.material?.code || item.materialCode, item?.material?.dimension)}</span>
+                        )}
                       </td>
                       <td className="p-3 text-right font-mono">{item.quantity} units</td>
                       <td className="p-3 text-right font-mono">RM {item.unitCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
@@ -410,15 +419,15 @@ export default function QuotationModal({ purchase, isOpen, onClose }: QuotationM
 
           <div className="flex flex-col sm:flex-row sm:justify-between items-start gap-4 pt-4 border-t border-slate-100">
             <div className="max-w-[340px] text-[10px] text-slate-400 leading-relaxed">
-              <span className="font-bold text-slate-500 block mb-1">QUOTATION DECLARATION</span>
+              <span className="font-bold text-slate-500 block mb-1">INVOICE DECLARATION</span>
               <p>
-                This quotation request is issued by {companyProfile.name} for supply evaluation purposes only. All values expressed in Malaysian Ringgit (MYR).
+                This invoice is issued against a purchase order raised by {companyProfile.name}. All values expressed in Malaysian Ringgit (MYR).
               </p>
             </div>
 
             <div className="w-full sm:w-[260px] text-right font-mono text-[10px] space-y-1.5 border-t sm:border-t-0 pt-3 sm:pt-0">
               <div className="flex justify-between pt-2 border-t border-slate-100 font-sans text-xs">
-                <span className="font-bold text-slate-800 uppercase">ESTIMATED TOTAL</span>
+                <span className="font-bold text-slate-800 uppercase">TOTAL AMOUNT DUE</span>
                 <span className="font-mono font-black text-blue-700">RM {grandTotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
             </div>

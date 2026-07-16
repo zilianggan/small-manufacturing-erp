@@ -14,7 +14,7 @@ import { getMaterials, getMaterialCategories } from "./MaterialService";
 import { getProducts, getProductCategories } from "./ProductService";
 import { getPurchases } from "./PurchasesService";
 import { getSalesOrders } from "./OrdersService";
-import { getInventoryTransactions, saveInventoryTransaction } from "./InventoryTransactionService";
+import { getInventoryTransactions } from "./InventoryTransactionService";
 import { nowIso } from "../utils/date";
 import { Vendor, Client, Contact, Material, Product, Attachment } from "../types";
 
@@ -425,11 +425,18 @@ export interface PurchaseImportCommitResult {
 // Best-effort chunked write (same non-atomic intent as
 // PurchasesService.createPurchaseQuotation, batched for import volume):
 // groups are processed COMMIT_CHUNK_SIZE at a time, each chunk writing all
-// its headers in one insert and all its details in one insert — instead of
-// two round trips per order. If a chunk's detail insert fails, that chunk's
-// just-inserted headers are deleted (avoids orphans) and later chunks are
-// never attempted. Only call this with a PurchaseImportPreview that has zero
-// errors.
+// its headers in one insert, all its details in one insert and all its stock
+// movements in one insert — instead of a round trip per order/line. If a
+// chunk's write fails, that chunk's just-inserted headers are deleted
+// (details cascade, avoiding orphans) and later chunks are never attempted.
+// Only call this with a PurchaseImportPreview that has zero errors.
+//
+// Imported purchases land as RECEIVED (not ORDERED): the goods are already in
+// the shop when someone back-fills them from a spreadsheet, so each line gets
+// its PURCHASE inventory_transaction (the update_material_stock() trigger then
+// raises material.quantity) and received_quantity = quantity, which also keeps
+// receivePurchaseOrder's idempotency guard from double-counting if the order is
+// ever "received" again from the UI.
 export const commitPurchaseImport = async (groups: PurchaseImportGroup[]): Promise<PurchaseImportCommitResult> => {
   const succeeded: string[] = [];
 
@@ -443,7 +450,8 @@ export const commitPurchaseImport = async (groups: PurchaseImportGroup[]): Promi
         purchase_no: group.purchaseNo,
         quotation_date: group.orderDate,
         order_date: group.orderDate,
-        status: 'ORDERED',
+        received_date: group.orderDate,
+        status: 'RECEIVED',
         vendor_id: group.vendorId,
         total_price: group.details.reduce((sum, d) => sum + d.quantity * d.unitCost, 0),
       }))
@@ -453,21 +461,43 @@ export const commitPurchaseImport = async (groups: PurchaseImportGroup[]): Promi
       return { succeeded, failed: { purchaseNo: chunk[0].purchaseNo, message: headerError.message } };
     }
 
-    const { error: detailError } = await supabase.from('purchase_detail').insert(
-      chunk.flatMap((group, idx) => group.details.map(d => ({
-        header_id: ids[idx],
+    // Flattened line list kept alongside the insert so the returned detail_ids
+    // (RETURNING preserves insert order) can be zipped back onto their line.
+    const lines = chunk.flatMap((group, idx) => group.details.map(d => ({ ...d, headerIdx: idx, orderDate: group.orderDate })));
+
+    const { data: insertedDetails, error: detailError } = await supabase.from('purchase_detail').insert(
+      lines.map(d => ({
+        header_id: ids[d.headerIdx],
         material_id: d.materialId,
         material_name: d.materialName,
         material_code: d.materialCode || null,
         quantity: d.quantity,
         unit_cost: d.unitCost,
         total_price: d.quantity * d.unitCost,
-      })))
-    );
+        received_quantity: d.quantity,
+      }))
+    ).select('detail_id');
     if (detailError) {
       console.error('commitPurchaseImport(detail)', detailError);
       await supabase.from('purchase_header').delete().in('id', ids);
       return { succeeded, failed: { purchaseNo: chunk[0].purchaseNo, message: detailError.message } };
+    }
+
+    const { error: txError } = await supabase.from('inventory_transaction').insert(
+      lines.map((d, idx) => ({
+        id: generateId(),
+        transaction_type: 'PURCHASE',
+        quantity: d.quantity,
+        unit_cost: d.unitCost,
+        material_id: d.materialId,
+        purchase_detail_id: (insertedDetails || [])[idx]?.detail_id,
+        transaction_date: new Date(d.orderDate).toISOString(),
+      }))
+    );
+    if (txError) {
+      console.error('commitPurchaseImport(inventory_transaction)', txError);
+      await supabase.from('purchase_header').delete().in('id', ids);
+      return { succeeded, failed: { purchaseNo: chunk[0].purchaseNo, message: txError.message } };
     }
 
     succeeded.push(...chunk.map(g => g.purchaseNo));
@@ -613,7 +643,15 @@ export const commitSalesImport = async (groups: SalesImportGroup[]): Promise<Sal
         sales_no: group.salesNo,
         order_date: group.orderDate,
         delivery_date: group.deliveryDate || null,
-        status: 'ORDERED',
+        // DELIVERED, not ORDERED: the goods are already out the door when a sales order is
+        // back-filled from a spreadsheet, and this importer already writes the one SALES -qty
+        // ledger row for that below. Landing the header as ORDERED would leave it live for the
+        // normal lifecycle — confirmProductionDone (+qty) then markDelivered (a second -qty) —
+        // which would double-debit product.quantity with no way to undo it (the ledger is
+        // insert-only). DELIVERED is past both of those, so this row stays the only debit.
+        // Symmetric with commitPurchaseImport, which lands its header as RECEIVED for the same
+        // reason.
+        status: 'DELIVERED',
         client_id: group.clientId,
         total_amount: group.details.reduce((sum, d) => sum + d.quantity * d.unitPrice, 0),
       }))
@@ -632,6 +670,11 @@ export const commitSalesImport = async (groups: SalesImportGroup[]): Promise<Sal
         quantity: d.quantity,
         unit_price: d.unitPrice,
         total_price: d.quantity * d.unitPrice,
+        // The header lands as DELIVERED, so the line must say it shipped in full — mirrors
+        // commitPurchaseImport's received_quantity above. Without this the imported order reads as
+        // "delivered 0 of N" and its Return action caps at zero (returns are capped at what actually
+        // shipped), which would make an imported sale impossible to return.
+        delivered_quantity: d.quantity,
         remark: d.remark || null,
       })))
     );
@@ -639,6 +682,28 @@ export const commitSalesImport = async (groups: SalesImportGroup[]): Promise<Sal
       console.error('commitSalesImport(detail)', detailError);
       await supabase.from('sales_header').delete().in('id', ids);
       return { succeeded, failed: { salesNo: chunk[0].salesNo, message: detailError.message } };
+    }
+
+    // One SALES movement per line, negative against the product — this is the sole debit for
+    // the import (see the DELIVERED status comment on the header insert above).
+    // sales_detail_id is left null here — a known importer limitation, not a
+    // missing column: it exists on inventory_transaction, and the sales_detail
+    // rows to link against are already inserted above, so a future pass could
+    // wire this up. Until then imported rows carry no order link and show in
+    // the ledger as product movements only.
+    const { error: txError } = await supabase.from('inventory_transaction').insert(
+      chunk.flatMap(group => group.details.map(d => ({
+        id: generateId(),
+        transaction_type: 'SALES',
+        quantity: -d.quantity,
+        product_id: d.productId,
+        transaction_date: new Date(group.orderDate).toISOString(),
+      })))
+    );
+    if (txError) {
+      console.error('commitSalesImport(inventory_transaction)', txError);
+      await supabase.from('sales_header').delete().in('id', ids);
+      return { succeeded, failed: { salesNo: chunk[0].salesNo, message: txError.message } };
     }
 
     succeeded.push(...chunk.map(g => g.salesNo));
@@ -711,9 +776,7 @@ export const importInventoryTransactions = async (rows: Record<string, any>[]): 
     };
   });
 
-  for (const tx of parsed) {
-    await saveInventoryTransaction(tx);
-  }
+  await upsertRecords('erp_inventory_transaction', parsed);
 
   return { successCount: parsed.length, logs: [`Imported ${parsed.length} inventory transaction(s) as stock adjustments.`] };
 };

@@ -111,18 +111,22 @@ const mapSalesHistoryRow = (row: any): InventoryListItem => ({
   refNo: row.sales_header?.sales_no,
   counterpartyName: row.sales_header?.clients?.company_name || '',
   orderDate: row.sales_header?.order_date,
-  quantity: Number(row.quantity) || 0,
+  // Negated: this is an outflow (goods leaving on a sale), not a credit. unitCost/totalPrice stay
+  // positive — they're read straight off unit_price/total_price, not derived from quantity — a
+  // magnitude is wanted there, same as the ledger mappers (mapMovementRow/mapConsumableUsageRow).
+  quantity: -(Number(row.quantity) || 0),
   unitCost: Number(row.unit_price) || 0,
   totalPrice: Number(row.total_price) || 0,
   status: row.sales_header?.status,
   salesHeaderId: row.header_id,
 });
 
-// ProductDetailView's "Inventory List": every sales order line for this
-// product (sales_detail/sales_header) merged with any other ledger movement
-// against it — chiefly extra-produced stock ADJUSTMENTs. SALES is excluded
-// from the ledger side since sales_detail above already covers it (products
-// have no dedicated stock ledger entry for the ordered/ordinary quantity).
+// ProductDetailView's "Inventory List": every sales order line for this product
+// (sales_detail/sales_header) merged with any other ledger movement against it — now PRODUCTION
+// (credited on production completion) and ADJUSTMENT (extra yield / corrections) as well as
+// SALES_RETURN. SALES itself is excluded from the ledger side via excludeTypes below: the
+// sales_detail rows fetched here already represent the sale, so including the ledger's own SALES
+// row too would list the same sale twice.
 export const getProductInventoryList = async (productId: string): Promise<InventoryListItem[]> => {
   const [salesRows, movementRows] = await Promise.all([
     (async () => {

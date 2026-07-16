@@ -277,13 +277,13 @@ export default function EmployeesView({ initialEmployeeId, onInitialEmployeeHand
                   {emp.email && (
                     <div className="flex items-center space-x-2 truncate cursor-pointer" onClick={(e) => { e.stopPropagation(); window.open(`mailto:${emp.email!}`, "_blank") }}>
                       <Mail className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                      <span className="font-mono text-[11px] text-primary hover:underline truncate">{emp.email}</span>
+                      <span className="font-mono text-[11px] text-slate-900 hover:underline truncate">{emp.email}</span>
                     </div>
                   )}
                   {emp.contactNo && (
                     <div className="flex items-center space-x-2 cursor-pointer" onClick={(e) => { e.stopPropagation(); window.open(`https://wa.me/${emp.contactNo}`, "_blank") }}>
                       <Phone className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                      <span className="font-mono text-[11px] text-primary hover:underline">{emp.contactNo}</span>
+                      <span className="font-mono text-[11px] text-slate-900 hover:underline">{emp.contactNo}</span>
                     </div>
                   )}
                 </div>

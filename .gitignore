@@ -37,6 +37,7 @@ Thumbs.db
 .agents/
 knowledge.md
 .CLAUDE.md
+.superpowers
 
 # Capacitor native generated build artifacts
 /android/app/build/

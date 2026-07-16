@@ -5,8 +5,9 @@
 
 import { useRef, useState } from 'react';
 import { Check, ChevronDown } from 'lucide-react';
-import { Dialog, DialogFooter, DialogCancelButton, SearchInput, fieldInputClassName, Button, Badge } from './ui';
+import { Dialog, DialogFooter, DialogCancelButton, SearchInput, Button, Badge } from './ui';
 import InfiniteScrollSentinel from './InfiniteScrollSentinel';
+import DatePicker from './DatePicker';
 import { cn } from '../lib/utils';
 
 export interface FilterPickerItem {
@@ -107,9 +108,9 @@ export default function FilterDialog({ open, onClose, title = 'Filter', sections
             <div key={section.key} className="space-y-2">
               <div className="text-xs font-semibold text-foreground">{section.label}</div>
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <input type="date" value={section.from} onChange={(e) => section.onFromChange(e.target.value)} className={fieldInputClassName} />
+                <DatePicker value={section.from} onChange={section.onFromChange} className="flex-1" />
                 <span>to</span>
-                <input type="date" value={section.to} onChange={(e) => section.onToChange(e.target.value)} className={fieldInputClassName} />
+                <DatePicker value={section.to} onChange={section.onToChange} className="flex-1" />
               </div>
             </div>
           )

@@ -47,14 +47,20 @@ const SALES_STATUS_META: Record<RecentSale['status'], { label: string; variant: 
   ORDERED: { label: 'Pending Production', variant: 'warning' },
   IN_PRODUCTION: { label: 'In Production', variant: 'default' },
   DONE_IN_PRODUCTION: { label: 'Done in Production', variant: 'default' },
+  PARTIALLY_DELIVERED: { label: 'Partially Delivered', variant: 'warning' },
   DELIVERED: { label: 'Delivered', variant: 'success' },
+  PARTIALLY_RETURNED: { label: 'Partially Returned', variant: 'warning' },
+  RETURNED: { label: 'Returned', variant: 'destructive' },
   CANCELLED: { label: 'Cancelled', variant: 'destructive' },
 };
 
 const PURCHASE_STATUS_META: Record<RecentPurchase['status'], { label: string; variant: BadgeProps['variant'] }> = {
   QUOTATION: { label: 'Quotation', variant: 'secondary' },
   ORDERED: { label: 'Pending Stock', variant: 'warning' },
+  PARTIALLY_RECEIVED: { label: 'Partially Received', variant: 'warning' },
   RECEIVED: { label: 'Received', variant: 'success' },
+  PARTIALLY_RETURNED: { label: 'Partially Returned', variant: 'warning' },
+  RETURNED: { label: 'Returned', variant: 'destructive' },
   CANCELLED: { label: 'Cancelled', variant: 'destructive' },
 };
 

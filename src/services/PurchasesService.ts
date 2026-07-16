@@ -10,7 +10,6 @@
 import { supabase } from "./supabase";
 import { getVendors } from "./ContactsService";
 import { getMaterialCategories } from "./SystemAdminService";
-import { saveInventoryTransaction } from "./InventoryTransactionService";
 import { generateId } from "../helper";
 import { Attachment, PurchaseHeader, PurchaseDetail } from "../types";
 import { nowIso } from "../utils/date";
@@ -47,6 +46,7 @@ const mapPurchaseDetailRow = (row: any): PurchaseDetail => ({
   unitCost: Number(row.unit_cost) || 0,
   totalPrice: Number(row.total_price) || 0,
   receivedQuantity: Number(row.received_quantity) || 0,
+  returnedQuantity: Number(row.returned_quantity) || 0,
   material: row.material,
 });
 
@@ -68,12 +68,13 @@ const mapPurchaseHeaderRow = (row: any): PurchaseHeader => ({
   updatedAt: row.updated_at,
 });
 
-export type PurchaseSortField = 'reference' | 'supplier' | 'date' | 'totalCost' | 'salesNo';
+export type PurchaseSortField = 'reference' | 'supplier' | 'date' | 'totalCost' | 'salesNo' | 'status';
 export type SortDir = 'asc' | 'desc';
 
 export interface PurchaseFilters {
   vendorIds?: string[];
   materialIds?: string[];
+  statuses?: PurchaseHeader['status'][];
   // Applied against quotation_date (QUOTATION tab) or order_date (PO tab) —
   // whichever column the list's own "Date" column shows for that tab.
   dateFrom?: string;
@@ -100,7 +101,7 @@ export const getPurchases = async (
 
   query = tab === 'QUOTATION'
     ? query.eq('status', 'QUOTATION')
-    : query.in('status', ['ORDERED', 'RECEIVED', 'CANCELLED']);
+    : query.in('status', ['ORDERED', 'PARTIALLY_RECEIVED', 'RECEIVED', 'PARTIALLY_RETURNED', 'RETURNED', 'CANCELLED']);
 
   const q = search.trim();
   if (q) {
@@ -120,6 +121,9 @@ export const getPurchases = async (
   if (useMaterialFilter) {
     query = query.in('purchase_detail.material_id', filters.materialIds!);
   }
+  if (filters.statuses && filters.statuses.length > 0) {
+    query = query.in('status', filters.statuses);
+  }
   if (filters.dateFrom) query = query.gte(dateColumn, filters.dateFrom);
   if (filters.dateTo) query = query.lte(dateColumn, endOfDay(filters.dateTo));
 
@@ -132,6 +136,9 @@ export const getPurchases = async (
       break;
     case 'salesNo':
       query = query.order('sales_no', { ascending: sortDir === 'asc', foreignTable: 'sales_header' });
+      break;
+    case 'status':
+      query = query.order('status', { ascending: sortDir === 'asc' });
       break;
     case 'totalCost':
       query = query.order('total_price', { ascending: sortDir === 'asc' });
@@ -284,44 +291,30 @@ export const convertToPurchaseOrder = async (headerId: string, input: PurchaseFo
   await replaceDetails(headerId, input.details);
 };
 
-export const receivePurchaseOrder = async (purchase: PurchaseHeader): Promise<void> => {
-  const today = new Date().toISOString().split('T')[0];
+export interface ReceiveLine {
+  detailId: string;
+  quantity: number; // > 0; validated server-side against quantity − receivedQuantity
+}
 
-  for (const detail of purchase.details) {
-    // Idempotency guard: skip lines already fully received so a retry after a
-    // partial failure (or a double-click before the button disables) doesn't
-    // insert a second inventory_transaction and double-count material.quantity.
-    if (detail.receivedQuantity >= detail.quantity) {
-      continue;
-    }
+// Books goods in from the vendor — one atomic transaction per submit via apply_purchase_receipt_batch
+// (function_trigger.sql): every line commits together or the whole receipt throws and rolls back.
+// The RPC clamps nothing — an over-receipt is a data-entry mistake, not a race, so it raises instead.
+export const receivePurchaseOrder = async (
+  purchase: PurchaseHeader,
+  lines: ReceiveLine[],
+  remark?: string,
+): Promise<void> => {
+  const payload = lines.filter(l => l.quantity > 0).map(l => ({ detail_id: l.detailId, quantity: l.quantity }));
+  if (payload.length === 0) return;
 
-    await saveInventoryTransaction({
-      id: generateId(),
-      transactionType: 'PURCHASE',
-      quantity: detail.quantity,
-      unitCost: detail.unitCost,
-      materialId: detail.materialId,
-      purchaseDetailId: detail.detailId,
-      transactionDate: nowIso(),
-    });
-
-    const { error: detailError } = await supabase
-      .from('purchase_detail')
-      .update({ received_quantity: detail.quantity })
-      .eq('detail_id', detail.detailId);
-    if (detailError) {
-      console.error('receivePurchaseOrder(detail)', detailError);
-      throw detailError;
-    }
-  }
-
-  const { error: headerError } = await supabase
-    .from('purchase_header')
-    .update({ received_date: today, status: 'RECEIVED' })
-    .eq('id', purchase.id);
-  if (headerError) {
-    console.error('receivePurchaseOrder(header)', headerError);
-    throw headerError;
+  const { error } = await supabase.rpc('apply_purchase_receipt_batch', {
+    p_header_id: purchase.id,
+    p_lines: payload,
+    p_remark: remark ?? null,
+  });
+  if (error) {
+    console.error('receivePurchaseOrder', error);
+    throw error;
   }
 };
 
@@ -337,6 +330,34 @@ export const deletePurchase = async (headerId: string): Promise<void> => {
   const { error } = await supabase.from('purchase_header').delete().eq('id', headerId);
   if (error) {
     console.error('deletePurchase', error);
+    throw error;
+  }
+};
+
+export interface PurchaseReturnLine {
+  detailId: string;
+  quantity: number; // > 0; validated server-side against receivedQuantity − returnedQuantity and current material stock
+}
+
+// Sends received material back to the vendor — one atomic transaction per submit via
+// apply_purchase_return_batch (function_trigger.sql). Throws (and rolls back the whole submit) on
+// over-return or on trying to return more than is currently in stock (already consumed elsewhere)
+// — the RPC's exception message replaces the old JS pre-check.
+export const returnPurchaseOrder = async (
+  purchase: PurchaseHeader,
+  lines: PurchaseReturnLine[],
+  remark?: string,
+): Promise<void> => {
+  const payload = lines.filter(l => l.quantity > 0).map(l => ({ detail_id: l.detailId, quantity: l.quantity }));
+  if (payload.length === 0) return;
+
+  const { error } = await supabase.rpc('apply_purchase_return_batch', {
+    p_header_id: purchase.id,
+    p_lines: payload,
+    p_remark: remark ?? null,
+  });
+  if (error) {
+    console.error('returnPurchaseOrder', error);
     throw error;
   }
 };

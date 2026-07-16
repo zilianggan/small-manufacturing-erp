@@ -25,7 +25,6 @@ export const getProductCategories = async (): Promise<ProductCategory[]> => {
 };
 
 export const saveJobPositions = async (items: JobPosition[], changed?: JobPosition, deletedId?: string) => {
-    setStorageItem('erp_job_positions', items);
     if (changed) await upsertRecord('erp_job_positions', changed);
     if (deletedId) await deleteRecord('erp_job_positions', deletedId);
     removeStorageItem("erp_job_positions");
@@ -44,12 +43,6 @@ export const saveProductCategories = async (items: ProductCategory[], changed?: 
 };
 
 export const loadSystemAdminData = async () => {
-    // const tables = [
-    //     ['erp_job_positions', 'job_positions'],
-    //     ['erp_material_categories', 'material_categories'],
-    //     ['erp_product_categories', 'product_categories'],
-    // ] as const;
-    // await Promise.allSettled(tables.map(([key, table]) => loadTable(key, table)));
     const { data, error } = await supabase
         .rpc("get_system_admin_data")
         .single<SystemAdminData>();

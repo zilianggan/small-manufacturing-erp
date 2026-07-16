@@ -76,6 +76,7 @@ const ROW_MAPPERS: Record<string, (row: any) => any> = {
         product_id: t.productId || null,
         purchase_detail_id: t.purchaseDetailId || null,
         production_material_usage_id: t.productionMaterialUsageId || null,
+        sales_detail_id: t.salesDetailId || null,
         transaction_date: t.transactionDate
     }),
     erp_employees: (e) => ({

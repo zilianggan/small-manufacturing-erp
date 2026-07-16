@@ -6,7 +6,7 @@
 import { useMemo, useState } from 'react';
 import { ArrowLeft, Mail, Phone, Briefcase, FlaskConical } from 'lucide-react';
 import { Employee, EmployeeConsumableUsageItem } from '../types';
-import { Card, Badge, Button } from './ui';
+import { Card, Badge } from './ui';
 import { SectionCard, DataTable } from './shell';
 import type { DataTableColumn } from './shell';
 import { useFadeInOnMount } from '../hooks/useFadeInOnMount';

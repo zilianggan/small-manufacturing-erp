@@ -53,6 +53,7 @@ const mapMaterialUsageRow = (row: any): ProductionMaterialUsage => ({
   materialName: row.material?.name || '',
   materialCode: row.material?.code || undefined,
   materialType: row.material?.material_type || undefined,
+  // The material master owns the mode — production_material_usage has no consumption_mode column.
   consumptionMode: row.material?.consumption_mode || undefined,
   plannedQuantity: Number(row.planned_quantity) || 0,
   actualQuantity: Number(row.actual_quantity) || 0,
@@ -66,6 +67,10 @@ const mapSalesDetailRow = (row: any): SalesDetail => ({
   productName: row.product_name,
   productCode: row.product_code || undefined,
   quantity: Number(row.quantity) || 0,
+  deliveredQuantity: Number(row.delivered_quantity) || 0,
+  returnedQuantity: Number(row.returned_quantity) || 0,
+  produceQuantity: Number(row.produce_quantity) || 0,
+  producedQuantity: Number(row.produced_quantity) || 0,
   unitPrice: Number(row.unit_price) || 0,
   totalPrice: Number(row.total_price) || 0,
   remark: row.remark || undefined,
@@ -91,12 +96,13 @@ const mapSalesHeaderRow = (row: any): SalesHeader => ({
   updatedAt: row.updated_at,
 });
 
-export type SalesSortField = 'reference' | 'client' | 'date' | 'totalAmount' | 'productionDue';
+export type SalesSortField = 'reference' | 'client' | 'date' | 'totalAmount' | 'productionDue' | 'status';
 export type SortDir = 'asc' | 'desc';
 
 export interface SalesFilters {
   clientIds?: string[];
   productIds?: string[];
+  statuses?: SalesHeader['status'][];
   // Applied against order_date (QUOTATION tab) or delivery_date (SO tab) —
   // whichever column the list's own "Date" column shows for that tab.
   dateFrom?: string;
@@ -123,7 +129,7 @@ export const getSalesOrders = async (
 
   query = tab === 'QUOTATION'
     ? query.eq('status', 'QUOTATION')
-    : query.in('status', ['ORDERED', 'IN_PRODUCTION', 'DONE_IN_PRODUCTION', 'DELIVERED', 'CANCELLED']);
+    : query.in('status', ['ORDERED', 'IN_PRODUCTION', 'DONE_IN_PRODUCTION', 'PARTIALLY_DELIVERED', 'DELIVERED', 'PARTIALLY_RETURNED', 'RETURNED', 'CANCELLED']);
 
   const q = search.trim();
   if (q) {
@@ -143,6 +149,9 @@ export const getSalesOrders = async (
   if (useProductFilter) {
     query = query.in('sales_detail.product_id', filters.productIds!);
   }
+  if (filters.statuses && filters.statuses.length > 0) {
+    query = query.in('status', filters.statuses);
+  }
   if (filters.dateFrom) query = query.gte(dateColumn, filters.dateFrom);
   if (filters.dateTo) query = query.lte(dateColumn, endOfDay(filters.dateTo));
 
@@ -152,6 +161,9 @@ export const getSalesOrders = async (
       break;
     case 'client':
       query = query.order('company_name', { ascending: sortDir === 'asc', foreignTable: 'clients' });
+      break;
+    case 'status':
+      query = query.order('status', { ascending: sortDir === 'asc' });
       break;
     case 'totalAmount':
       query = query.order('total_amount', { ascending: sortDir === 'asc' });
@@ -320,16 +332,98 @@ export interface MaterialShortfall {
   available: number;
 }
 
-// Gate for "Proceed to Production": aggregates every planned material's
-// quantity across the order's line items and checks it against live stock.
-// startProduction's -plannedQuantity inventory_transaction has no DB
-// constraint stopping material.quantity from going negative, so this is the
-// only thing standing between a start and an oversold material.
-export const checkProductionStock = async (header: SalesHeader): Promise<MaterialShortfall[]> => {
+// How much of each product this production run will actually make. Defaults to
+// `ordered − finished goods already in stock` (see suggestedProduceQuantity) but the user edits it,
+// so every material figure below is derived from it rather than from the ordered quantity.
+export interface ProduceLine {
+  detailId: string;
+  quantity: number;
+}
+
+// What Start Production will suggest for a line: only make what stock doesn't already cover.
+export const suggestedProduceQuantity = (ordered: number, inStock: number): number =>
+  Math.max(0, ordered - inStock);
+
+// The two lifecycle gates, shared by OrdersView's row menu and SalesOrderDetailView's button bar —
+// they used to be two copies of the same status lists and had already drifted apart.
+//
+// Production needs a bill of materials to run against: with no production materials on any line there
+// is nothing to scale, nothing to deduct and nothing to check stock for, so the run would be a bare
+// status flip into IN_PRODUCTION that nothing can complete meaningfully. Set the materials first.
+export const canStartProduction = (header: SalesHeader): boolean =>
+  ['ORDERED', 'PARTIALLY_DELIVERED'].includes(header.status)
+  && header.details.some(d => d.materials.length > 0);
+
+// How a line gets its first material row when it was missed at order-entry time. ORDERED is excluded
+// on purpose — that status is still Edit-able, and the Edit dialog's own material table already covers
+// adding a row, so this button would just be a second path to the same thing. Not routed through
+// updateSalesOrder()/replaceDetails(): that deletes and reinserts every sales_detail row, which would
+// wipe deliveredQuantity/producedQuantity progress and orphan the ledger's sales_detail_id on any line
+// that already shipped. This only ever inserts new production_material_usage rows.
+export const canAddMaterial = (header: SalesHeader): boolean =>
+  header.status === 'PARTIALLY_DELIVERED';
+
+export interface NewMaterialUsage {
+  detailId: string;
+  materialId: string;
+  plannedQuantity: number;
+}
+
+export const addMaterialUsage = async (rows: NewMaterialUsage[]): Promise<void> => {
+  const payload = rows.filter(r => r.plannedQuantity > 0);
+  if (payload.length === 0) return;
+
+  const { error } = await supabase.from('production_material_usage').insert(
+    payload.map(r => ({ sales_detail_id: r.detailId, material_id: r.materialId, planned_quantity: r.plannedQuantity }))
+  );
+  if (error) {
+    console.error('addMaterialUsage', error);
+    throw error;
+  }
+};
+
+// Delivery is allowed straight from ORDERED — production is optional when finished goods already
+// cover the order. markDelivered still refuses to ship more than the shelf holds.
+export const canDeliver = (header: SalesHeader): boolean =>
+  ['ORDERED', 'DONE_IN_PRODUCTION', 'PARTIALLY_DELIVERED'].includes(header.status);
+
+// A Sales Order is a business document from the moment it's ORDERED — audit trail requires it stay
+// on record forever, so Delete is QUOTATION-only. Cancel is the only exit past that point.
+export const canDeleteSalesOrder = (header: SalesHeader): boolean =>
+  header.status === 'QUOTATION';
+
+// The BOM on a usage row is sized for the ORDERED quantity. Producing fewer units consumes
+// proportionally less material, so every reservation scales by produceQty/orderedQty. Rounded to 2dp
+// because the quantity columns are NUMERIC and a raw float would otherwise reconcile to noise.
+const scaledPlan = (plannedForOrdered: number, produceQty: number, orderedQty: number): number => {
+  if (orderedQty <= 0 || produceQty <= 0) return 0;
+  return Math.round(plannedForOrdered * (produceQty / orderedQty) * 100) / 100;
+};
+
+// Rolls the order's BOM up to a per-material total, scaled to what's actually being produced.
+const requiredMaterials = (header: SalesHeader, produce: ProduceLine[]): Map<string, number> => {
+  const produceByDetailId = new Map(produce.map(p => [p.detailId, p.quantity]));
   const required = new Map<string, number>();
-  header.details.forEach(d => d.materials.forEach(m => {
-    required.set(m.materialId, (required.get(m.materialId) || 0) + m.plannedQuantity);
-  }));
+  for (const detail of header.details) {
+    const produceQty = produceByDetailId.get(detail.detailId) ?? 0;
+    for (const m of detail.materials) {
+      const qty = scaledPlan(m.plannedQuantity, produceQty, detail.quantity);
+      if (qty <= 0) continue;
+      required.set(m.materialId, (required.get(m.materialId) || 0) + qty);
+    }
+  }
+  return required;
+};
+
+// Hard gate for Start Production: the scaled BOM against live stock. startProduction's
+// -plannedQuantity inventory_transaction has no DB constraint stopping material.quantity from going
+// negative, so this is the only thing standing between a start and an oversold material.
+//
+// This is deliberately strict, unlike getOutstandingDemand below which only warns: accepting a
+// future order you can't fill yet is a business decision, but starting a production run you don't
+// have the metal for is just a wrong number in the ledger.
+export const checkProductionStock = async (header: SalesHeader, produce: ProduceLine[]): Promise<MaterialShortfall[]> => {
+  const required = requiredMaterials(header, produce);
   const materialIds = Array.from(required.keys());
   if (materialIds.length === 0) return [];
 
@@ -350,50 +444,139 @@ export const checkProductionStock = async (header: SalesHeader): Promise<Materia
   return shortfalls;
 };
 
-// Reserves every planned material's stock (one -plannedQuantity
-// inventory_transaction each) and opens one workflow_tasks row per
-// sales_detail line — reconciliation against actual usage happens in
-// confirmProductionDone when the order is marked done.
-export const startProduction = async (header: SalesHeader): Promise<void> => {
-  const today = new Date().toISOString().split('T')[0];
-
-  const { error: taskError } = await supabase.from('workflow_tasks').insert(
-    header.details.map(d => ({
-      sales_detail_id: d.detailId,
-      status: 'IN_PRODUCTION',
-      stage: 'PREPARATION',
-      start_date: today,
-    }))
-  );
-  if (taskError) {
-    console.error('startProduction(workflow_tasks)', taskError);
-    throw taskError;
+// Commits the run: one Postgres transaction via apply_production_start (function_trigger.sql) — persists
+// the produce quantity per line, rewrites each usage row's planned_quantity to the SCALED reservation
+// (the snapshot confirmProductionDone reconciles actual usage against later), deducts that material
+// (row-locked, throws on insufficient stock — closes the negative-stock race the old unlocked JS loop
+// left open), and opens the Kanban tasks. All-or-nothing: a partial failure can no longer leave some
+// materials deducted and others not, and a retry starts from a clean ORDERED/PARTIALLY_DELIVERED state
+// instead of double-deducting whatever succeeded last time.
+export const startProduction = async (header: SalesHeader, produce: ProduceLine[]): Promise<void> => {
+  // Producing nothing is not a production run: it would open workflow_tasks, flip the header to
+  // IN_PRODUCTION and reserve zero material — an order stuck in a stage with no work in it. If stock
+  // already covers everything, the answer is Deliver, not a zero-quantity run. (The RPC enforces this
+  // too — this is just a faster round trip for the common case.)
+  if (produce.every(p => p.quantity <= 0)) {
+    throw new Error('Enter a produce quantity for at least one product — a run with nothing to make is not allowed.');
   }
 
-  for (const detail of header.details) {
-    for (const material of detail.materials) {
-      await saveInventoryTransaction({
-        id: generateId(),
-        transactionType: 'SALES',
-        quantity: -material.plannedQuantity,
-        materialId: material.materialId,
-        productionMaterialUsageId: material.id,
-        transactionDate: nowIso(),
-      });
-    }
-  }
-
-  const { error } = await supabase.from('sales_header').update({ status: 'IN_PRODUCTION' }).eq('id', header.id);
+  const { error } = await supabase.rpc('apply_production_start', {
+    p_header_id: header.id,
+    p_produce: produce.map(p => ({ detail_id: p.detailId, quantity: p.quantity })),
+  });
   if (error) {
     console.error('startProduction', error);
     throw error;
   }
 };
 
+// Finished-goods stock for a set of products, keyed by id. sales_detail carries no stock column
+// (stock lives on the trigger-maintained catalog table), so Start Production has to look it up to
+// work out what actually still needs making.
+export const getProductStock = async (productIds: string[]): Promise<Record<string, number>> => {
+  const ids = Array.from(new Set(productIds)).filter(Boolean);
+  if (ids.length === 0) return {};
+
+  const { data, error } = await supabase.from('product').select('id, quantity').in('id', ids);
+  if (error) {
+    console.error('getProductStock', error);
+    return {};
+  }
+  return Object.fromEntries((data || []).map((p: any) => [p.id, Number(p.quantity) || 0]));
+};
+
+export interface DemandRow {
+  id: string;
+  name: string;
+  inStock: number;
+  outstanding: number; // available to promise = inStock − outstanding
+}
+
+// Planning visibility only — this never reserves anything and never blocks a save. Inventory always
+// means physical stock; outstanding demand is a number we show next to it so the user can see that
+// accepting another order implies more production or more purchasing.
+//
+// The two halves count different populations on purpose:
+//   products  — every open order, because finished goods aren't consumed until they ship.
+//   materials — ORDERED orders only. Once an order is IN_PRODUCTION its material has ALREADY been
+//               deducted from material.quantity by startProduction, so counting it as "still
+//               required" would double-count the very shortage it caused.
+//
+// excludeHeaderId drops the order currently being edited, so its own lines don't show up as demand
+// competing with itself.
+export const getOutstandingDemand = async (
+  excludeHeaderId?: string,
+): Promise<{ products: DemandRow[]; materials: DemandRow[] }> => {
+  const { data, error } = await supabase
+    .from('sales_header')
+    .select(`
+      id, status,
+      sales_detail(detail_id, product_id, quantity, delivered_quantity,
+        product(name),
+        production_material_usage(material_id, planned_quantity, material(name)))
+    `)
+    .in('status', ['ORDERED', 'IN_PRODUCTION', 'DONE_IN_PRODUCTION', 'PARTIALLY_DELIVERED']);
+  if (error) {
+    console.error('getOutstandingDemand', error);
+    return { products: [], materials: [] };
+  }
+
+  const products = new Map<string, DemandRow>();
+  const materials = new Map<string, DemandRow>();
+
+  for (const header of (data || []) as any[]) {
+    if (header.id === excludeHeaderId) continue;
+
+    for (const detail of header.sales_detail || []) {
+      const undelivered = (Number(detail.quantity) || 0) - (Number(detail.delivered_quantity) || 0);
+      if (detail.product_id && undelivered > 0) {
+        const row = products.get(detail.product_id)
+          || { id: detail.product_id, name: detail.product?.name || '', inStock: 0, outstanding: 0 };
+        row.outstanding += undelivered;
+        products.set(detail.product_id, row);
+      }
+
+      if (header.status !== 'ORDERED') continue;
+      for (const usage of detail.production_material_usage || []) {
+        const planned = Number(usage.planned_quantity) || 0;
+        if (!usage.material_id || planned <= 0) continue;
+        const row = materials.get(usage.material_id)
+          || { id: usage.material_id, name: usage.material?.name || '', inStock: 0, outstanding: 0 };
+        row.outstanding += planned;
+        materials.set(usage.material_id, row);
+      }
+    }
+  }
+
+  // Stock is trigger-maintained on the catalog tables, so it has to be read from there — the ledger
+  // above only knows what was ordered, not what's on the shelf.
+  const [productStock, materialStock] = await Promise.all([
+    products.size
+      ? supabase.from('product').select('id, quantity').in('id', Array.from(products.keys()))
+      : Promise.resolve({ data: [] as any[], error: null }),
+    materials.size
+      ? supabase.from('material').select('id, quantity').in('id', Array.from(materials.keys()))
+      : Promise.resolve({ data: [] as any[], error: null }),
+  ]);
+
+  for (const row of (productStock.data || [])) {
+    const p = products.get(row.id);
+    if (p) p.inStock = Number(row.quantity) || 0;
+  }
+  for (const row of (materialStock.data || [])) {
+    const m = materials.get(row.id);
+    if (m) m.inStock = Number(row.quantity) || 0;
+  }
+
+  const byName = (a: DemandRow, b: DemandRow) => a.name.localeCompare(b.name);
+  return {
+    products: Array.from(products.values()).sort(byName),
+    materials: Array.from(materials.values()).sort(byName),
+  };
+};
+
 export interface MaterialReconciliationInput {
   usageId: string; // production_material_usage.id
-  materialId: string;
-  plannedQuantity: number;
   actualQuantity: number;
 }
 
@@ -403,187 +586,122 @@ export interface LeftoverMaterialInput {
   quantity: number;
 }
 
-export interface ExtraProducedInput {
-  salesDetailId: string;
-  productId: string;
+// What actually came off the floor, per line. An actual above the planned produce qty IS extra
+// production, so there is one number here, not two.
+export interface ProducedLine {
+  detailId: string;
   quantity: number;
 }
 
-// Reconciles actual material usage against the reservation made in
-// startProduction, credits any leftover/by-product material and any
-// extra finished-goods yield, closes the order's workflow_tasks rows, and
-// advances the header to DONE_IN_PRODUCTION.
+// Pre-flight for Confirm Production Done, mirroring checkProductionStock (Start Production's stock
+// gate). Front-runs the same guard apply_material_consumption enforces server-side: a reconciliation
+// that uses MORE than the Start Production reservation draws the diff from live stock, and AUTOMATIC
+// consumables (fixed earlier by addOrderConsumable, never reserved) draw their full actual_quantity.
+// Everything else — actual <= planned, leftovers, MANUAL consumables — never touches live stock and
+// is excluded.
+export const checkProductionCompletionStock = async (
+  header: SalesHeader,
+  reconciliations: MaterialReconciliationInput[],
+): Promise<MaterialShortfall[]> => {
+  const usageById = new Map<string, ProductionMaterialUsage>(
+    header.details.flatMap(d => d.materials.map(m => [m.id, m] as const))
+  );
+  const required = new Map<string, number>();
+
+  for (const r of reconciliations) {
+    const usage = usageById.get(r.usageId);
+    if (!usage) continue;
+    const extra = r.actualQuantity - usage.plannedQuantity;
+    if (extra > 0) required.set(usage.materialId, (required.get(usage.materialId) || 0) + extra);
+  }
+
+  for (const usage of usageById.values()) {
+    if (usage.materialType === 'CONSUMABLE_MATERIAL' && usage.consumptionMode === 'AUTOMATIC' && usage.actualQuantity > 0) {
+      required.set(usage.materialId, (required.get(usage.materialId) || 0) + usage.actualQuantity);
+    }
+  }
+
+  const materialIds = Array.from(required.keys());
+  if (materialIds.length === 0) return [];
+
+  const { data, error } = await supabase.from('material').select('id, name, quantity').in('id', materialIds);
+  if (error) {
+    console.error('checkProductionCompletionStock', error);
+    throw error;
+  }
+
+  const shortfalls: MaterialShortfall[] = [];
+  required.forEach((requiredQty, materialId) => {
+    const row = (data || []).find((m: any) => m.id === materialId);
+    const available = Number(row?.quantity) || 0;
+    if (available < requiredQty) {
+      shortfalls.push({ materialId, materialName: row?.name || materialId, required: requiredQty, available });
+    }
+  });
+  return shortfalls;
+};
+
+// The whole "Mark Production Done" action in one transaction via apply_production_completion
+// (function_trigger.sql): reconciles actual material usage against the startProduction reservation,
+// burns AUTOMATIC consumables, credits leftover/by-product material, credits the finished goods
+// actually produced, closes workflow_tasks, and advances the header to DONE_IN_PRODUCTION — all
+// server-side. planned_quantity and material_id/product_id are read off the locked rows inside the
+// function, not trusted from this call.
 export const confirmProductionDone = async (
   header: SalesHeader,
   reconciliations: MaterialReconciliationInput[],
   leftovers: LeftoverMaterialInput[],
-  extraProduced: ExtraProducedInput[],
+  produced: ProducedLine[],
 ): Promise<void> => {
-  const today = new Date().toISOString().split('T')[0];
-
-  // A leftover entry for a material that's already a planned reservation row
-  // on this sales line must merge into that row's returned_quantity instead
-  // of inserting a second row — otherwise the same material shows twice in
-  // the Materials Used list (one planned/actual row, one leftover-only row).
-  const usageKeyByUsageId = new Map<string, string>();
-  header.details.forEach(d => d.materials.forEach(m => {
-    usageKeyByUsageId.set(m.id, `${d.detailId}:${m.materialId}`);
-  }));
-  const plannedKeys = new Set(usageKeyByUsageId.values());
-  const matchedLeftoverByKey = new Map<string, number>();
-  const unmatchedLeftovers: LeftoverMaterialInput[] = [];
-  for (const l of leftovers) {
-    const key = `${l.salesDetailId}:${l.materialId}`;
-    if (plannedKeys.has(key)) {
-      matchedLeftoverByKey.set(key, (matchedLeftoverByKey.get(key) || 0) + l.quantity);
-    } else {
-      unmatchedLeftovers.push(l);
-    }
-  }
-
-  for (const r of reconciliations) {
-    const diff = r.plannedQuantity - r.actualQuantity;
-    const leftoverQty = matchedLeftoverByKey.get(usageKeyByUsageId.get(r.usageId) || '') || 0;
-
-    if (diff !== 0) {
-      await saveInventoryTransaction({
-        id: generateId(),
-        transactionType: diff > 0 ? 'ADJUSTMENT' : 'SALES',
-        quantity: diff,
-        materialId: r.materialId,
-        productionMaterialUsageId: r.usageId,
-        transactionDate: nowIso(),
-      });
-    }
-    if (leftoverQty > 0) {
-      await saveInventoryTransaction({
-        id: generateId(),
-        transactionType: 'ADJUSTMENT',
-        quantity: leftoverQty,
-        materialId: r.materialId,
-        productionMaterialUsageId: r.usageId,
-        transactionDate: nowIso(),
-      });
-    }
-
-    const { error } = await supabase
-      .from('production_material_usage')
-      .update({ actual_quantity: r.actualQuantity, returned_quantity: Math.max(0, diff) + leftoverQty })
-      .eq('id', r.usageId);
-    if (error) {
-      console.error('confirmProductionDone(reconciliation)', error);
-      throw error;
-    }
-  }
-
-  // Consumables (paint/glue/etc.) are added during the Kanban stage, never
-  // reserved at Start Production, so they don't go through the reconciliation
-  // loop above (the modal filters them out). AUTOMATIC ones deduct their used
-  // qty now; MANUAL ones stay as history only — the user adjusts stock later
-  // via the Inventory stock-adjustment form.
-  for (const detail of header.details) {
-    for (const m of detail.materials) {
-      if (m.materialType !== 'CONSUMABLE_MATERIAL' || m.consumptionMode !== 'AUTOMATIC') continue;
-      if (m.actualQuantity <= 0) continue;
-      await saveInventoryTransaction({
-        id: generateId(),
-        transactionType: 'SALES', // consumed in production; matches how MANUAL consumable usage rows are shown
-        quantity: -m.actualQuantity,
-        materialId: m.materialId,
-        productionMaterialUsageId: m.id,
-        transactionDate: nowIso(),
-      });
-    }
-  }
-
-  // Leftovers for a material with no existing reservation row on this sales
-  // line (a genuine unplanned by-product) still need their own row.
-  for (const l of unmatchedLeftovers) {
-    const { data: inserted, error: insertError } = await supabase
-      .from('production_material_usage')
-      .insert({
-        sales_detail_id: l.salesDetailId,
-        material_id: l.materialId,
-        planned_quantity: 0,
-        actual_quantity: 0,
-        returned_quantity: l.quantity,
-        remark: 'Leftover from production',
-      })
-      .select('id')
-      .single();
-    if (insertError) {
-      console.error('confirmProductionDone(leftover)', insertError);
-      throw insertError;
-    }
-
-    await saveInventoryTransaction({
-      id: generateId(),
-      transactionType: 'ADJUSTMENT',
-      quantity: l.quantity,
-      materialId: l.materialId,
-      productionMaterialUsageId: inserted.id,
-      transactionDate: nowIso(),
-    });
-  }
-
-  for (const p of extraProduced) {
-    if (p.quantity <= 0) continue;
-    // Synthetic usage row (material_id left null) so the ADJUSTMENT below
-    // can join back to the sales order, same pattern as the leftover loop.
-    const { data: inserted, error: insertError } = await supabase
-      .from('production_material_usage')
-      .insert({
-        sales_detail_id: p.salesDetailId,
-        planned_quantity: 0,
-        actual_quantity: 0,
-        returned_quantity: 0,
-        remark: 'Extra produced beyond order',
-      })
-      .select('id')
-      .single();
-    if (insertError) {
-      console.error('confirmProductionDone(extraProduced)', insertError);
-      throw insertError;
-    }
-
-    await saveInventoryTransaction({
-      id: generateId(),
-      transactionType: 'ADJUSTMENT',
-      quantity: p.quantity,
-      productId: p.productId,
-      productionMaterialUsageId: inserted.id,
-      transactionDate: nowIso(),
-    });
-  }
-
-  const { error: taskError } = await supabase
-    .from('workflow_tasks')
-    .update({ status: 'DONE', end_date: today })
-    .in('sales_detail_id', header.details.map(d => d.detailId));
-  if (taskError) {
-    console.error('confirmProductionDone(workflow_tasks)', taskError);
-    throw taskError;
-  }
-
-  const { error } = await supabase.from('sales_header').update({ status: 'DONE_IN_PRODUCTION' }).eq('id', header.id);
+  const { error } = await supabase.rpc('apply_production_completion', {
+    p_header_id: header.id,
+    p_reconciliations: reconciliations.map(r => ({ usage_id: r.usageId, actual_quantity: r.actualQuantity })),
+    p_leftovers: leftovers.map(l => ({ sales_detail_id: l.salesDetailId, material_id: l.materialId, quantity: l.quantity })),
+    p_produced: produced.map(p => ({ detail_id: p.detailId, quantity: p.quantity })),
+  });
   if (error) {
     console.error('confirmProductionDone', error);
     throw error;
   }
 };
 
-export const markDelivered = async (headerId: string): Promise<void> => {
-  const { error } = await supabase.from('sales_header').update({ status: 'DELIVERED' }).eq('id', headerId);
+export interface DeliveryLine {
+  detailId: string;
+  quantity: number; // > 0; clamped server-side to min(quantity − deliveredQuantity, product stock)
+}
+
+// Shipping is what takes finished goods out of stock — one atomic transaction per submit via
+// apply_sales_delivery_batch (function_trigger.sql). Clamps rather than throws (decision #1's
+// exception): a request that outruns what's left is a benign race (another delivery, or stock
+// genuinely short), not a mistake, so it silently ships what it can rather than blocking the rest
+// of the batch.
+export const markDelivered = async (
+  header: SalesHeader,
+  lines: DeliveryLine[],
+  remark?: string,
+): Promise<void> => {
+  const payload = lines.filter(l => l.quantity > 0).map(l => ({ detail_id: l.detailId, quantity: l.quantity }));
+  if (payload.length === 0) return;
+
+  const { error } = await supabase.rpc('apply_sales_delivery_batch', {
+    p_header_id: header.id,
+    p_lines: payload,
+    p_remark: remark ?? null,
+  });
   if (error) {
     console.error('markDelivered', error);
     throw error;
   }
 };
 
-// If the order already reserved material stock (Start Production ran), a
-// cancel from IN_PRODUCTION must return that stock and close the order's
-// workflow_tasks rows — symmetric with what startProduction reserved/opened.
-// Cancelling from ORDERED (before any reservation) is still a plain status flip.
+// If the order already reserved material stock (Start Production ran), a cancel from
+// IN_PRODUCTION must return that stock and close the order's workflow_tasks rows — symmetric
+// with what startProduction reserved/opened. The returned material is typed ADJUSTMENT, not
+// SALES_RETURN: un-reserving is an internal correction (exactly what the "used less than
+// planned" reconciliation already emits), whereas SALES_RETURN now means one thing only — the
+// client sent finished goods back.
+// Cancelling from ORDERED (before any reservation) or from DONE_IN_PRODUCTION (goods already
+// made — they stay in stock to sell to someone else) is a plain status flip.
 export const cancelSalesOrder = async (header: SalesHeader): Promise<void> => {
   const today = new Date().toISOString().split('T')[0];
 
@@ -592,7 +710,7 @@ export const cancelSalesOrder = async (header: SalesHeader): Promise<void> => {
       for (const material of detail.materials) {
         await saveInventoryTransaction({
           id: generateId(),
-          transactionType: 'SALES_RETURN',
+          transactionType: 'ADJUSTMENT',
           quantity: material.plannedQuantity,
           materialId: material.materialId,
           productionMaterialUsageId: material.id,
@@ -699,4 +817,31 @@ export const getSalesOrdersForLinking = async (search = ''): Promise<SalesOrderL
     salesNo: row.sales_no,
     clientName: row.clients?.company_name || '',
   }));
+};
+
+export interface SalesReturnLine {
+  detailId: string;
+  quantity: number; // > 0; validated server-side against deliveredQuantity − returnedQuantity
+}
+
+// The client sends finished goods back — one atomic transaction per submit via
+// apply_sales_return_batch (function_trigger.sql). Throws on over-return (decision #1): you cannot
+// return more than actually shipped, and that's a data-entry mistake, not a race.
+export const returnSalesOrder = async (
+  header: SalesHeader,
+  lines: SalesReturnLine[],
+  remark?: string,
+): Promise<void> => {
+  const payload = lines.filter(l => l.quantity > 0).map(l => ({ detail_id: l.detailId, quantity: l.quantity }));
+  if (payload.length === 0) return;
+
+  const { error } = await supabase.rpc('apply_sales_return_batch', {
+    p_header_id: header.id,
+    p_lines: payload,
+    p_remark: remark ?? null,
+  });
+  if (error) {
+    console.error('returnSalesOrder', error);
+    throw error;
+  }
 };

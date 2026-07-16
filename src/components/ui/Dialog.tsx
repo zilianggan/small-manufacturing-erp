@@ -79,9 +79,9 @@ export function DialogCancelButton({ onClick, children = 'Cancel' }: { onClick: 
   );
 }
 
-export function DialogSubmitButton({ children, className = '' }: { children: React.ReactNode; className?: string }) {
+export function DialogSubmitButton({ children, className = '', disabled }: { children: React.ReactNode; className?: string; disabled?: boolean }) {
   return (
-    <Button type="submit" className={className}>
+    <Button type="submit" className={className} disabled={disabled}>
       {children}
     </Button>
   );

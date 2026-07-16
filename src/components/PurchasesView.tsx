@@ -7,18 +7,20 @@ import { useState, useMemo, useEffect, useRef } from 'react';
 import {
   getPurchases, createPurchaseQuotation, updatePurchase, convertToPurchaseOrder,
   receivePurchaseOrder, cancelPurchaseOrder, deletePurchase, getMaterialCategories,
-  getPurchaseById, getLatestUnitCost,
-  PurchaseDetailInput, PurchaseFilters, PurchaseSortField, SortDir,
+  getPurchaseById, getLatestUnitCost, returnPurchaseOrder,
+  PurchaseDetailInput, PurchaseFilters, PurchaseSortField, SortDir, PurchaseReturnLine, ReceiveLine,
 } from '../services/PurchasesService';
 import { getMaterials, getMaterialsPage } from '../services/MaterialService';
 import { getVendors } from '../services/ContactsService';
 import { getSalesOrdersForLinking, SalesOrderLinkOption, getSalesOrderMaterialRequirements, SalesOrderMaterialRequirement } from '../services/OrdersService';
 import { PurchaseHeader, Vendor, Material, Attachment, MaterialCategory } from '../types';
-import { Plus, Calendar, Check, Paperclip, Trash2, Edit, FileText, ArrowRightCircle, Eye, RotateCcw } from 'lucide-react';
+import { Plus, Calendar, Check, Paperclip, Trash2, Edit, ArrowRightCircle, Eye, RotateCcw, FileText, Undo2 } from 'lucide-react';
 import AttachmentSection from './AttachmentSection';
-import QuotationModal from './QuotationModal';
 import PurchaseOrderDetailView from './PurchaseOrderDetailView';
+import PurchaseInvoiceModal from './PurchaseInvoiceModal';
+import LineQuantityModal, { LineQuantityModalLine } from './LineQuantityModal';
 import ComboBox from './ComboBox';
+import DateTimePicker from './DateTimePicker';
 import FilterDialog from './FilterDialog';
 import { formatDateTime, toDateTimeLocal, fromDateTimeLocal, monthStart, monthEnd } from '../utils/date';
 import { QUICK_RANGES } from '../utils/dateRanges';
@@ -48,12 +50,18 @@ type DisplaySortField = PurchaseSortField | 'items';
 // sales_header.sales_no) — PostgREST's order(col, {foreignTable}) doesn't
 // reliably sort by a nullable/embedded relation, so they're sorted
 // client-side below, same trick as 'items'.
-const SERVER_SORT_FIELDS: readonly string[] = ['reference', 'date', 'totalCost'];
+const SERVER_SORT_FIELDS: readonly string[] = ['reference', 'date', 'totalCost', 'status'];
 
-const STATUS_META: Record<PurchaseHeader['status'], { label: string; variant: 'default' | 'warning' | 'success' | 'destructive' }> = {
+// PO-tab-only statuses (QUOTATION tab is always a single status, filtering it is a no-op).
+const PO_STATUSES: PurchaseHeader['status'][] = ['ORDERED', 'PARTIALLY_RECEIVED', 'RECEIVED', 'PARTIALLY_RETURNED', 'RETURNED', 'CANCELLED'];
+
+const STATUS_META: Record<PurchaseHeader['status'], { label: string; variant: 'default' | 'warning' | 'success' | 'destructive' | 'secondary' }> = {
   QUOTATION: { label: 'Quotation', variant: 'default' },
   ORDERED: { label: 'Pending Stock', variant: 'warning' },
+  PARTIALLY_RECEIVED: { label: 'Partially Received', variant: 'warning' },
   RECEIVED: { label: 'Received', variant: 'success' },
+  PARTIALLY_RETURNED: { label: 'Partially Returned', variant: 'warning' },
+  RETURNED: { label: 'Returned', variant: 'secondary' },
   CANCELLED: { label: 'Cancelled', variant: 'destructive' },
 };
 
@@ -99,7 +107,8 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
   const [materials, setMaterials] = useState<Material[]>([]);
   const [materialCategories, setMaterialCategories] = useState<MaterialCategory[]>([]);
   const [salesLinkOptions, setSalesLinkOptions] = useState<SalesOrderLinkOption[]>([]);
-  const [receivingId, setReceivingId] = useState<string | null>(null);
+  const [receivingPurchase, setReceivingPurchase] = useState<PurchaseHeader | null>(null);
+  const [returningPurchase, setReturningPurchase] = useState<PurchaseHeader | null>(null);
 
   // Drill-down: selected purchase (shows PurchaseOrderDetailView instead of the table)
   const [selectedPurchase, setSelectedPurchase] = useState<PurchaseHeader | null>(null);
@@ -174,6 +183,7 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
   const [showFilterDialog, setShowFilterDialog] = useState(false);
   const [filterDraftVendorIds, setFilterDraftVendorIds] = useState<string[]>([]);
   const [filterDraftMaterialIds, setFilterDraftMaterialIds] = useState<string[]>([]);
+  const [filterDraftStatuses, setFilterDraftStatuses] = useState<PurchaseHeader['status'][]>([]);
   const [filterDraftDateFrom, setFilterDraftDateFrom] = useState(monthStart(0));
   const [filterDraftDateTo, setFilterDraftDateTo] = useState(monthEnd(0));
   const [filterVendorSearch, setFilterVendorSearch] = useState('');
@@ -206,7 +216,7 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
   };
 
   // ─── Sort ─────────────────────────────────────────────────────────────
-  const [sortField, setSortField] = useState<DisplaySortField>('date');
+  const [sortField, setSortField] = useState<DisplaySortField>('reference');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   const isServerSort = SERVER_SORT_FIELDS.includes(sortField);
 
@@ -267,6 +277,7 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
   const openFilterDialog = () => {
     setFilterDraftVendorIds(appliedFilters.vendorIds || []);
     setFilterDraftMaterialIds(appliedFilters.materialIds || []);
+    setFilterDraftStatuses(appliedFilters.statuses || []);
     setFilterDraftDateFrom(appliedFilters.dateFrom || '');
     setFilterDraftDateTo(appliedFilters.dateTo || '');
     setFilterVendorSearch('');
@@ -282,6 +293,10 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
   };
   const toggleFilterDraftMaterial = (id: string) => {
     setFilterDraftMaterialIds(prev => (prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]));
+  };
+  const toggleFilterDraftStatus = (id: string) => {
+    const status = id as PurchaseHeader['status'];
+    setFilterDraftStatuses(prev => (prev.includes(status) ? prev.filter(x => x !== status) : [...prev, status]));
   };
 
   const filterVendorMatches = useMemo(() => {
@@ -301,9 +316,10 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
   const filterChips: FilterChip[] = [
     ...(appliedFilters.vendorIds?.length ? [{ key: 'vendors', label: `${appliedFilters.vendorIds.length} supplier${appliedFilters.vendorIds.length === 1 ? '' : 's'}`, onRemove: () => setAppliedFilters(f => ({ ...f, vendorIds: [] })) }] : []),
     ...(appliedFilters.materialIds?.length ? [{ key: 'materials', label: `${appliedFilters.materialIds.length} material${appliedFilters.materialIds.length === 1 ? '' : 's'}`, onRemove: () => setAppliedFilters(f => ({ ...f, materialIds: [] })) }] : []),
+    ...(appliedFilters.statuses?.length ? [{ key: 'statuses', label: `${appliedFilters.statuses.length} status${appliedFilters.statuses.length === 1 ? '' : 'es'}`, onRemove: () => setAppliedFilters(f => ({ ...f, statuses: [] })) }] : []),
     ...(appliedFilters.dateFrom || appliedFilters.dateTo ? [{ key: 'date', label: `${appliedFilters.dateFrom || '…'} → ${appliedFilters.dateTo || '…'}`, onRemove: () => { setActiveQuickRange('thisMonth'); setAppliedFilters(f => ({ ...f, dateFrom: monthStart(0), dateTo: monthEnd(0) })); } }] : []),
   ];
-  const activeFilterCount = (appliedFilters.vendorIds?.length || 0) + (appliedFilters.materialIds?.length || 0) + (appliedFilters.dateFrom || appliedFilters.dateTo ? 1 : 0);
+  const activeFilterCount = (appliedFilters.vendorIds?.length || 0) + (appliedFilters.materialIds?.length || 0) + (appliedFilters.statuses?.length || 0) + (appliedFilters.dateFrom || appliedFilters.dateTo ? 1 : 0);
 
   const toggleSort = (key: string) => {
     const field = key as DisplaySortField;
@@ -327,14 +343,11 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
     });
   }, [purchases, sortField, sortDir, isServerSort]);
 
-  // Quotation print modal
-  const [selectedQuotation, setSelectedQuotation] = useState<PurchaseHeader | null>(null);
-  const [isQuotationModalOpen, setIsQuotationModalOpen] = useState(false);
-
   // Form drawer state
   const [showFormSheet, setShowFormSheet] = useState(false);
   const [formMode, setFormMode] = useState<FormMode>('CREATE');
   const [editHeaderId, setEditHeaderId] = useState<string | null>(null);
+  const [editHeaderStatus, setEditHeaderStatus] = useState<PurchaseHeader['status'] | null>(null);
   const [formVendorId, setFormVendorId] = useState('');
   const [formOrderDate, setFormOrderDate] = useState('');
   const [formSalesHeaderId, setFormSalesHeaderId] = useState('');
@@ -345,6 +358,14 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
   const [formAttachment, setFormAttachment] = useState<Attachment | undefined>(undefined);
   const [requiredMaterials, setRequiredMaterials] = useState<SalesOrderMaterialRequirement[]>([]);
   const [submitting, setSubmitting] = useState(false);
+
+  // Invoice print modal — only meaningful once a quotation has become a PO.
+  const [selectedInvoice, setSelectedInvoice] = useState<PurchaseHeader | null>(null);
+  const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
+  const openInvoiceDoc = (purchase: PurchaseHeader) => {
+    setSelectedInvoice(purchase);
+    setIsInvoiceModalOpen(true);
+  };
 
   useEffect(() => {
     if (!formSalesHeaderId) { setRequiredMaterials([]); return; }
@@ -393,6 +414,7 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
     clearTempMaterials();
     setFormMode('EDIT');
     setEditHeaderId(purchase.id);
+    setEditHeaderStatus(purchase.status);
     setFormVendorId(purchase.vendorId);
     setFormSalesHeaderId(purchase.salesHeaderId || '');
     setFormAttachment(purchase.attachments?.[0]);
@@ -530,20 +552,31 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
     });
   };
 
-  const handleReceive = async (purchase: PurchaseHeader) => {
-    if (receivingId === purchase.id) return;
-    setReceivingId(purchase.id);
-    await CallAPI(() => receivePurchaseOrder(purchase), {
+  // Receiving is partial now: the modal takes a quantity per line, so a PO can be booked in over
+  // several deliveries and only reaches RECEIVED once every line is fully in.
+  const openReceive = (purchase: PurchaseHeader) => setReceivingPurchase(purchase);
+
+  const handleReceive = async (quantities: Record<string, number>, remark: string) => {
+    if (!receivingPurchase) return;
+    const lines: ReceiveLine[] = receivingPurchase.details
+      .map(d => ({ detailId: d.detailId, quantity: quantities[d.detailId] || 0 }))
+      .filter(l => l.quantity > 0);
+
+    await CallAPI(() => receivePurchaseOrder(receivingPurchase, lines, remark), {
       onCompleted: () => {
-        setReceivingId(null);
+        setReceivingPurchase(null);
         loadPurchases(activeTab);
-        setSelectedPurchase(null);
-        toast.success('Material package marked as received.');
+        refreshSelectedPurchase(receivingPurchase.id);
+        toast.success('Goods received into inventory.');
       },
       onError: (err) => {
-        setReceivingId(null);
         console.error(err);
-        toast.error('Failed to mark purchase as received.');
+        toast.error('Failed to receive goods.');
+        // A partial failure may have committed some lines. Close the modal (it doesn't reset its
+        // draft while open) and reload, so the user sees what actually landed.
+        setReceivingPurchase(null);
+        loadPurchases(activeTab);
+        refreshSelectedPurchase(receivingPurchase.id);
       },
     });
   };
@@ -556,27 +589,57 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
     });
   };
 
-  const openQuotationDoc = (purchase: PurchaseHeader) => {
-    setSelectedQuotation(purchase);
-    setIsQuotationModalOpen(true);
+  const openReturn = (purchase: PurchaseHeader) => setReturningPurchase(purchase);
+
+  const handleReturn = async (quantities: Record<string, number>, remark: string) => {
+    if (!returningPurchase) return;
+    const lines: PurchaseReturnLine[] = returningPurchase.details
+      .map(d => ({ detailId: d.detailId, quantity: quantities[d.detailId] || 0 }))
+      .filter(l => l.quantity > 0);
+
+    await CallAPI(() => returnPurchaseOrder(returningPurchase, lines, remark), {
+      onCompleted: () => {
+        setReturningPurchase(null);
+        loadPurchases(activeTab);
+        refreshSelectedPurchase(returningPurchase.id);
+        toast.success('Material returned to vendor.');
+      },
+      onError: (err) => {
+        console.error(err);
+        // returnPurchaseOrder's already-consumed-material check throws before writing anything, and
+        // its message names the materials that are short — surface it rather than the generic failure.
+        toast.error(err instanceof Error && err.message ? err.message : 'Failed to return material.');
+        // A partial failure may have committed some lines. Close the modal (it doesn't reset its
+        // typed quantities except on open) and refresh so a reopen starts from true remaining
+        // quantities instead of resubmitting the same amounts a second time.
+        setReturningPurchase(null);
+        loadPurchases(activeTab);
+        refreshSelectedPurchase(returningPurchase.id);
+      },
+    });
   };
 
+  const editingQuotation = formMode === 'EDIT' && editHeaderStatus === 'QUOTATION';
+
   const sheetTitle = formMode === 'CREATE' ? 'Create Purchase Quotation'
-    : formMode === 'EDIT' ? 'Edit Purchase Quotation'
+    : formMode === 'EDIT' ? (editingQuotation ? 'Edit Purchase Quotation' : 'Edit Purchase Order')
       : 'Confirm Purchase Order';
 
   const submitLabel = formMode === 'CREATE' ? 'Save Quotation'
-    : formMode === 'EDIT' ? 'Update Quotation'
+    : formMode === 'EDIT' ? (editingQuotation ? 'Update Quotation' : 'Update Purchase Order')
       : 'Confirm Purchase Order';
 
   const buildRowActions = (p: PurchaseHeader): ActionMenuItem[] => [
     { label: 'View', icon: <Eye className="w-3.5 h-3.5" />, onClick: () => openPurchaseDetail(p) },
     { label: 'Edit', icon: <Edit className="w-3.5 h-3.5" />, onClick: () => openEditForm(p), hidden: !['QUOTATION', 'ORDERED'].includes(p.status) },
     { label: 'Delete', icon: <Trash2 className="w-3.5 h-3.5" />, onClick: () => handleDelete(p.id), danger: true, hidden: !['QUOTATION', 'CANCELLED'].includes(p.status) },
-    { label: 'Generate Quotation', icon: <FileText className="w-3.5 h-3.5" />, onClick: () => openQuotationDoc(p), hidden: p.status !== 'QUOTATION' },
     { label: 'Proceed to Purchase Order', icon: <ArrowRightCircle className="w-3.5 h-3.5" />, onClick: () => openConvertForm(p), hidden: p.status !== 'QUOTATION' },
-    { label: 'Mark as Received', icon: <Check className="w-3.5 h-3.5" />, onClick: () => handleReceive(p), disabled: receivingId === p.id, hidden: p.status !== 'ORDERED' },
+    // Receive while anything is still outstanding; return once anything has arrived. Cancel stays on
+    // ORDERED alone — the one status where no goods have moved — so it never sits next to Return.
+    { label: 'Receive Goods', icon: <Check className="w-3.5 h-3.5" />, onClick: () => openReceive(p), hidden: !['ORDERED', 'PARTIALLY_RECEIVED'].includes(p.status) },
     { label: 'Cancel Order', icon: <Trash2 className="w-3.5 h-3.5" />, onClick: () => handleCancel(p.id), danger: true, hidden: p.status !== 'ORDERED' },
+    { label: 'Return to Vendor', icon: <Undo2 className="w-3.5 h-3.5" />, onClick: () => openReturn(p), hidden: !['PARTIALLY_RECEIVED', 'RECEIVED', 'PARTIALLY_RETURNED'].includes(p.status) },
+    { label: 'Generate Invoice', icon: <FileText className="w-3.5 h-3.5" />, onClick: () => openInvoiceDoc(p), hidden: !['ORDERED', 'PARTIALLY_RECEIVED', 'RECEIVED'].includes(p.status) },
   ];
 
   const columns: DataTableColumn<PurchaseHeader>[] = [
@@ -628,7 +691,7 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
     },
     { key: 'totalCost', header: 'Total Cost', sortable: true, align: 'right', className: 'w-32', render: (p) => <span className="font-mono font-medium text-foreground">RM {p.totalPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span> },
     ...(activeTab === 'PO' ? [{
-      key: 'status', header: 'Status', className: 'w-[1%] whitespace-nowrap',
+      key: 'status', header: 'Status', sortable: true, className: 'w-[1%] whitespace-nowrap',
       render: (p: PurchaseHeader) => <Badge variant={STATUS_META[p.status].variant}>{STATUS_META[p.status].label}</Badge>,
     } as DataTableColumn<PurchaseHeader>] : []),
   ];
@@ -640,13 +703,13 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
           purchase={selectedPurchase}
           onBack={handlePurchaseDetailBack}
           backLabel={initialPurchaseOrigin === 'INVENTORY' ? 'Back to Inventory' : initialPurchaseOrigin === 'MATERIAL' ? 'Back to Material' : 'Back to Purchases'}
-          receivingId={receivingId}
           onEdit={openEditForm}
           onConvert={openConvertForm}
           onDelete={handleDelete}
-          onReceive={handleReceive}
+          onReceive={openReceive}
           onCancel={handleCancel}
-          onOpenQuotationDoc={openQuotationDoc}
+          onReturn={openReturn}
+          onOpenInvoiceDoc={openInvoiceDoc}
           onViewSalesOrder={onViewSalesOrder ? (salesHeaderId) => onViewSalesOrder(salesHeaderId, selectedPurchase.id) : undefined}
         />
       ) : (
@@ -736,27 +799,43 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
                 selectedIds: filterDraftMaterialIds,
                 onToggle: toggleFilterDraftMaterial,
               },
+              // QUOTATION tab is always a single status — a status filter there is a no-op.
+              ...(activeTab === 'PO' ? [{
+                type: 'checklist' as const,
+                key: 'statuses',
+                label: 'Status',
+                hideSearch: true,
+                searchQuery: '',
+                onSearchChange: () => {},
+                items: PO_STATUSES.map(s => ({ id: s, label: STATUS_META[s].label })),
+                selectedIds: filterDraftStatuses,
+                onToggle: toggleFilterDraftStatus,
+              }] : []),
             ]}
             onApply={() => {
               setActiveQuickRange(null);
               setAppliedFilters({
                 vendorIds: filterDraftVendorIds,
                 materialIds: filterDraftMaterialIds,
+                statuses: filterDraftStatuses,
                 dateFrom: filterDraftDateFrom || undefined,
                 dateTo: filterDraftDateTo || undefined,
               });
             }}
             onClear={() => {
-              setFilterDraftVendorIds([]); setFilterDraftMaterialIds([]);
+              setFilterDraftVendorIds([]); setFilterDraftMaterialIds([]); setFilterDraftStatuses([]);
               setFilterDraftDateFrom(monthStart(0)); setFilterDraftDateTo(monthEnd(0));
               setActiveQuickRange('thisMonth');
               setAppliedFilters({ dateFrom: monthStart(0), dateTo: monthEnd(0) });
             }}
           />
+        </>
+      )}
 
-          {/* Create/Edit/Convert drawer */}
-          <Sheet
-            open={showFormSheet}
+      {/* Create/Edit/Convert drawer — rendered unconditionally (not just on the listing branch) so
+          Edit/Convert opened from the detail page actually shows the form instead of silently no-op'ing */}
+      <Sheet
+        open={showFormSheet}
             onClose={() => { clearTempMaterials(); setShowFormSheet(false); }}
             title={sheetTitle}
             width="w-full sm:max-w-2xl"
@@ -790,7 +869,7 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
 
                 {formMode === 'CONVERT' && (
                   <FormField label="Order Date & Time *" colSpan="sm:col-span-2">
-                    <input type="datetime-local" required value={formOrderDate} onChange={(e) => setFormOrderDate(e.target.value)} className={fieldInputClassName} />
+                    <DateTimePicker required value={formOrderDate} onChange={setFormOrderDate} />
                   </FormField>
                 )}
               </div>
@@ -916,14 +995,51 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
                 />
               </div>
             </div>
-          </Sheet>
-        </>
-      )}
+      </Sheet>
 
-      <QuotationModal
-        purchase={selectedQuotation}
-        isOpen={isQuotationModalOpen}
-        onClose={() => { setIsQuotationModalOpen(false); setSelectedQuotation(null); }}
+      {/* Invoice print modal — outside the list/detail split so both can open it */}
+      <PurchaseInvoiceModal
+        purchase={selectedInvoice}
+        isOpen={isInvoiceModalOpen}
+        onClose={() => { setIsInvoiceModalOpen(false); setSelectedInvoice(null); }}
+      />
+
+      <LineQuantityModal
+        isOpen={!!receivingPurchase}
+        title={`Receive Goods — ${receivingPurchase?.purchaseNo ?? ''}`}
+        itemHeader="Material"
+        totalHeader="Ordered"
+        doneHeader="Received"
+        actionLabel="Receive"
+        doneLabel="fully received"
+        remarkPlaceholder="e.g. delivery note DN-2291"
+        lines={(receivingPurchase?.details ?? []).map((d): LineQuantityModalLine => ({
+          id: d.detailId,
+          name: d.materialName,
+          totalQty: d.quantity,
+          doneQty: d.receivedQuantity,
+        }))}
+        onClose={() => setReceivingPurchase(null)}
+        onSubmit={handleReceive}
+      />
+
+      <LineQuantityModal
+        isOpen={!!returningPurchase}
+        title={`Return to Vendor — ${returningPurchase?.purchaseNo ?? ''}`}
+        itemHeader="Material"
+        totalHeader="Received"
+        doneHeader="Returned"
+        actionLabel="Return"
+        doneLabel="fully returned"
+        remarkPlaceholder="e.g. wrong gauge, damaged in transit"
+        lines={(returningPurchase?.details ?? []).map((d): LineQuantityModalLine => ({
+          id: d.detailId,
+          name: d.materialName,
+          totalQty: d.receivedQuantity,
+          doneQty: d.returnedQuantity,
+        }))}
+        onClose={() => setReturningPurchase(null)}
+        onSubmit={handleReturn}
       />
     </div>
   );

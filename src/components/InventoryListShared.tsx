@@ -17,6 +17,7 @@ export const TRANSACTION_TYPE_BADGE: Record<InventoryTransactionType, { label: s
   SALES: { label: 'Sales', className: 'bg-success/10 text-success border-success/20' },
   PURCHASE_RETURN: { label: 'Purchase Return', className: 'bg-warning/10 text-warning border-warning/20' },
   SALES_RETURN: { label: 'Sales Return', className: 'bg-warning/10 text-warning border-warning/20' },
+  PRODUCTION: { label: 'Production', className: 'bg-primary/10 text-primary border-primary/20' },
   ADJUSTMENT: { label: 'Adjustment', className: 'bg-secondary text-secondary-foreground border-transparent' },
 };
 

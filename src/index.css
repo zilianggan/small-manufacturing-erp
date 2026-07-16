@@ -353,7 +353,6 @@ button {
 .dark input[type="number"],
 .dark input[type="email"],
 .dark input[type="tel"],
-.dark input[type="date"],
 .dark select,
 .dark textarea {
   background-color: #1d1d22 !important;

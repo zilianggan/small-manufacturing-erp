@@ -4,11 +4,12 @@
  */
 
 import { useMemo, useState } from 'react';
-import { SalesHeader, SalesDetail } from '../types';
+import { SalesHeader, SalesDetail, ProductionMaterialUsage } from '../types';
 import {
   ArrowLeft, Calendar, Paperclip, Trash2, Edit, FileText, ArrowRightCircle,
-  Check, CheckCheck, Factory, Boxes,
+  Check, CheckCheck, Factory, Boxes, Undo2, Layers, Plus,
 } from 'lucide-react';
+import { canStartProduction, canDeliver, canDeleteSalesOrder, canAddMaterial, suggestedProduceQuantity } from '../services/OrdersService';
 import { Card, Badge, Button } from './ui';
 import { SectionCard, DataTable } from './shell';
 import type { DataTableColumn } from './shell';
@@ -25,7 +26,10 @@ const STATUS_META: Record<SalesHeader['status'], { label: string; variant: 'defa
   ORDERED: { label: 'Pending Production', variant: 'warning' },
   IN_PRODUCTION: { label: 'In Production', variant: 'default' },
   DONE_IN_PRODUCTION: { label: 'Done in Production', variant: 'secondary' },
+  PARTIALLY_DELIVERED: { label: 'Partially Delivered', variant: 'warning' },
   DELIVERED: { label: 'Delivered', variant: 'success' },
+  PARTIALLY_RETURNED: { label: 'Partially Returned', variant: 'warning' },
+  RETURNED: { label: 'Returned', variant: 'secondary' },
   CANCELLED: { label: 'Cancelled', variant: 'destructive' },
 };
 
@@ -38,15 +42,19 @@ interface SalesOrderDetailViewProps {
   // link so onBack actually returns to that origin instead of this tab's list.
   backLabel?: string;
   transitioningId: string | null;
+  // Finished-goods stock per product id, so Start Production can hide itself when stock already
+  // covers the order instead of opening a dialog that just says so.
+  stockByProductId: Record<string, number>;
   onEdit: (order: SalesHeader) => void;
   onConvert: (order: SalesHeader) => void;
   onDelete: (id: string) => void;
   onStartProduction: (order: SalesHeader) => void;
+  onAddMaterial: (order: SalesHeader) => void;
   onProductionCompletion: (order: SalesHeader) => void;
-  onMarkDelivered: (id: string) => void;
+  onMarkDelivered: (order: SalesHeader) => void;
   onCancel: (order: SalesHeader) => void;
+  onReturn: (order: SalesHeader) => void;
   onOpenQuotationDoc: (order: SalesHeader) => void;
-  onOpenInvoiceDoc: (order: SalesHeader) => void;
 }
 
 /**
@@ -58,12 +66,18 @@ interface SalesOrderDetailViewProps {
  * down as callbacks so there's a single source of truth for each transition.
  */
 export default function SalesOrderDetailView({
-  order, onBack, backLabel = 'Back to Sales Contracts', transitioningId,
-  onEdit, onConvert, onDelete, onStartProduction, onProductionCompletion,
-  onMarkDelivered, onCancel, onOpenQuotationDoc, onOpenInvoiceDoc,
+  order, onBack, backLabel = 'Back to Sales Contracts', transitioningId, stockByProductId,
+  onEdit, onConvert, onDelete, onStartProduction, onAddMaterial, onProductionCompletion,
+  onMarkDelivered, onCancel, onReturn, onOpenQuotationDoc,
 }: SalesOrderDetailViewProps) {
   const contentRef = useFadeInOnMount<HTMLDivElement>([order.id]);
   const status = STATUS_META[order.status];
+
+  // Mirrors StartProductionModal's own "nothing to produce" check — if stock already covers every
+  // line, hide the button instead of letting the user open the dialog just to be told that.
+  const nothingToProduce = order.details.every(d =>
+    suggestedProduceQuantity(Math.max(0, d.quantity - d.deliveredQuantity), stockByProductId[d.productId] ?? 0) <= 0
+  );
 
   // Whole list is already loaded (one order's line items, never heavy), so
   // this sorts client-side rather than re-fetching.
@@ -81,28 +95,41 @@ export default function SalesOrderDetailView({
 
   const columns: DataTableColumn<SalesDetail>[] = [
     { key: 'productName', header: 'Product', sortable: true, render: (d) => <span className="font-medium text-card-foreground">{d.productName}</span> },
-    { key: 'quantity', header: 'Quantity', sortable: true, align: 'right', render: (d) => <span className="font-mono text-muted-foreground">{d.quantity}</span> },
+    { key: 'quantity', header: 'Ordered', sortable: true, align: 'right', render: (d) => <span className="font-mono text-muted-foreground">{d.quantity}</span> },
+    // Production and delivery are both partial, so the ordered qty alone no longer says where a line
+    // stands. These three are how the user knows what's left to make and what's left to ship.
+    {
+      key: 'producedQuantity', header: 'Produced', align: 'right',
+      render: (d) => <span className="font-mono text-muted-foreground">{d.producedQuantity || (d.produceQuantity ? `0 / ${d.produceQuantity}` : '—')}</span>,
+    },
+    {
+      key: 'deliveredQuantity', header: 'Delivered', align: 'right',
+      render: (d) => (
+        <span className={`font-mono ${d.deliveredQuantity >= d.quantity ? 'text-muted-foreground' : 'text-foreground font-medium'}`}>
+          {d.deliveredQuantity} / {d.quantity}
+        </span>
+      ),
+    },
+    {
+      key: 'returnedQuantity', header: 'Returned', align: 'right',
+      render: (d) => <span className="font-mono text-muted-foreground">{d.returnedQuantity || '—'}</span>,
+    },
     { key: 'unitPrice', header: 'Unit Price', sortable: true, align: 'right', render: (d) => <span className="font-mono text-muted-foreground">RM {d.unitPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span> },
     { key: 'totalPrice', header: 'Total Price', sortable: true, align: 'right', render: (d) => <span className="font-mono font-medium text-foreground">RM {d.totalPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span> },
-    {
-      key: 'materials', header: 'Materials Used',
-      render: (d) => d.materials.length > 0 ? (
-        <div className="space-y-1">
-          {d.materials.map((m, midx) => (
-            <div key={midx} className="text-[10px] text-muted-foreground font-mono flex items-center gap-3">
-              <span>{m.materialName}</span>
-              <span>planned {m.plannedQuantity}</span>
-              {(m.actualQuantity > 0 || m.returnedQuantity > 0) && (
-                <>
-                  <span>actual {m.actualQuantity}</span>
-                  <span>returned {m.returnedQuantity}</span>
-                </>
-              )}
-            </div>
-          ))}
-        </div>
-      ) : null,
-    },
+  ];
+
+  type MaterialRow = ProductionMaterialUsage & { productName: string };
+  const materialRows: MaterialRow[] = useMemo(
+    () => order.details.flatMap(d => d.materials.map(m => ({ ...m, productName: d.productName }))),
+    [order.details]
+  );
+
+  const materialColumns: DataTableColumn<MaterialRow>[] = [
+    { key: 'productName', header: 'Product', render: (m) => <span className="text-muted-foreground">{m.productName}</span> },
+    { key: 'materialName', header: 'Material', render: (m) => <span className="font-medium text-card-foreground">{m.materialName}</span> },
+    { key: 'plannedQuantity', header: 'Planned', align: 'right', render: (m) => <span className="font-mono text-muted-foreground">{m.plannedQuantity}</span> },
+    { key: 'actualQuantity', header: 'Actual', align: 'right', render: (m) => <span className="font-mono text-muted-foreground">{m.actualQuantity || '—'}</span> },
+    { key: 'returnedQuantity', header: 'Returned', align: 'right', render: (m) => <span className="font-mono text-muted-foreground">{m.returnedQuantity || '—'}</span> },
   ];
 
   return (
@@ -185,45 +212,56 @@ export default function SalesOrderDetailView({
                 <Button variant="outline" size="sm" onClick={() => onEdit(order)}><Edit className="w-3.5 h-3.5" /> Edit</Button>
                 <Button variant="outline" size="sm" onClick={() => onOpenQuotationDoc(order)}><FileText className="w-3.5 h-3.5" /> Generate Quotation</Button>
                 <Button size="sm" onClick={() => onConvert(order)}><ArrowRightCircle className="w-3.5 h-3.5" /> Proceed to Sales Order</Button>
-                <Button variant="destructive" size="sm" onClick={() => onDelete(order.id)}><Trash2 className="w-3.5 h-3.5" /> Delete</Button>
               </>
             )}
 
             {order.status === 'ORDERED' && (
-              <>
-                <Button variant="outline" size="sm" onClick={() => onEdit(order)}><Edit className="w-3.5 h-3.5" /> Edit</Button>
-                <Button variant="outline" size="sm" onClick={() => onOpenInvoiceDoc(order)}><FileText className="w-3.5 h-3.5" /> Generate Tax Invoice</Button>
-                <Button size="sm" onClick={() => onStartProduction(order)} disabled={transitioningId === order.id}>
-                  <Factory className="w-3.5 h-3.5" /> {transitioningId === order.id ? 'Starting...' : 'Proceed to Production'}
-                </Button>
-                <Button variant="destructive" size="sm" onClick={() => onCancel(order)}>Cancel Order</Button>
-              </>
+              <Button variant="outline" size="sm" onClick={() => onEdit(order)}><Edit className="w-3.5 h-3.5" /> Edit</Button>
+            )}
+
+            {/* For a line ordered without a BOM — see canAddMaterial in OrdersService.ts */}
+            {canAddMaterial(order) && (
+              <Button variant="outline" size="sm" onClick={() => onAddMaterial(order)}>
+                <Plus className="w-3.5 h-3.5" /> Add Material
+              </Button>
+            )}
+
+            {/* Same two gates the row menu uses: production needs a BOM to run against, and delivery
+                can skip production entirely when finished goods already cover the order. */}
+            {canStartProduction(order) && !nothingToProduce && (
+              <Button size="sm" onClick={() => onStartProduction(order)}>
+                <Factory className="w-3.5 h-3.5" /> Start Production
+              </Button>
             )}
 
             {order.status === 'IN_PRODUCTION' && (
-              <>
-                <Button variant="outline" size="sm" onClick={() => onOpenInvoiceDoc(order)}><FileText className="w-3.5 h-3.5" /> Generate Tax Invoice</Button>
-                <Button size="sm" onClick={() => onProductionCompletion(order)} disabled={transitioningId === order.id}>
-                  <CheckCheck className="w-3.5 h-3.5" /> Mark Production Done
-                </Button>
-                <Button variant="destructive" size="sm" onClick={() => onCancel(order)}>Cancel Order</Button>
-              </>
+              <Button size="sm" onClick={() => onProductionCompletion(order)} disabled={transitioningId === order.id}>
+                <CheckCheck className="w-3.5 h-3.5" /> Mark Production Done
+              </Button>
             )}
 
-            {order.status === 'DONE_IN_PRODUCTION' && (
-              <>
-                <Button variant="outline" size="sm" onClick={() => onOpenInvoiceDoc(order)}><FileText className="w-3.5 h-3.5" /> Generate Tax Invoice</Button>
-                <Button size="sm" onClick={() => onMarkDelivered(order.id)} disabled={transitioningId === order.id}>
-                  <Check className="w-3.5 h-3.5" /> {transitioningId === order.id ? 'Updating...' : 'Mark as Delivered'}
-                </Button>
-              </>
+            {/* Deliver while anything is unshipped; return once anything has shipped. Cancel stays
+                on the pre-delivery statuses, so it never appears next to Return. */}
+            {canDeliver(order) && (
+              <Button size="sm" onClick={() => onMarkDelivered(order)}>
+                <Check className="w-3.5 h-3.5" /> Deliver
+              </Button>
             )}
 
-            {order.status === 'DELIVERED' && (
-              <Button variant="outline" size="sm" onClick={() => onOpenInvoiceDoc(order)}><FileText className="w-3.5 h-3.5" /> Generate Tax Invoice</Button>
+            {['ORDERED', 'IN_PRODUCTION', 'DONE_IN_PRODUCTION'].includes(order.status) && (
+              <Button variant="destructive" size="sm" onClick={() => onCancel(order)}>Cancel Order</Button>
             )}
 
-            {order.status === 'CANCELLED' && (
+            {['PARTIALLY_DELIVERED', 'DELIVERED', 'PARTIALLY_RETURNED'].includes(order.status) && (
+              <Button variant="destructive" size="sm" onClick={() => onReturn(order)}>
+                <Undo2 className="w-3.5 h-3.5" /> Return from Client
+              </Button>
+            )}
+
+            {/* Delete is only offered pre-inventory-movement (QUOTATION/ORDERED) or on a CANCELLED
+                order that never posted a ledger row — once any inventory transaction exists the
+                order is historical and only Cancel remains available. */}
+            {canDeleteSalesOrder(order) && (
               <Button variant="destructive" size="sm" onClick={() => onDelete(order.id)}><Trash2 className="w-3.5 h-3.5" /> Delete</Button>
             )}
           </div>
@@ -231,7 +269,7 @@ export default function SalesOrderDetailView({
       </Card>
       </div>
 
-      {/* Line items + material breakdown */}
+      {/* Line items */}
       <SectionCard
         data-fade-item
         title={<span className="inline-flex items-center gap-2"><Boxes className="w-4 h-4 text-muted-foreground" /> Contract Line Items</span>}
@@ -246,6 +284,22 @@ export default function SalesOrderDetailView({
           onSort={toggleSort}
         />
       </SectionCard>
+
+      {/* Material breakdown — its own table, one row per material per line, since the planned/
+          actual/returned numbers don't fit legibly squeezed into the line items row anymore. */}
+      {materialRows.length > 0 && (
+        <SectionCard
+          data-fade-item
+          title={<span className="inline-flex items-center gap-2"><Layers className="w-4 h-4 text-muted-foreground" /> Material Usage</span>}
+          contentClassName="p-0"
+        >
+          <DataTable
+            columns={materialColumns}
+            rows={materialRows}
+            rowKey={(m) => m.id}
+          />
+        </SectionCard>
+      )}
     </div>
   );
 }

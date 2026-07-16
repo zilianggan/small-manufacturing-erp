@@ -310,3 +310,40 @@ ALTER TABLE purchase_header
 ALTER TABLE material
   ADD COLUMN consumption_mode TEXT CHECK (consumption_mode IN ('AUTOMATIC','MANUAL'));
 UPDATE material SET material_type = 'RAW_MATERIAL' WHERE material_type = 'FINISHED_GOOD';
+
+-- Product-side ledger rows (PRODUCTION/SALES/SALES_RETURN against a finished good) had no way
+-- to join back to the order that caused them — the old extra-produced path faked it by inserting
+-- a synthetic production_material_usage row with a null material_id. This is that link, done
+-- properly. ON DELETE SET NULL is deliberate: inventory_transaction's two older FKs have no
+-- ON DELETE and therefore RESTRICT, which is what makes deleting a cancelled-from-IN_PRODUCTION
+-- sales order throw (see "Known gaps" #5 in docs/flows.md). Not repeating that here.
+ALTER TABLE inventory_transaction
+ADD COLUMN sales_detail_id UUID REFERENCES sales_detail(detail_id) ON DELETE SET NULL;
+
+CREATE INDEX IF NOT EXISTS idx_inventory_transaction_sales_detail
+ON inventory_transaction(sales_detail_id);
+
+-- Partial returns need to know how much of each line has already gone back.
+-- (production_material_usage.returned_quantity already exists and means something different —
+-- leftover material from production. These are on the *detail* tables. Same name, different thing.)
+ALTER TABLE purchase_detail ADD COLUMN returned_quantity NUMERIC NOT NULL DEFAULT 0;
+ALTER TABLE sales_detail    ADD COLUMN returned_quantity NUMERIC NOT NULL DEFAULT 0;
+
+-- Partial delivery + explicit produce quantity.
+--   delivered_quantity — how much of the line has shipped (delivery is partial now, like receiving).
+--   produce_quantity   — what Start Production committed to make. Defaults to ordered − stock on
+--                        hand, but the user edits it, so it must be stored: it is the "Planned
+--                        Produce" that Mark Done reconciles the actual yield against.
+--   produced_quantity  — what actually came off the floor. This, not the ordered qty, is what
+--                        credits finished goods at Mark Done (it subsumes the old "extra produced"
+--                        box — an actual above planned IS extra production).
+ALTER TABLE sales_detail ADD COLUMN delivered_quantity NUMERIC NOT NULL DEFAULT 0;
+ALTER TABLE sales_detail ADD COLUMN produce_quantity   NUMERIC NOT NULL DEFAULT 0;
+ALTER TABLE sales_detail ADD COLUMN produced_quantity  NUMERIC NOT NULL DEFAULT 0;
+
+-- Backfill: everything already shipped went out in full under the old all-or-nothing markDelivered.
+-- Without this, historical orders read as "delivered 0 of N" and their Return action caps at zero.
+UPDATE sales_detail SET delivered_quantity = quantity
+WHERE header_id IN (
+  SELECT id FROM sales_header WHERE status IN ('DELIVERED', 'PARTIALLY_RETURNED', 'RETURNED')
+);

@@ -131,6 +131,7 @@ export interface PurchaseDetail {
   unitCost: number;
   totalPrice: number;
   receivedQuantity: number;
+  returnedQuantity: number; // how much of receivedQuantity has gone back to the vendor
   material?: Material;
 }
 
@@ -140,7 +141,7 @@ export interface PurchaseHeader {
   quotationDate: string;
   orderDate?: string;
   receivedDate?: string;
-  status: 'QUOTATION' | 'ORDERED' | 'RECEIVED' | 'CANCELLED';
+  status: 'QUOTATION' | 'ORDERED' | 'PARTIALLY_RECEIVED' | 'RECEIVED' | 'PARTIALLY_RETURNED' | 'RETURNED' | 'CANCELLED';
   vendorId: string;
   vendorName: string; // joined, display only
   totalPrice: number;
@@ -159,7 +160,12 @@ export interface ProductionMaterialUsage {
   materialName: string; // joined, display only
   materialCode?: string; // joined, display only
   materialType?: MaterialType; // joined — lets completion tell consumables apart
-  consumptionMode?: ConsumptionMode; // joined — AUTOMATIC consumables auto-deduct
+  // Read-only here: the mode comes from the material master. Legacy rows may still carry their own
+  // value (it wins), but nothing writes it anymore — the sales form no longer overrides per order.
+  consumptionMode?: ConsumptionMode;
+  // Before Start Production: the BOM for the ordered quantity. After: what was actually reserved,
+  // i.e. the BOM scaled to produceQuantity. startProduction() overwrites it — that snapshot is what
+  // confirmProductionDone reconciles actualQuantity against.
   plannedQuantity: number;
   actualQuantity: number;
   returnedQuantity: number;
@@ -183,7 +189,11 @@ export interface SalesDetail {
   productId: string;
   productName: string; // snapshot
   productCode?: string; // snapshot
-  quantity: number;
+  quantity: number; // ordered
+  deliveredQuantity: number; // how much of quantity has shipped (delivery is partial)
+  returnedQuantity: number; // how much of deliveredQuantity the client has sent back
+  produceQuantity: number; // committed at Start Production ("Planned Produce")
+  producedQuantity: number; // actual yield recorded at Mark Done — this is what credits finished goods
   unitPrice: number;
   totalPrice: number;
   remark?: string;
@@ -202,7 +212,7 @@ export interface SalesHeader {
   // ship date) — the production board sorts and flags urgency against this.
   productionDueDate?: string;
   priority: SalesPriority;
-  status: 'QUOTATION' | 'ORDERED' | 'IN_PRODUCTION' | 'DONE_IN_PRODUCTION' | 'DELIVERED' | 'CANCELLED';
+  status: 'QUOTATION' | 'ORDERED' | 'IN_PRODUCTION' | 'DONE_IN_PRODUCTION' | 'PARTIALLY_DELIVERED' | 'DELIVERED' | 'PARTIALLY_RETURNED' | 'RETURNED' | 'CANCELLED';
   clientId: string;
   clientName: string; // joined, display only
   totalAmount: number;
@@ -357,7 +367,7 @@ export interface Product {
   oldestSaleDate?: string;
 }
 
-export type InventoryTransactionType = 'PURCHASE' | 'SALES' | 'PURCHASE_RETURN' | 'SALES_RETURN' | 'ADJUSTMENT';
+export type InventoryTransactionType = 'PURCHASE' | 'SALES' | 'PURCHASE_RETURN' | 'SALES_RETURN' | 'PRODUCTION' | 'ADJUSTMENT';
 
 // A single stock movement row (inventory_transaction). Insert-only — the
 // update_material_stock() DB trigger applies `quantity` (signed) to
@@ -375,6 +385,7 @@ export interface InventoryTransaction {
   productName?: string; // joined, display only
   purchaseDetailId?: string; // FK -> purchase_detail.detail_id, set when a PO receipt generated this row
   productionMaterialUsageId?: string; // FK -> production_material_usage.id, set when a production reservation/reconciliation generated this row
+  salesDetailId?: string; // FK -> sales_detail.detail_id, set on product-side rows (PRODUCTION on completion, SALES on delivery, SALES_RETURN on a client return)
   refNo?: string; // joined, display only — purchase_no or sales_no of the linked order
   counterpartyName?: string; // joined, display only — vendor (purchase) or client name (sales-linked production)
   status?: string; // joined, display only — linked purchase/sales header status; unset for standalone ADJUSTMENT rows

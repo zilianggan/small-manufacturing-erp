@@ -5,7 +5,7 @@
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
-  generateId, getInventoryTransactions, saveInventoryTransaction, getInventoryStatsSummary,
+  generateId, getInventoryTransactions, saveInventoryTransaction, applyManualStockDecrease, getInventoryStatsSummary,
   InventoryLedgerSortField, SortDir, InventoryStatsSummary,
 } from '../services/InventoryTransactionService';
 import { getMaterials, getMaterialsPage } from '../services/MaterialService';
@@ -20,6 +20,7 @@ import {
   Paperclip, AlertTriangle,
 } from 'lucide-react';
 import ComboBox from './ComboBox';
+import DateTimePicker from './DateTimePicker';
 import SegmentedControl from './SegmentedControl';
 import FilterDialog from './FilterDialog';
 import InfiniteScrollSentinel from './InfiniteScrollSentinel';
@@ -49,22 +50,38 @@ interface InventoryViewProps {
   onViewSalesOrder?: (salesHeaderId: string) => void;
 }
 
-// ─── Movement type display: the DB only ever produces 5 real transaction
+// ─── Movement type display: the DB only ever produces 6 real transaction
 // types (no Warehouse/Transfer concept exists in the schema). SALES/
-// SALES_RETURN on this ledger are always material rows tied to production
-// (see ProductService.getProductInventoryList's comment — products have no
-// ledger entry for ordinary sales), so they're relabeled to what they
-// actually represent instead of the generic DB name. ────────────────────────
+// SALES_RETURN can be either a material or product row (production
+// consumption/delivery, client return respectively), so they're relabeled to
+// what they actually represent instead of the generic DB name. ─────────────
 const MOVEMENT_META: Record<InventoryTransactionType, { label: string; icon: typeof PackagePlus; badgeClassName: string }> = {
   PURCHASE: { label: 'Purchase', icon: PackagePlus, badgeClassName: 'bg-primary/10 text-primary border-primary/20' },
   PURCHASE_RETURN: { label: 'Purchase Return', icon: PackageMinus, badgeClassName: 'bg-warning/10 text-warning border-warning/20' },
-  SALES: { label: 'Production Consumption', icon: Factory, badgeClassName: 'bg-orange-500/10 text-orange-600 border-orange-500/20 dark:text-orange-400' },
-  SALES_RETURN: { label: 'Production Return', icon: Undo2, badgeClassName: 'bg-success/10 text-success border-success/20' },
+  PRODUCTION: { label: 'Production', icon: Factory, badgeClassName: 'bg-success/10 text-success border-success/20' },
+  SALES: { label: 'Consumption / Delivery', icon: PackageMinus, badgeClassName: 'bg-orange-500/10 text-orange-600 border-orange-500/20 dark:text-orange-400' },
+  SALES_RETURN: { label: 'Sales Return', icon: Undo2, badgeClassName: 'bg-success/10 text-success border-success/20' },
   ADJUSTMENT: { label: 'Adjustment', icon: SlidersHorizontal, badgeClassName: 'bg-secondary text-secondary-foreground border-transparent' },
 };
 
 const TYPE_FILTER_OPTIONS: { value: InventoryTransactionType; label: string }[] =
   (Object.keys(MOVEMENT_META) as InventoryTransactionType[]).map(v => ({ value: v, label: MOVEMENT_META[v].label }));
+
+// Union of PurchaseHeader/SalesHeader statuses that can actually appear on a linked transaction —
+// QUOTATION is excluded since nothing moves stock (no purchase/sales/production) before an order
+// leaves that status.
+const STATUS_FILTER_OPTIONS: { value: string; label: string }[] = [
+  { value: 'ORDERED', label: 'Ordered' },
+  { value: 'PARTIALLY_RECEIVED', label: 'Partially Received' },
+  { value: 'RECEIVED', label: 'Received' },
+  { value: 'IN_PRODUCTION', label: 'In Production' },
+  { value: 'DONE_IN_PRODUCTION', label: 'Done in Production' },
+  { value: 'PARTIALLY_DELIVERED', label: 'Partially Delivered' },
+  { value: 'DELIVERED', label: 'Delivered' },
+  { value: 'PARTIALLY_RETURNED', label: 'Partially Returned' },
+  { value: 'RETURNED', label: 'Returned' },
+  { value: 'CANCELLED', label: 'Cancelled' },
+];
 
 /**
  * Inventory Transactions — table-first ledger, styled like the Material
@@ -91,6 +108,7 @@ export default function InventoryView({ onViewPurchaseOrder, onViewSalesOrder }:
   const [appliedTypeFilters, setAppliedTypeFilters] = useState<InventoryTransactionType[]>([]);
   const [appliedMaterialIds, setAppliedMaterialIds] = useState<string[]>([]);
   const [appliedProductIds, setAppliedProductIds] = useState<string[]>([]);
+  const [appliedStatuses, setAppliedStatuses] = useState<string[]>([]);
   // Default to the current month — avoids pulling the whole ledger on load.
   const [dateFrom, setDateFrom] = useState(monthStart(0));
   const [dateTo, setDateTo] = useState(monthEnd(0));
@@ -100,6 +118,7 @@ export default function InventoryView({ onViewPurchaseOrder, onViewSalesOrder }:
   const [filterDraftTypes, setFilterDraftTypes] = useState<InventoryTransactionType[]>([]);
   const [filterDraftMaterialIds, setFilterDraftMaterialIds] = useState<string[]>([]);
   const [filterDraftProductIds, setFilterDraftProductIds] = useState<string[]>([]);
+  const [filterDraftStatuses, setFilterDraftStatuses] = useState<string[]>([]);
   const [filterDraftDateFrom, setFilterDraftDateFrom] = useState('');
   const [filterDraftDateTo, setFilterDraftDateTo] = useState('');
   const [filterSearchQuery, setFilterSearchQuery] = useState('');
@@ -137,6 +156,7 @@ export default function InventoryView({ onViewPurchaseOrder, onViewSalesOrder }:
     CallAPI(
       () => getInventoryTransactions({
         search, typeFilters: appliedTypeFilters, materialIds: appliedMaterialIds, productIds: appliedProductIds,
+        statuses: appliedStatuses,
         dateFrom: dateFrom || undefined, dateTo: dateTo || undefined,
         sortField: (isServerSort ? sortField : 'date') as InventoryLedgerSortField,
         sortDir: isServerSort ? sortDir : 'desc',
@@ -152,13 +172,13 @@ export default function InventoryView({ onViewPurchaseOrder, onViewSalesOrder }:
         onError: (err) => { console.error(err); setBusy(false); },
       }
     );
-  }, [appliedTypeFilters, appliedMaterialIds, appliedProductIds, dateFrom, dateTo, sortField, sortDir]);
+  }, [appliedTypeFilters, appliedMaterialIds, appliedProductIds, appliedStatuses, dateFrom, dateTo, sortField, sortDir]);
 
   useEffect(() => { loadTransactions(0, false, searchQuery); }, []);
   useEffect(() => {
     loadTransactions(0, false, searchQuery);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appliedTypeFilters, appliedMaterialIds, appliedProductIds, dateFrom, dateTo, sortField, sortDir]);
+  }, [appliedTypeFilters, appliedMaterialIds, appliedProductIds, appliedStatuses, dateFrom, dateTo, sortField, sortDir]);
 
   const search = useMemo(() => debounce((text: string) => loadTransactions(0, false, text), 500), [loadTransactions]);
 
@@ -220,6 +240,7 @@ export default function InventoryView({ onViewPurchaseOrder, onViewSalesOrder }:
     setFilterDraftTypes(appliedTypeFilters);
     setFilterDraftMaterialIds(appliedMaterialIds);
     setFilterDraftProductIds(appliedProductIds);
+    setFilterDraftStatuses(appliedStatuses);
     setFilterDraftDateFrom(dateFrom);
     setFilterDraftDateTo(dateTo);
     setFilterSearchQuery(''); setFilterMaterialSearch(''); setFilterProductSearch('');
@@ -236,11 +257,12 @@ export default function InventoryView({ onViewPurchaseOrder, onViewSalesOrder }:
   };
   const toggleFilterDraftMaterial = (id: string) => setFilterDraftMaterialIds(prev => (prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]));
   const toggleFilterDraftProduct = (id: string) => setFilterDraftProductIds(prev => (prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]));
+  const toggleFilterDraftStatus = (id: string) => setFilterDraftStatuses(prev => (prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]));
 
   // "Reset" lands back on the current month, not an unfiltered all-time view
   // — matches the page's own default instead of pulling the whole ledger.
   const resetFilters = () => {
-    setAppliedTypeFilters([]); setAppliedMaterialIds([]); setAppliedProductIds([]);
+    setAppliedTypeFilters([]); setAppliedMaterialIds([]); setAppliedProductIds([]); setAppliedStatuses([]);
     setDateFrom(monthStart(0)); setDateTo(monthEnd(0)); setActiveQuickRange('thisMonth'); setSearchQuery('');
   };
 
@@ -249,8 +271,9 @@ export default function InventoryView({ onViewPurchaseOrder, onViewSalesOrder }:
     ...(appliedTypeFilters.length > 0 ? [{ key: 'types', label: `${appliedTypeFilters.length} type${appliedTypeFilters.length === 1 ? '' : 's'}`, onRemove: () => setAppliedTypeFilters([]) }] : []),
     ...(appliedMaterialIds.length > 0 ? [{ key: 'materials', label: `${appliedMaterialIds.length} material${appliedMaterialIds.length === 1 ? '' : 's'}`, onRemove: () => setAppliedMaterialIds([]) }] : []),
     ...(appliedProductIds.length > 0 ? [{ key: 'products', label: `${appliedProductIds.length} product${appliedProductIds.length === 1 ? '' : 's'}`, onRemove: () => setAppliedProductIds([]) }] : []),
+    ...(appliedStatuses.length > 0 ? [{ key: 'statuses', label: `${appliedStatuses.length} status${appliedStatuses.length === 1 ? '' : 'es'}`, onRemove: () => setAppliedStatuses([]) }] : []),
   ];
-  const activeFilterCount = appliedTypeFilters.length + appliedMaterialIds.length + appliedProductIds.length + (dateFrom || dateTo ? 1 : 0);
+  const activeFilterCount = appliedTypeFilters.length + appliedMaterialIds.length + appliedProductIds.length + appliedStatuses.length + (dateFrom || dateTo ? 1 : 0);
 
   // ─── Reference drawer ────────────────────────────────────────────────────
   const [refDrawerTx, setRefDrawerTx] = useState<InventoryTransaction | null>(null);
@@ -312,27 +335,41 @@ export default function InventoryView({ onViewPurchaseOrder, onViewSalesOrder }:
 
   const handleSaveStockEntry = async () => {
     if (!stockItemId || stockQuantity <= 0) return;
-    const delta = stockDirection === 'INCREASE' ? stockQuantity : -stockQuantity;
 
-    const record: InventoryTransaction = {
-      id: generateId(),
-      transactionType: 'ADJUSTMENT',
-      quantity: delta,
-      unitCost: stockUnitCost || undefined,
-      remark: stockRemark.trim() || undefined,
-      materialId: stockTarget === 'MATERIAL' ? stockItemId : undefined,
-      productId: stockTarget === 'PRODUCT' ? stockItemId : undefined,
-      transactionDate: fromDateTimeLocal(stockDate),
-    };
+    const materialId = stockTarget === 'MATERIAL' ? stockItemId : undefined;
+    const productId = stockTarget === 'PRODUCT' ? stockItemId : undefined;
+    const unitCost = stockUnitCost || undefined;
+    const remark = stockRemark.trim() || undefined;
+    const transactionDate = fromDateTimeLocal(stockDate);
 
-    await CallAPI(() => saveInventoryTransaction(record), {
+    // DECREASE goes through the stock-checked RPC (can't take quantity below zero, even under a
+    // concurrent adjustment on the same item) — INCREASE can never go negative, so it stays on the
+    // plain insert.
+    const save = stockDirection === 'DECREASE'
+      ? () => applyManualStockDecrease({ materialId, productId, quantity: stockQuantity, unitCost, remark, transactionDate })
+      : () => saveInventoryTransaction({
+          id: generateId(),
+          transactionType: 'ADJUSTMENT',
+          quantity: stockQuantity,
+          unitCost,
+          remark,
+          materialId,
+          productId,
+          transactionDate,
+        });
+
+    await CallAPI(save, {
       onCompleted: () => {
         loadTransactions(0, false, searchQuery);
         toast.success('Stock adjustment recorded.');
         setShowStockDrawer(false);
         resetStockForm();
       },
-      onError: (err) => { console.error(err); toast.error('Failed to record stock adjustment.'); },
+      onError: (err) => {
+        console.error(err);
+        // apply_manual_stock_decrease() throws with the current stock in the message — surface it.
+        toast.error(err instanceof Error && err.message ? err.message : 'Failed to record stock adjustment.');
+      },
     });
   };
 
@@ -496,18 +533,24 @@ export default function InventoryView({ onViewPurchaseOrder, onViewSalesOrder }:
             hasMore: filterProductHasMore, onLoadMore: loadMoreFilterProductOptions,
             selectedIds: filterDraftProductIds, onToggle: toggleFilterDraftProduct
           },
+          {
+            type: 'checklist', key: 'statuses', label: 'Status', hideSearch: true, searchQuery: '', onSearchChange: () => {},
+            items: STATUS_FILTER_OPTIONS.map(s => ({ id: s.value, label: s.label })),
+            selectedIds: filterDraftStatuses, onToggle: toggleFilterDraftStatus
+          },
         ]}
         onApply={() => {
           setAppliedTypeFilters(filterDraftTypes);
           setAppliedMaterialIds(filterDraftMaterialIds);
           setAppliedProductIds(filterDraftProductIds);
+          setAppliedStatuses(filterDraftStatuses);
           setDateFrom(filterDraftDateFrom);
           setDateTo(filterDraftDateTo);
           setActiveQuickRange(null);
         }}
         onClear={() => {
-          setFilterDraftTypes([]); setFilterDraftMaterialIds([]); setFilterDraftProductIds([]); setFilterDraftDateFrom(monthStart(0)); setFilterDraftDateTo(monthEnd(0));
-          setAppliedTypeFilters([]); setAppliedMaterialIds([]); setAppliedProductIds([]); setDateFrom(monthStart(0)); setDateTo(monthEnd(0)); setActiveQuickRange('thisMonth');
+          setFilterDraftTypes([]); setFilterDraftMaterialIds([]); setFilterDraftProductIds([]); setFilterDraftStatuses([]); setFilterDraftDateFrom(monthStart(0)); setFilterDraftDateTo(monthEnd(0));
+          setAppliedTypeFilters([]); setAppliedMaterialIds([]); setAppliedProductIds([]); setAppliedStatuses([]); setDateFrom(monthStart(0)); setDateTo(monthEnd(0)); setActiveQuickRange('thisMonth');
         }}
       />
 
@@ -648,7 +691,7 @@ export default function InventoryView({ onViewPurchaseOrder, onViewSalesOrder }:
             <input type="number" min="0" step="0.01" value={stockUnitCost} onChange={(e) => setStockUnitCost(Number(e.target.value))} className={fieldInputClassName} />
           </FormField>
           <FormField label="Date *">
-            <input type="datetime-local" required value={stockDate} onChange={(e) => setStockDate(e.target.value)} className={fieldInputClassName} />
+            <DateTimePicker required value={stockDate} onChange={setStockDate} />
           </FormField>
           <FormField label="Remark">
             <textarea value={stockRemark} onChange={(e) => setStockRemark(e.target.value)} rows={2} placeholder="Optional note..." className={fieldInputClassName} />

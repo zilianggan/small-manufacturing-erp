@@ -6,7 +6,7 @@
 import { useMemo, useState } from 'react';
 import { PurchaseHeader, PurchaseDetail } from '../types';
 import {
-  ArrowLeft, Calendar, Paperclip, Trash2, Edit, FileText, ArrowRightCircle, Check, Boxes, FileSpreadsheet,
+  ArrowLeft, Calendar, Paperclip, Trash2, Edit, ArrowRightCircle, Check, Boxes, FileSpreadsheet, FileText, Undo2,
 } from 'lucide-react';
 import { Card, Badge, Button } from './ui';
 import { SectionCard, DataTable } from './shell';
@@ -17,10 +17,13 @@ import { formatDateTime, formatDate } from '../utils/date';
 type LineItemSortKey = 'materialName' | 'quantity' | 'unitCost' | 'totalPrice' | 'receivedQuantity';
 const NUMERIC_KEYS: LineItemSortKey[] = ['quantity', 'unitCost', 'totalPrice', 'receivedQuantity'];
 
-const STATUS_META: Record<PurchaseHeader['status'], { label: string; variant: 'default' | 'warning' | 'success' | 'destructive' }> = {
+const STATUS_META: Record<PurchaseHeader['status'], { label: string; variant: 'default' | 'warning' | 'success' | 'destructive' | 'secondary' }> = {
   QUOTATION: { label: 'Quotation', variant: 'default' },
   ORDERED: { label: 'Pending Stock', variant: 'warning' },
+  PARTIALLY_RECEIVED: { label: 'Partially Received', variant: 'warning' },
   RECEIVED: { label: 'Received', variant: 'success' },
+  PARTIALLY_RETURNED: { label: 'Partially Returned', variant: 'warning' },
+  RETURNED: { label: 'Returned', variant: 'secondary' },
   CANCELLED: { label: 'Cancelled', variant: 'destructive' },
 };
 
@@ -32,13 +35,13 @@ interface PurchaseOrderDetailViewProps {
   // when this page was opened via a cross-tab link so onBack actually
   // returns to that origin instead of this tab's list.
   backLabel?: string;
-  receivingId: string | null;
   onEdit: (purchase: PurchaseHeader) => void;
   onConvert: (purchase: PurchaseHeader) => void;
   onDelete: (id: string) => void;
   onReceive: (purchase: PurchaseHeader) => void;
   onCancel: (id: string) => void;
-  onOpenQuotationDoc: (purchase: PurchaseHeader) => void;
+  onReturn: (purchase: PurchaseHeader) => void;
+  onOpenInvoiceDoc: (purchase: PurchaseHeader) => void;
   // Present only when purchase.salesHeaderId is set — jumps to the sales
   // order this purchase was raised against.
   onViewSalesOrder?: (salesHeaderId: string) => void;
@@ -66,8 +69,8 @@ const sortByField = <K extends LineItemSortKey>(rows: PurchaseDetail[], key: K, 
  * as callbacks so there's a single source of truth for each transition.
  */
 export default function PurchaseOrderDetailView({
-  purchase, onBack, backLabel = 'Back to Purchases', receivingId,
-  onEdit, onConvert, onDelete, onReceive, onCancel, onOpenQuotationDoc, onViewSalesOrder
+  purchase, onBack, backLabel = 'Back to Purchases',
+  onEdit, onConvert, onDelete, onReceive, onCancel, onReturn, onOpenInvoiceDoc, onViewSalesOrder
 }: PurchaseOrderDetailViewProps) {
   const contentRef = useFadeInOnMount<HTMLDivElement>([purchase.id]);
   const status = STATUS_META[purchase.status];
@@ -88,10 +91,23 @@ export default function PurchaseOrderDetailView({
 
   const columns: DataTableColumn<PurchaseDetail>[] = [
     { key: 'materialName', header: 'Material', sortable: true, render: (d) => <span className="font-medium text-card-foreground">{d.materialName}</span> },
-    { key: 'quantity', header: 'Quantity', sortable: true, align: 'right', render: (d) => <span className="font-mono text-muted-foreground">{d.quantity}</span> },
+    { key: 'quantity', header: 'Ordered', sortable: true, align: 'right', render: (d) => <span className="font-mono text-muted-foreground">{d.quantity}</span> },
     { key: 'unitCost', header: 'Unit Cost', sortable: true, align: 'right', render: (d) => <span className="font-mono text-muted-foreground">RM {d.unitCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span> },
     { key: 'totalPrice', header: 'Total Price', sortable: true, align: 'right', render: (d) => <span className="font-mono font-medium text-foreground">RM {d.totalPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span> },
-    { key: 'receivedQuantity', header: 'Received Qty', sortable: true, align: 'right', render: (d) => <span className="font-mono text-muted-foreground">{d.receivedQuantity}</span> },
+    // Receiving is partial, so "received 40" alone doesn't say whether the line is done — show it
+    // against the ordered qty, and highlight while anything is still outstanding.
+    {
+      key: 'receivedQuantity', header: 'Received', sortable: true, align: 'right',
+      render: (d) => (
+        <span className={`font-mono ${d.receivedQuantity >= d.quantity ? 'text-muted-foreground' : 'text-foreground font-medium'}`}>
+          {d.receivedQuantity} / {d.quantity}
+        </span>
+      ),
+    },
+    {
+      key: 'returnedQuantity', header: 'Returned', align: 'right',
+      render: (d) => <span className="font-mono text-muted-foreground">{d.returnedQuantity || '—'}</span>,
+    },
   ];
 
   return (
@@ -179,20 +195,36 @@ export default function PurchaseOrderDetailView({
               {purchase.status === 'QUOTATION' && (
                 <>
                   <Button variant="outline" size="sm" onClick={() => onEdit(purchase)}><Edit className="w-3.5 h-3.5" /> Edit</Button>
-                  <Button variant="outline" size="sm" onClick={() => onOpenQuotationDoc(purchase)}><FileText className="w-3.5 h-3.5" /> Generate Quotation</Button>
                   <Button size="sm" onClick={() => onConvert(purchase)}><ArrowRightCircle className="w-3.5 h-3.5" /> Proceed to Purchase Order</Button>
                   <Button variant="destructive" size="sm" onClick={() => onDelete(purchase.id)}><Trash2 className="w-3.5 h-3.5" /> Delete</Button>
                 </>
               )}
 
+              {['ORDERED', 'PARTIALLY_RECEIVED', 'RECEIVED'].includes(purchase.status) && (
+                <Button variant="outline" size="sm" onClick={() => onOpenInvoiceDoc(purchase)}><FileText className="w-3.5 h-3.5" /> Generate Invoice</Button>
+              )}
+
               {purchase.status === 'ORDERED' && (
-                <>
-                  <Button variant="outline" size="sm" onClick={() => onEdit(purchase)}><Edit className="w-3.5 h-3.5" /> Edit</Button>
-                  <Button size="sm" onClick={() => onReceive(purchase)} disabled={receivingId === purchase.id}>
-                    <Check className="w-3.5 h-3.5" /> {receivingId === purchase.id ? 'Receiving...' : 'Mark as Received'}
-                  </Button>
-                  <Button variant="destructive" size="sm" onClick={() => onCancel(purchase.id)}>Cancel Order</Button>
-                </>
+                <Button variant="outline" size="sm" onClick={() => onEdit(purchase)}><Edit className="w-3.5 h-3.5" /> Edit</Button>
+              )}
+
+              {/* Receive while anything is outstanding; return once anything has arrived. Cancel is
+                  ORDERED-only — the one status where no goods have moved — so it never sits next to
+                  Return. */}
+              {(purchase.status === 'ORDERED' || purchase.status === 'PARTIALLY_RECEIVED') && (
+                <Button size="sm" onClick={() => onReceive(purchase)}>
+                  <Check className="w-3.5 h-3.5" /> Receive Goods
+                </Button>
+              )}
+
+              {purchase.status === 'ORDERED' && (
+                <Button variant="destructive" size="sm" onClick={() => onCancel(purchase.id)}>Cancel Order</Button>
+              )}
+
+              {['PARTIALLY_RECEIVED', 'RECEIVED', 'PARTIALLY_RETURNED'].includes(purchase.status) && (
+                <Button variant="destructive" size="sm" onClick={() => onReturn(purchase)}>
+                  <Undo2 className="w-3.5 h-3.5" /> Return to Vendor
+                </Button>
               )}
 
               {purchase.status === 'CANCELLED' && (

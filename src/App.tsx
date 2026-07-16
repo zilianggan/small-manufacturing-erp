@@ -271,7 +271,7 @@ export default function App() {
     { id: 'EMPLOYEES' as TabType, label: 'Employee Directory', icon: Briefcase },
     { id: 'MATERIAL' as TabType, label: 'Material Catalog', icon: Boxes },
     { id: 'PRODUCT' as TabType, label: 'Product Catalog', icon: Tag },
-    { id: 'INVENTORY' as TabType, label: 'Inventory Stock', icon: Package },
+    { id: 'INVENTORY' as TabType, label: 'Inventory Transaction', icon: Package },
     { id: 'PURCHASES' as TabType, label: 'Material purchases', icon: ShoppingBag },
     { id: 'ORDERS' as TabType, label: 'Sales Contracts', icon: FileSpreadsheet },
     { id: 'WORKFLOWS' as TabType, label: 'Production Kanban', icon: Shuffle },

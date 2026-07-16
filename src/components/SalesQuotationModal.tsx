@@ -5,6 +5,12 @@ import { getClients } from '../services/ContactsService';
 import { getCompanyProfile } from '../services/CompanyProfileService';
 import { formatDate } from '../utils/date';
 
+// Code and dimension are both optional on a product — never fall back to the raw id when the code
+// is unset, that just leaks an opaque UUID onto a client-facing document. Omit whichever part is
+// missing instead of rendering "undefined" / a bare "Dimension:".
+const itemMeta = (code?: string, dimension?: string): string =>
+  [code, dimension ? `Dimension: ${dimension}` : ''].filter(Boolean).join(' | ');
+
 interface SalesQuotationModalProps {
   order: SalesHeader | null;
   isOpen: boolean;
@@ -169,7 +175,7 @@ export default function SalesQuotationModal({ order, isOpen, onClose }: SalesQuo
                       <td class="text-mono" style="color: #94a3b8;">${String(idx + 1).padStart(2, '0')}</td>
                       <td>
                         <div class="item-name">${item.productName}</div>
-                        <span class="item-desc">${item.productCode || item.productId} | Dimension: ${item?.product?.dimension} </span>
+                        ${itemMeta(item.product?.code || item.productCode, item?.product?.dimension) ? `<span class="item-desc">${itemMeta(item.product?.code || item.productCode, item?.product?.dimension)}</span>` : ''}
                       </td>
                       <td class="text-right text-mono">${item.quantity} units</td>
                       <td class="text-right text-mono">RM ${item.unitPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
@@ -396,7 +402,9 @@ export default function SalesQuotationModal({ order, isOpen, onClose }: SalesQuo
                       <td className="p-3 font-mono text-slate-400">{String(idx + 1).padStart(2, '0')}</td>
                       <td className="p-3 font-semibold text-slate-800">
                         <div>{item.productName}</div>
-                        <span className="text-[9px] text-slate-400 font-normal">{item.productCode || item.productId} | Dimension: {item?.product?.dimension} </span>
+                        {itemMeta(item.product?.code || item.productCode, item?.product?.dimension) && (
+                          <span className="text-[9px] text-slate-400 font-normal">{itemMeta(item.product?.code || item.productCode, item?.product?.dimension)}</span>
+                        )}
                       </td>
                       <td className="p-3 text-right font-mono">{item.quantity} units</td>
                       <td className="p-3 text-right font-mono">RM {item.unitPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>

@@ -1,33 +1,337 @@
+-- ============================================================================
+-- Seng Jie Manufacturing ERP — finalized schema
+-- Consolidated, deployable-from-scratch equivalent of schema.sql + function_trigger.sql
+-- (which are an accumulated migration history — this file is not).
+-- Run top to bottom on an empty Supabase/Postgres database.
+-- ============================================================================
 
--- index section
-CREATE INDEX idx_material_code
-ON material(code);
 
-CREATE INDEX idx_product_code
-ON product(code);
+-- ============================================================================
+-- 1. TABLES
+-- ============================================================================
 
-CREATE INDEX idx_purchase_vendor
-ON purchase_header(vendor_id);
+CREATE TABLE company_profile (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL,
+  icon_type TEXT,
+  icon_data_url TEXT,
+  address TEXT,
+  phone TEXT,
+  email TEXT,
+  bank_name TEXT,
+  bank_account TEXT,
+  signature_url TEXT,
+  chop_url TEXT,
+  so_number_format TEXT NOT NULL DEFAULT 'SO-0000',
+  so_next_number INT NOT NULL DEFAULT 1,
+  po_number_format TEXT NOT NULL DEFAULT 'PO-0000',
+  po_next_number INT NOT NULL DEFAULT 1,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 
-CREATE INDEX idx_sales_client
-ON sales_header(client_id);
+CREATE TABLE job_positions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL,
+  is_active BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_job_position_name UNIQUE(name)
+);
 
-CREATE INDEX idx_inventory_material
-ON inventory_transaction(material_id);
+CREATE TABLE material_categories (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL,
+  is_active BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_material_categories_name UNIQUE(name)
+);
 
-CREATE INDEX idx_inventory_product
-ON inventory_transaction(product_id);
+CREATE TABLE product_categories (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL,
+  is_active BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_product_categories_name UNIQUE(name)
+);
 
-CREATE INDEX idx_production_material_usage
-ON production_material_usage(material_id);
+CREATE TABLE vendors (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_name TEXT NOT NULL,
+  email TEXT,
+  office_no TEXT,
+  address TEXT,
+  description TEXT,
+  attachments JSONB DEFAULT '[]'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 
-CREATE INDEX idx_purchase_status
-ON purchase_header(status);
+CREATE TABLE clients (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_name TEXT NOT NULL,
+  email TEXT,
+  office_no TEXT,
+  address TEXT,
+  description TEXT,
+  attachments JSONB DEFAULT '[]'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 
-CREATE INDEX idx_sales_status
-ON sales_header(status);
+CREATE TABLE employees (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  full_name TEXT NOT NULL,
+  contact_no TEXT,
+  email TEXT,
+  status TEXT,
+  job_position UUID REFERENCES job_positions(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 
--- Trigger section
+CREATE TABLE contacts (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  full_name TEXT NOT NULL,
+  contact_no TEXT,
+  email TEXT,
+  job_position UUID REFERENCES job_positions(id) ON DELETE SET NULL,
+  vendor_id UUID REFERENCES vendors(id) ON DELETE CASCADE,
+  client_id UUID REFERENCES clients(id) ON DELETE CASCADE,
+  attachments JSONB DEFAULT '[]'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_contacts_full_name UNIQUE(full_name, contact_no, email, vendor_id, client_id),
+  CONSTRAINT chk_contact_owner CHECK ((vendor_id IS NOT NULL)::int + (client_id IS NOT NULL)::int = 1)
+);
+
+-- material_type: RAW_MATERIAL or CONSUMABLE_MATERIAL or CUSTOMER_STOCK.
+-- consumption_mode (CONSUMABLE_MATERIAL only, NULL otherwise) drives whether the consumable
+-- auto-deducts at production completion.
+CREATE TABLE material (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL,
+  code TEXT,
+  material_type TEXT,
+  consumption_mode TEXT CHECK (consumption_mode IN ('AUTOMATIC','MANUAL')),
+  dimension TEXT,
+  quantity NUMERIC DEFAULT 0,
+  description TEXT,
+  attachments JSONB DEFAULT '[]'::jsonb,
+  status TEXT,
+  minimum_stock NUMERIC DEFAULT 0,
+  reorder_quantity NUMERIC DEFAULT 0,
+  material_category_id UUID REFERENCES material_categories(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_material_name_code UNIQUE(name, code, dimension)
+);
+
+CREATE TABLE product (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL,
+  code TEXT,
+  dimension TEXT,
+  quantity NUMERIC DEFAULT 0,
+  description TEXT,
+  attachments JSONB DEFAULT '[]'::jsonb,
+  status TEXT,
+  selling_price NUMERIC DEFAULT 0,
+  product_category_id UUID REFERENCES product_categories(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_product_name_code UNIQUE(name, code, dimension)
+);
+
+-- order_date/delivery_date carry a time-of-day component (staff pick day+time; auto-stamped dates
+-- record the real creation instant). production_due_date is the internal shop-floor deadline the
+-- production board sorts/flags against, distinct from delivery_date (client-facing ship date).
+-- priority is a manual staff override, independent of due date.
+CREATE TABLE sales_header (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  sales_no TEXT UNIQUE,
+  order_date TIMESTAMPTZ NOT NULL,
+  delivery_date TIMESTAMPTZ,
+  status TEXT,
+  total_amount NUMERIC DEFAULT 0,
+  remark TEXT,
+  attachments JSONB DEFAULT '[]'::jsonb,
+  client_id UUID REFERENCES clients(id) ON DELETE SET NULL,
+  production_due_date date,
+  priority TEXT NOT NULL DEFAULT 'MEDIUM' CHECK (priority IN ('LOW','MEDIUM','HIGH','URGENT')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Partial delivery + explicit produce quantity:
+--   returned_quantity  — how much of this line the client has sent back (caps at delivered_quantity).
+--   delivered_quantity — how much of the line has shipped (delivery is partial, like receiving).
+--   produce_quantity   — what Start Production committed to make (editable; Mark Done reconciles
+--                        actual yield against it).
+--   produced_quantity  — what actually came off the floor. This, not the ordered qty, is what
+--                        credits finished goods at Mark Done.
+CREATE TABLE sales_detail (
+  detail_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  header_id UUID REFERENCES sales_header(id) ON DELETE CASCADE,
+  product_id UUID REFERENCES product(id) ON DELETE SET NULL,
+  product_name TEXT, -- snapshot purpose
+  product_code TEXT, -- snapshot purpose
+  quantity NUMERIC(18,2) NOT NULL,
+  unit_price NUMERIC(18,2) NOT NULL,
+  total_price NUMERIC DEFAULT 0,
+  remark TEXT,
+  returned_quantity NUMERIC NOT NULL DEFAULT 0,
+  delivered_quantity NUMERIC NOT NULL DEFAULT 0,
+  produce_quantity NUMERIC NOT NULL DEFAULT 0,
+  produced_quantity NUMERIC NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- sales_header_id: optional reference to a sales order this PO was raised for — reference only, no
+-- stock/lifecycle effect.
+CREATE TABLE purchase_header (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  purchase_no TEXT UNIQUE,
+  quotation_date TIMESTAMPTZ NOT NULL,
+  order_date TIMESTAMPTZ,
+  received_date date,
+  status TEXT,
+  attachments JSONB DEFAULT '[]'::jsonb,
+  total_price NUMERIC DEFAULT 0,
+  vendor_id UUID REFERENCES vendors(id) ON DELETE SET NULL,
+  sales_header_id UUID REFERENCES sales_header(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- returned_quantity here is unrelated to production_material_usage.returned_quantity (leftover
+-- material from production) — same name, different table, different thing.
+-- sales_detail_id: optional link when this PO line was raised to fulfil a specific sales order line.
+CREATE TABLE purchase_detail (
+  detail_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  header_id UUID REFERENCES purchase_header(id) ON DELETE CASCADE,
+  material_id UUID REFERENCES material(id) ON DELETE SET NULL,
+  material_name TEXT, -- snapshot purpose
+  material_code TEXT, -- snapshot purpose
+  quantity NUMERIC DEFAULT 0,
+  unit_cost NUMERIC DEFAULT 0,
+  total_price NUMERIC DEFAULT 0,
+  received_quantity NUMERIC DEFAULT 0,
+  returned_quantity NUMERIC NOT NULL DEFAULT 0,
+  sales_detail_id UUID REFERENCES sales_detail(detail_id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Consumption mode lives on material only (material.consumption_mode) — no per-usage-row override.
+CREATE TABLE production_material_usage (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  sales_detail_id UUID REFERENCES sales_detail(detail_id) ON DELETE CASCADE,
+  material_id UUID REFERENCES material(id),
+  planned_quantity NUMERIC DEFAULT 0,
+  actual_quantity NUMERIC DEFAULT 0,
+  returned_quantity NUMERIC DEFAULT 0,
+  remark TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- The ledger. quantity is signed: + adds stock, − removes it. Exactly one of material_id/product_id
+-- is set per row. A row joins back to the order that caused it via exactly one of purchase_detail_id
+-- (material received/returned on a PO), production_material_usage_id (material reserved/consumed/
+-- returned on an SO), or sales_detail_id (finished goods produced/shipped/returned on an SO).
+-- transaction_type is descriptive only: PURCHASE, SALES, PURCHASE_RETURN, SALES_RETURN, PRODUCTION,
+-- ADJUSTMENT. The trigger that applies this to material.quantity/product.quantity is AFTER INSERT
+-- only — deleting or updating a ledger row does not reverse the stock it applied.
+CREATE TABLE inventory_transaction (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  material_id UUID REFERENCES material(id) ON DELETE SET NULL,
+  product_id UUID REFERENCES product(id) ON DELETE SET NULL,
+  transaction_type TEXT,
+  quantity NUMERIC NOT NULL,
+  unit_cost NUMERIC,
+  remark TEXT,
+  purchase_detail_id UUID REFERENCES purchase_detail(detail_id),
+  production_material_usage_id UUID REFERENCES production_material_usage(id),
+  sales_detail_id UUID REFERENCES sales_detail(detail_id) ON DELETE SET NULL,
+  transaction_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE workflow_tasks (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  status TEXT,
+  stage TEXT NOT NULL DEFAULT 'PREPARATION' CHECK (stage IN ('PREPARATION','ASSEMBLY','QUALITY_CONTROL','PACKAGING','COMPLETED')),
+  start_date date,
+  end_date date,
+  remark TEXT,
+  sales_detail_id UUID REFERENCES sales_detail(detail_id) ON DELETE CASCADE,
+  employee_id UUID REFERENCES employees(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Row Level Security — every table below gets RLS enabled with one permissive "allow everything to
+-- public" policy (auth/authorization is handled in the app layer, not in Postgres, for this project).
+-- company_profile is deliberately excluded — it's a single-row config table.
+DO $$
+DECLARE
+    tbl text;
+BEGIN
+    FOREACH tbl IN ARRAY ARRAY[
+        'vendors',
+        'clients',
+        'employees',
+        'job_positions',
+        'material_categories',
+        'product_categories',
+        'contacts',
+        'material',
+        'product',
+        'purchase_header',
+        'purchase_detail',
+        'sales_header',
+        'sales_detail',
+        'production_material_usage',
+        'inventory_transaction',
+        'workflow_tasks'
+    ]
+    LOOP
+        EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY;', tbl);
+        EXECUTE format('DROP POLICY IF EXISTS %I ON %I;', tbl || '_all', tbl);
+        EXECUTE format(
+            'CREATE POLICY %I ON %I FOR ALL TO public USING (true) WITH CHECK (true);',
+            tbl || '_all',
+            tbl
+        );
+    END LOOP;
+END $$;
+
+
+-- ============================================================================
+-- 2. INDEXES
+-- ============================================================================
+
+CREATE INDEX idx_material_code ON material(code);
+CREATE INDEX idx_product_code ON product(code);
+CREATE INDEX idx_purchase_vendor ON purchase_header(vendor_id);
+CREATE INDEX idx_sales_client ON sales_header(client_id);
+CREATE INDEX idx_inventory_material ON inventory_transaction(material_id);
+CREATE INDEX idx_inventory_product ON inventory_transaction(product_id);
+CREATE INDEX idx_production_material_usage ON production_material_usage(material_id);
+CREATE INDEX idx_purchase_status ON purchase_header(status);
+CREATE INDEX idx_sales_status ON sales_header(status);
+CREATE INDEX idx_inventory_transaction_sales_detail ON inventory_transaction(sales_detail_id);
+
+
+-- ============================================================================
+-- 3. TRIGGERS
+-- ============================================================================
+
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS
 $$
@@ -122,12 +426,9 @@ BEFORE UPDATE ON workflow_tasks
 FOR EACH ROW
 EXECUTE FUNCTION update_updated_at_column();
 
-CREATE TRIGGER trg_inventory_update_stock
-AFTER INSERT ON inventory_transaction
-FOR EACH ROW
-EXECUTE FUNCTION update_material_stock();
-
--- function section
+-- The only writer of material.quantity/product.quantity. helper.ts's serializers deliberately omit
+-- `quantity` from material/product upserts so a catalog edit can never stomp it — every stock change
+-- must go through an inventory_transaction insert.
 CREATE OR REPLACE FUNCTION update_material_stock()
 RETURNS TRIGGER AS
 $$
@@ -148,6 +449,15 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+CREATE TRIGGER trg_inventory_update_stock
+AFTER INSERT ON inventory_transaction
+FOR EACH ROW
+EXECUTE FUNCTION update_material_stock();
+
+
+-- ============================================================================
+-- 4. FUNCTIONS
+-- ============================================================================
 
 CREATE OR REPLACE FUNCTION get_system_admin_data()
 RETURNS TABLE (
@@ -385,14 +695,6 @@ BEGIN
 END;
 $$;
 
--- PO/SO auto numbering (System Admin > Document Numbering). Format + start
--- number live on company_profile (existing config singleton). Run for
--- existing DBs; schema.sql already has these columns for fresh installs.
-ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS so_number_format TEXT NOT NULL DEFAULT 'SO-0000';
-ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS so_next_number INT NOT NULL DEFAULT 1;
-ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS po_number_format TEXT NOT NULL DEFAULT 'PO-0000';
-ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS po_next_number INT NOT NULL DEFAULT 1;
-
 -- Atomically claims the next sales/purchase number and formats it.
 -- Format must contain exactly one run of zeros marking the padded number
 -- position (e.g. 'SO-0000' -> 'SO-0001'); no zero run = number appended as-is.
@@ -428,21 +730,24 @@ BEGIN
 END;
 $$;
 
--- markDelivered()/returnSalesOrder() used to read remaining quantity in JS, clamp there, then write
--- — two round trips with no lock between them, so two genuinely concurrent calls on the same line
--- could both read the same stale "remaining", both pass their own clamp, and both write — shipping
--- or returning more than the order allows into a ledger that's insert-only and can't be undone.
--- SELECT ... FOR UPDATE row-locks sales_detail for the life of the call (one transaction), so a
--- second concurrent call blocks until the first commits and then clamps against the value it just
--- wrote — delivered_quantity can never exceed quantity, returned_quantity can never exceed
--- delivered_quantity, no matter how many callers race. Returns the quantity actually applied (0 if
--- nothing was left) so the caller knows exactly how much to write to the ledger.
-DROP FUNCTION IF EXISTS apply_sales_delivery(uuid, numeric);
+-- Every inventory-changing action below is one Postgres RPC call wrapping one all-or-nothing
+-- transaction: purchase receipt/return, sales delivery/return, production completion. Row-level
+-- primitives (apply_purchase_receipt, apply_purchase_return, apply_sales_delivery,
+-- apply_sales_return, apply_material_consumption, apply_production_output) each lock their own
+-- row(s), validate, write their ledger row, update their own quantity column. Batch orchestrators
+-- (apply_purchase_receipt_batch, apply_purchase_return_batch, apply_sales_delivery_batch,
+-- apply_sales_return_batch, apply_production_completion) are the actual RPC entry points JS calls:
+-- lock the header row FOR UPDATE first (serializing every action on that header), loop a jsonb line
+-- array through the row-level primitive, then recompute header status from the now-consistent
+-- sibling rows.
+--
+-- Overflow on a document-level cap that's a data-entry mistake (over-receive, over-return — purchase
+-- or sales, over-consume material) → RAISE EXCEPTION, whole transaction rolls back. Overflow on sales
+-- delivery specifically (order-remaining and now also physical product stock) → clamp after locking,
+-- return applied qty, no exception — a benign race, not a mistake.
 
--- Now also clamps against physical product stock (locked), not just the order line — closes a real
--- gap: today only an unlocked JS pre-check estimates this. Still clamps, doesn't throw (decision
--- #1's exception to the throw rule) — this is the one place a genuine concurrent race is expected.
--- Now inserts its own SALES ledger row too, instead of leaving that to a follow-up JS call.
+-- Now also clamps against physical product stock (locked), not just the order line. Clamps rather
+-- than throws — a genuine concurrent race, not a data-entry mistake. Inserts its own SALES ledger row.
 CREATE OR REPLACE FUNCTION apply_sales_delivery(p_detail_id uuid, p_qty numeric, p_remark text DEFAULT NULL)
 RETURNS numeric
 LANGUAGE plpgsql
@@ -489,6 +794,8 @@ BEGIN
 END;
 $$;
 
+-- One RPC per "Deliver" submit — all lines commit together. Header lock serializes this against any
+-- other action on the same SO.
 CREATE OR REPLACE FUNCTION apply_sales_delivery_batch(p_header_id uuid, p_lines jsonb, p_remark text DEFAULT NULL)
 RETURNS TABLE(detail_id uuid, applied_quantity numeric)
 LANGUAGE plpgsql
@@ -507,7 +814,7 @@ BEGIN
         SELECT * FROM jsonb_to_recordset(p_lines) AS x(detail_id uuid, quantity numeric)
         ORDER BY detail_id
     LOOP
-        IF NOT EXISTS (SELECT 1 FROM sales_detail WHERE sales_detail.detail_id = v_line.detail_id AND header_id = p_header_id) THEN
+        IF NOT EXISTS (SELECT 1 FROM sales_detail WHERE detail_id = v_line.detail_id AND header_id = p_header_id) THEN
             RAISE EXCEPTION 'Line % does not belong to sales order %', v_line.detail_id, p_header_id;
         END IF;
         detail_id := v_line.detail_id;
@@ -531,10 +838,8 @@ BEGIN
 END;
 $$;
 
-DROP FUNCTION IF EXISTS apply_sales_return(uuid, numeric);
-
--- Now throws on over-return instead of clamping (decision #1 — Sales Return is in the throw
--- bucket, unlike Sales Delivery above). Now inserts its own SALES_RETURN ledger row too.
+-- Throws on over-return (a data-entry mistake, unlike delivery above). Inserts its own SALES_RETURN
+-- ledger row.
 CREATE OR REPLACE FUNCTION apply_sales_return(p_detail_id uuid, p_qty numeric, p_remark text DEFAULT NULL)
 RETURNS numeric
 LANGUAGE plpgsql
@@ -590,7 +895,7 @@ BEGIN
         SELECT * FROM jsonb_to_recordset(p_lines) AS x(detail_id uuid, quantity numeric)
         ORDER BY detail_id
     LOOP
-        IF NOT EXISTS (SELECT 1 FROM sales_detail WHERE sales_detail.detail_id = v_line.detail_id AND header_id = p_header_id) THEN
+        IF NOT EXISTS (SELECT 1 FROM sales_detail WHERE detail_id = v_line.detail_id AND header_id = p_header_id) THEN
             RAISE EXCEPTION 'Line % does not belong to sales order %', v_line.detail_id, p_header_id;
         END IF;
         detail_id := v_line.detail_id;
@@ -609,28 +914,9 @@ BEGIN
 END;
 $$;
 
--- Closes Known Gap #2 ("stock can go negative") for two specific writers: a purchase return of
--- material already consumed in production, and a manual stock decrease.
---
--- Both differ from apply_sales_delivery/apply_sales_return above in one important way: those two
--- only needed to cap a column (sales_detail.delivered_quantity/returned_quantity) that nothing else
--- writes, so locking it for the length of the function was the whole guarantee — the ledger insert
--- could safely happen afterward, from JS, in a separate call. material.quantity has no such
--- exclusivity: purchases, production, consumables, and other adjustments all touch it via the same
--- AFTER INSERT trigger. If this function only locked material, decided a safe qty, and returned —
--- leaving the ledger INSERT (and the trigger's decrement) to a later JS call — the lock would already
--- be released by the time that INSERT lands, and another writer could shrink material.quantity in the
--- gap, reopening the exact race this exists to close. So the INSERT happens INSIDE this function,
--- inside the same transaction that holds the row lock, and the trigger fires before the lock is ever
--- released.
---
--- Clamps to whatever is LESS: what's still outstanding on this PO line, and what's physically still on
--- the shelf. Returns the quantity actually applied (0 if none) — same "hard cap, soft caller" split as
--- the sales functions.
-DROP FUNCTION IF EXISTS apply_purchase_return(uuid, numeric, numeric, text);
-
--- Now throws on over-return instead of clamping (decision #1), and no longer takes p_unit_cost —
--- it's the PO line's own unit_cost, read under the same lock, not a separate client-supplied value.
+-- Throws on over-return, and no longer takes p_unit_cost — it's the PO line's own unit_cost, read
+-- under the same lock. Clamps to min(receivedQuantity − returnedQuantity, current material.quantity)
+-- — material already consumed in production can't be returned to the vendor.
 CREATE OR REPLACE FUNCTION apply_purchase_return(p_detail_id uuid, p_qty numeric, p_remark text DEFAULT NULL)
 RETURNS numeric
 LANGUAGE plpgsql
@@ -699,7 +985,7 @@ BEGIN
         SELECT * FROM jsonb_to_recordset(p_lines) AS x(detail_id uuid, quantity numeric)
         ORDER BY detail_id
     LOOP
-        IF NOT EXISTS (SELECT 1 FROM purchase_detail WHERE purchase_detail.detail_id = v_line.detail_id AND header_id = p_header_id) THEN
+        IF NOT EXISTS (SELECT 1 FROM purchase_detail WHERE detail_id = v_line.detail_id AND header_id = p_header_id) THEN
             RAISE EXCEPTION 'Line % does not belong to purchase order %', v_line.detail_id, p_header_id;
         END IF;
         detail_id := v_line.detail_id;
@@ -719,10 +1005,8 @@ END;
 $$;
 
 -- Manual Stock Adjustment drawer, DECREASE direction only — an INCREASE can never drive stock
--- negative, so it stays on the plain insert path (saveInventoryTransaction). This is a single
--- deliberate form submission, not a multi-line bulk operation, so unlike the functions above it
--- REFUSES outright (RAISE EXCEPTION) rather than silently clamping — a partial silent apply on one
--- field would just be a confusing form, not a courtesy.
+-- negative, so it stays on the plain insert path (saveInventoryTransaction). A single deliberate
+-- form submission, not a batch, so it REFUSES outright (RAISE EXCEPTION) rather than clamping.
 CREATE OR REPLACE FUNCTION apply_manual_stock_decrease(
     p_material_id uuid,
     p_product_id uuid,
@@ -764,9 +1048,8 @@ BEGIN
 END;
 $$;
 
--- Receiving is now one atomic transaction per submit, not per-line JS round trips. Throws on
--- over-receipt (a data-entry mistake — the line just doesn't have that much left to receive), not
--- a clamp: see docs/superpowers/specs/2026-07-14-atomic-inventory-mutations-design.md decision #1.
+-- Throws on over-receipt (a data-entry mistake — the line doesn't have that much left to receive),
+-- not a clamp.
 CREATE OR REPLACE FUNCTION apply_purchase_receipt(p_detail_id uuid, p_qty numeric, p_remark text DEFAULT NULL)
 RETURNS numeric
 LANGUAGE plpgsql
@@ -808,8 +1091,8 @@ BEGIN
 END;
 $$;
 
--- One RPC per "Receive Goods" submit — all lines commit together or none do. Header lock
--- serializes this against any other action on the same PO (a concurrent Return, another Receive).
+-- One RPC per "Receive Goods" submit — all lines commit together or none do. Header lock serializes
+-- this against any other action on the same PO (a concurrent Return, another Receive).
 CREATE OR REPLACE FUNCTION apply_purchase_receipt_batch(p_header_id uuid, p_lines jsonb, p_remark text DEFAULT NULL)
 RETURNS TABLE(detail_id uuid, applied_quantity numeric)
 LANGUAGE plpgsql
@@ -834,7 +1117,7 @@ BEGIN
         SELECT * FROM jsonb_to_recordset(p_lines) AS x(detail_id uuid, quantity numeric)
         ORDER BY detail_id
     LOOP
-        IF NOT EXISTS (SELECT 1 FROM purchase_detail WHERE purchase_detail.detail_id = v_line.detail_id AND header_id = p_header_id) THEN
+        IF NOT EXISTS (SELECT 1 FROM purchase_detail WHERE detail_id = v_line.detail_id AND header_id = p_header_id) THEN
             RAISE EXCEPTION 'Line % does not belong to purchase order %', v_line.detail_id, p_header_id;
         END IF;
         detail_id := v_line.detail_id;
@@ -854,9 +1137,9 @@ BEGIN
 END;
 $$;
 
--- Closes the other half of Known Gap #2 in docs/flows.md: material deducted during production
--- (over-usage reconciliation, AUTOMATIC consumable burn) had no floor check. Always SALES-typed —
--- both callers are material leaving during production, matching the existing convention.
+-- Material deducted during production (over-usage reconciliation, AUTOMATIC consumable burn), row-
+-- locked and floor-checked. Always SALES-typed — both callers are material leaving during
+-- production, matching the existing convention.
 CREATE OR REPLACE FUNCTION apply_material_consumption(p_usage_id uuid, p_qty numeric, p_remark text DEFAULT NULL)
 RETURNS numeric
 LANGUAGE plpgsql
@@ -893,10 +1176,9 @@ BEGIN
 END;
 $$;
 
--- No upper cap — over-producing is legitimate (yield above plan is extra credit, already how
--- produced_quantity works today). Overwrite, not additive: safe because apply_production_completion
--- claims the header exactly once (IN_PRODUCTION -> DONE_IN_PRODUCTION), so this runs at most once
--- per line per order.
+-- No upper cap — over-producing is legitimate (yield above plan is extra credit). Overwrite, not
+-- additive: safe because apply_production_completion claims the header exactly once
+-- (IN_PRODUCTION -> DONE_IN_PRODUCTION), so this runs at most once per line per order.
 CREATE OR REPLACE FUNCTION apply_production_output(p_detail_id uuid, p_qty numeric)
 RETURNS numeric
 LANGUAGE plpgsql
@@ -928,8 +1210,10 @@ BEGIN
 END;
 $$;
 
--- The whole "Mark Production Done" action in one transaction. Replaces confirmProductionDone()'s
--- JS-side loop of saveInventoryTransaction calls entirely.
+-- The whole "Mark Production Done" action in one transaction: reconciles actual material usage
+-- against the startProduction reservation, burns AUTOMATIC consumables, credits leftover/by-product
+-- material, credits the finished goods actually produced, closes workflow_tasks, and advances the
+-- header to DONE_IN_PRODUCTION — all server-side.
 CREATE OR REPLACE FUNCTION apply_production_completion(
     p_header_id uuid,
     p_reconciliations jsonb,
@@ -952,9 +1236,8 @@ DECLARE
     v_leftover_qty numeric;
     v_new_usage_id uuid;
 BEGIN
-    -- Idempotency claim, same guard as today: only the caller that actually flips
-    -- IN_PRODUCTION -> DONE_IN_PRODUCTION writes anything. A retry after a partial failure finds
-    -- the order already done and is a no-op.
+    -- Idempotency claim: only the caller that actually flips IN_PRODUCTION -> DONE_IN_PRODUCTION
+    -- writes anything. A retry after a partial failure finds the order already done and is a no-op.
     UPDATE sales_header
     SET status = 'DONE_IN_PRODUCTION'
     WHERE id = p_header_id AND status = 'IN_PRODUCTION'
@@ -1063,15 +1346,10 @@ BEGIN
 END;
 $$;
 
--- Start Production was the one action left as plain sequential JS (no lock, no transaction) after the
--- atomic-inventory-mutations pass — flagged and deliberately deferred at the time, never closed. Same
--- risk shape as material consumption: a partial JS failure could leave some materials deducted (and
--- their planned_quantity already rewritten) while others weren't, and a retry from the still-ORDERED
--- header would deduct the already-succeeded ones again; two concurrent runs sharing a material had no
--- lock between them and could both pass the pre-check and jointly drive stock negative. One transaction
--- closes both: the idempotency claim below makes a retry-after-rollback start from a clean slate (the
--- whole prior attempt undoes with it), and apply_material_consumption's row lock on `material`
--- serializes concurrent runs instead of letting them race.
+-- Start Production: one transaction, row-locked. Idempotency claim (ORDERED/PARTIALLY_DELIVERED ->
+-- IN_PRODUCTION) means a retry after a rolled-back failure starts clean instead of re-deducting
+-- already-succeeded lines; apply_material_consumption's lock on `material` serializes concurrent runs
+-- sharing a material instead of letting both pass the check and oversell it.
 CREATE OR REPLACE FUNCTION apply_production_start(p_header_id uuid, p_produce jsonb)
 RETURNS void
 LANGUAGE plpgsql
@@ -1084,10 +1362,6 @@ DECLARE
     v_usage record;
     v_reserved numeric;
 BEGIN
-    -- Idempotency claim, same pattern as apply_production_completion: only a caller that actually
-    -- flips ORDERED/PARTIALLY_DELIVERED -> IN_PRODUCTION writes anything. Because the whole function is
-    -- one transaction, a failure anywhere below rolls this claim back too — a retry finds the header
-    -- back in a startable state and gets a clean run, never a partial one.
     UPDATE sales_header
     SET status = 'IN_PRODUCTION'
     WHERE id = p_header_id AND status IN ('ORDERED', 'PARTIALLY_DELIVERED')
@@ -1118,10 +1392,6 @@ BEGIN
         INSERT INTO workflow_tasks (sales_detail_id, status, stage, start_date)
         VALUES (v_line.detail_id, 'IN_PRODUCTION', 'PREPARATION', CURRENT_DATE);
 
-        -- Scale each planned material to what's actually being produced, same formula as the old JS
-        -- scaledPlan(): reserved = planned * produceQty / orderedQty, rounded to 2dp. Rewriting
-        -- planned_quantity here (not just deducting) is the point, not a side effect — it becomes the
-        -- reservation snapshot apply_production_completion reconciles actual usage against later.
         FOR v_usage IN
             SELECT pmu.id, pmu.planned_quantity, sd.quantity AS ordered_qty
             FROM production_material_usage pmu

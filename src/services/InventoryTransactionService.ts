@@ -16,7 +16,11 @@ export { generateId };
 
 const mapTransactionRow = (row: any): InventoryTransaction => {
   const purchaseHeader = row.purchase_detail?.purchase_header;
-  const salesHeader = row.production_material_usage?.sales_detail?.sales_header;
+  // Two routes to the sales header now: the old one via a production material usage row (material
+  // consumed against an order), and the direct one via sales_detail (finished goods produced,
+  // shipped, or returned). A row only ever has one of them set.
+  const salesHeader = row.production_material_usage?.sales_detail?.sales_header
+    || row.sales_detail?.sales_header;
   return {
     id: row.id,
     transactionType: row.transaction_type,
@@ -27,6 +31,7 @@ const mapTransactionRow = (row: any): InventoryTransaction => {
     materialName: row.material?.name,
     productId: row.product_id || undefined,
     productName: row.product?.name,
+    salesDetailId: row.sales_detail_id || undefined,
     refNo: purchaseHeader?.purchase_no || salesHeader?.sales_no,
     counterpartyName: purchaseHeader?.vendors?.company_name || salesHeader?.clients?.company_name,
     status: purchaseHeader?.status || salesHeader?.status,
@@ -47,11 +52,31 @@ const SORT_COLUMN: Record<InventoryLedgerSortField, string> = {
   unitCost: 'unit_cost',
 };
 
+// status isn't a column on inventory_transaction — it's whatever the linked purchase/sales header's
+// status is, reached through three different FKs (purchase_detail_id direct; sales_detail_id direct
+// for finished-goods rows; production_material_usage_id -> its own sales_detail_id for material
+// consumption rows). No single PostgREST filter reaches all three, so this resolves each path to a
+// set of inventory_transaction-level ids first (embedded !inner filter, one query per path), then
+// ORs them together — same "resolve ids, then filter" shape the search/client-name lookups above use.
+const resolveStatusFilterIds = async (statuses: string[]) => {
+  const [pd, sd, pmu] = await Promise.all([
+    supabase.from('purchase_detail').select('detail_id, purchase_header!inner(status)').in('purchase_header.status', statuses),
+    supabase.from('sales_detail').select('detail_id, sales_header!inner(status)').in('sales_header.status', statuses),
+    supabase.from('production_material_usage').select('id, sales_detail!inner(sales_header!inner(status))').in('sales_detail.sales_header.status', statuses),
+  ]);
+  return {
+    purchaseDetailIds: (pd.data || []).map((r: any) => r.detail_id),
+    salesDetailIds: (sd.data || []).map((r: any) => r.detail_id),
+    productionMaterialUsageIds: (pmu.data || []).map((r: any) => r.id),
+  };
+};
+
 export const getInventoryTransactions = async (params: {
   search?: string;
   typeFilters?: InventoryTransactionType[]; // empty/undefined = all types
   materialIds?: string[]; // FilterDialog's ticked-record picker, OR'd with productIds, AND'd with search
   productIds?: string[];
+  statuses?: string[]; // linked purchase/sales header status — see resolveStatusFilterIds
   dateFrom?: string; // inclusive, yyyy-mm-dd, against transaction_date
   dateTo?: string; // inclusive
   sortField?: InventoryLedgerSortField;
@@ -59,14 +84,15 @@ export const getInventoryTransactions = async (params: {
   offset: number;
   limit: number;
 }): Promise<{ rows: InventoryTransaction[]; hasMore: boolean; totalCount: number }> => {
-  const { search = '', typeFilters, materialIds, productIds, dateFrom, dateTo, sortField = 'date', sortDir = 'desc', offset, limit } = params;
+  const { search = '', typeFilters, materialIds, productIds, statuses, dateFrom, dateTo, sortField = 'date', sortDir = 'desc', offset, limit } = params;
 
   let query = supabase
     .from('inventory_transaction')
     .select(`
       *, material(name), product(name),
       purchase_detail(purchase_header(id, purchase_no, status, vendors(company_name))),
-      production_material_usage(sales_detail(sales_header(id, sales_no, status, clients(company_name))))
+      production_material_usage(sales_detail(sales_header(id, sales_no, status, clients(company_name)))),
+      sales_detail(sales_header(id, sales_no, status, clients(company_name)))
     `, { count: 'exact' })
     .order(SORT_COLUMN[sortField], { ascending: sortDir === 'asc' })
     .order('created_at', { ascending: false });
@@ -112,6 +138,18 @@ export const getInventoryTransactions = async (params: {
     query = query.or(orParts.join(','));
   }
 
+  if (statuses && statuses.length > 0) {
+    const { purchaseDetailIds, salesDetailIds, productionMaterialUsageIds } = await resolveStatusFilterIds(statuses);
+    if (purchaseDetailIds.length === 0 && salesDetailIds.length === 0 && productionMaterialUsageIds.length === 0) {
+      return { rows: [], hasMore: false, totalCount: 0 };
+    }
+    const orParts: string[] = [];
+    if (purchaseDetailIds.length > 0) orParts.push(`purchase_detail_id.in.(${purchaseDetailIds.join(',')})`);
+    if (salesDetailIds.length > 0) orParts.push(`sales_detail_id.in.(${salesDetailIds.join(',')})`);
+    if (productionMaterialUsageIds.length > 0) orParts.push(`production_material_usage_id.in.(${productionMaterialUsageIds.join(',')})`);
+    query = query.or(orParts.join(','));
+  }
+
   query = query.range(offset, offset + limit - 1);
 
   const { data, error, count } = await query;
@@ -129,11 +167,39 @@ export const getInventoryTransactions = async (params: {
 export const saveInventoryTransaction = (tx: InventoryTransaction): Promise<void> =>
   upsertRecord('erp_inventory_transaction', tx);
 
+// Manual Stock Adjustment drawer, DECREASE direction only — an INCREASE can never drive stock
+// negative, so it stays on saveInventoryTransaction. apply_manual_stock_decrease()
+// (function_trigger.sql) checks current stock and writes the ledger row atomically (row-locked), so
+// a decrease can never take material/product quantity below zero, even under concurrent adjustments
+// on the same item. Throws (RAISE EXCEPTION in Postgres) rather than clamping — a single deliberate
+// form field, not a multi-line operation, so refusing outright is clearer than silently applying less.
+export const applyManualStockDecrease = async (input: {
+  materialId?: string;
+  productId?: string;
+  quantity: number;
+  unitCost?: number;
+  remark?: string;
+  transactionDate: string;
+}): Promise<void> => {
+  const { error } = await supabase.rpc('apply_manual_stock_decrease', {
+    p_material_id: input.materialId || null,
+    p_product_id: input.productId || null,
+    p_qty: input.quantity,
+    p_unit_cost: input.unitCost ?? null,
+    p_remark: input.remark ?? null,
+    p_transaction_date: input.transactionDate,
+  });
+  if (error) {
+    console.error('applyManualStockDecrease', error);
+    throw error;
+  }
+};
+
 const mapMovementRow = (row: any): InventoryListItem => {
   const purchaseHeader = row.purchase_detail?.purchase_header;
-  const salesDetail = row.production_material_usage?.sales_detail;
-  const salesHeader = salesDetail?.sales_header;
-  const task = salesDetail?.workflow_tasks?.[0];
+  const usageSalesDetail = row.production_material_usage?.sales_detail;
+  const salesHeader = usageSalesDetail?.sales_header || row.sales_detail?.sales_header;
+  const task = usageSalesDetail?.workflow_tasks?.[0];
   const quantity = Number(row.quantity) || 0;
   const unitCost = row.unit_cost != null ? Number(row.unit_cost) : undefined;
 
@@ -158,10 +224,12 @@ const mapMovementRow = (row: any): InventoryListItem => {
 // Read-only side of the ledger for MaterialView's/ProductView's "Inventory
 // List": movements against one material/product, joined out to
 // whichever order header generated them (purchase_detail -> purchase_header
-// for PURCHASE/PURCHASE_RETURN, production_material_usage -> sales_detail ->
-// sales_header for SALES/SALES_RETURN/ADJUSTMENT). ADJUSTMENT rows with no
-// production_material_usage link (standalone stock corrections) have no
-// order header to join, so refNo/counterpartyName/status/*HeaderId stay
+// for PURCHASE/PURCHASE_RETURN; production_material_usage -> sales_detail ->
+// sales_header for material rows consumed/returned against production; and
+// sales_detail -> sales_header directly for product rows — SALES/SALES_RETURN/
+// PRODUCTION against a finished good). ADJUSTMENT rows with no
+// production_material_usage or sales_detail link (standalone stock corrections)
+// have no order header to join, so refNo/counterpartyName/status/*HeaderId stay
 // unset for those. excludeTypes lets callers drop the type they already source from the
 // order-detail tables directly (richer/earlier data than the ledger alone).
 export const getInventoryMovements = async (
@@ -173,7 +241,8 @@ export const getInventoryMovements = async (
     .select(`
       id, transaction_type, quantity, unit_cost, transaction_date,
       purchase_detail(purchase_header(id, purchase_no, status, vendors(company_name))),
-      production_material_usage(id, sales_detail(sales_header(id, sales_no, status, clients(company_name)), workflow_tasks(employee_id, employees(full_name))))
+      production_material_usage(id, sales_detail(sales_header(id, sales_no, status, clients(company_name)), workflow_tasks(employee_id, employees(full_name)))),
+      sales_detail(sales_header(id, sales_no, status, clients(company_name)))
     `)
     .order('transaction_date', { ascending: false })
     .order('created_at', { ascending: false });
@@ -202,9 +271,10 @@ export interface InventoryStatsSummary {
  * Statistics dialog data — aggregated client-side over the last 6 months of
  * transactions (no dedicated analytics RPC exists yet). Bounded by date range
  * rather than a full-table fetch, so this stays cheap for a single-site shop.
- * Only material-side rows carry consumption data (see getProductInventoryList's
- * comment — products have no ledger entry for ordinary sales), so
- * "Top Consumed" is materials only.
+ * "Top Consumed" stays materials-only on purpose: products now DO have ledger rows for ordinary
+ * sales (markDelivered writes SALES −qty), but mixing finished goods into a "top consumed
+ * materials" list would compare two different things. A separate top-selling-products stat is a
+ * different feature.
  */
 export const getInventoryStatsSummary = async (months = 6): Promise<InventoryStatsSummary> => {
   const since = new Date();

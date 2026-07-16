@@ -323,19 +323,19 @@ function CompanyCard({
           {company.email && (
             <div className="flex items-center space-x-2" >
               <Mail className="w-3.5 h-3.5 shrink-0 text-slate-400" />
-              <span className="truncate font-mono text-primary hover:underline cursor-pointer" onClick={(e) => { e.stopPropagation(); window.open(`mailto:${company.email}`, "_blank") }}>{company.email}</span>
+              <span className="truncate font-mono text-slate-900 hover:underline cursor-pointer" onClick={(e) => { e.stopPropagation(); window.open(`mailto:${company.email}`, "_blank") }}>{company.email}</span>
             </div>
           )}
           {company.officeNo && (
             <div className="flex items-center space-x-2">
               <Phone className="w-3.5 h-3.5 shrink-0 text-slate-400" />
-              <span className="font-mono text-primary hover:underline cursor-pointer" onClick={(e) => { e.stopPropagation(); window.open(`https://wa.me/${company.officeNo}`, "_blank") }}>{company.officeNo}</span>
+              <span className="font-mono text-slate-900 hover:underline cursor-pointer" onClick={(e) => { e.stopPropagation(); window.open(`https://wa.me/${company.officeNo}`, "_blank") }}>{company.officeNo}</span>
             </div>
           )}
           {company.address && (
             <div className="flex items-start space-x-2">
               <MapPin className="w-3.5 h-3.5 shrink-0 text-slate-400 mt-0.5" />
-              <span className="font-mono text-primary hover:underline cursor-pointer" onClick={(e) => { e.stopPropagation(); window.open(`https://google.com/maps/search/?api=1&query=${encodeURIComponent(company.address)}`, "_blank"); }}>{company.address}</span>
+              <span className="font-mono text-slate-900 hover:underline cursor-pointer" onClick={(e) => { e.stopPropagation(); window.open(`https://google.com/maps/search/?api=1&query=${encodeURIComponent(company.address)}`, "_blank"); }}>{company.address}</span>
             </div>
           )}
           {company.description && (

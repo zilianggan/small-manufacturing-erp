@@ -1,9 +1,13 @@
 Version 1.0.5
 --------------------
 - Add android build app using capacitor
-- Clean code
 - Update read me in README.md
 - Adjust quotation and invoice print view in mobile view
+- Adjust flow of purchases and sales
+- Partial receive and deliver
+- Add more filter option (inventory add movement type and status, sales and purchase order listing add status)
+- Separate material table and product table in sales form
+- Change date picker and time picker design
 
 Version 1.0.4
 --------------------
