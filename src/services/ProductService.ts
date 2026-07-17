@@ -40,7 +40,7 @@ export const getProducts = async (search = ''): Promise<Product[]> => {
   return (data || []).map(mapProductRow);
 };
 
-export type ProductSortField = 'name' | 'code' | 'stock' | 'latestSale' | 'oldestSale';
+export type ProductSortField = 'name' | 'code' | 'stock' | 'latestSale' | 'oldestSale' | 'createdAt' | 'updatedAt';
 export type SortDir = 'asc' | 'desc';
 
 const SORT_FIELD_TO_RPC: Record<ProductSortField, string> = {
@@ -49,6 +49,8 @@ const SORT_FIELD_TO_RPC: Record<ProductSortField, string> = {
   stock: 'stock',
   latestSale: 'latest_sale',
   oldestSale: 'oldest_sale',
+  createdAt: 'created_at',
+  updatedAt: 'updated_at',
 };
 
 // Paginated, filterable, sortable product catalog for ProductView.tsx — via

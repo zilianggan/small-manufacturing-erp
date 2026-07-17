@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   DollarSign, Package, AlertTriangle, ClipboardList, ShoppingCart, Wallet,
   FileSpreadsheet, ShoppingBag, Boxes, Tag, Shuffle, CheckCircle2, PackageCheck,
-  Settings, Check,
+  Settings, Check, RotateCcw,
 } from 'lucide-react';
 import {
   getDashboardData, getOutstandingOrdersCount, getMaterialCount,
@@ -20,7 +20,7 @@ import { CardEmptyState } from './ui/Card';
 import { PRIORITY_META } from '../utils/priority';
 import { DndContext, closestCenter, PointerSensor, KeyboardSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, rectSortingStrategy, arrayMove, sortableKeyboardCoordinates } from '@dnd-kit/sortable';
-import { SortableSection } from './dashboard/SortableSection';
+import { SortableSection, SPAN_CLASS } from './dashboard/SortableSection';
 
 const EMPTY_DASHBOARD: DashboardData = {
   monthlyTotals: [],
@@ -216,6 +216,11 @@ export default function DashboardView({ onNavigate, onViewSalesOrder, onViewPurc
     const next: DashboardPreferences = { ...preferences, section_order: arrayMove(orderedKeys, oldIndex, newIndex) };
     setPreferences(next);
     saveDashboardPreferences(next).catch(console.error);
+  };
+
+  const resetLayout = () => {
+    setPreferences(EMPTY_PREFERENCES);
+    saveDashboardPreferences(EMPTY_PREFERENCES).catch(console.error);
   };
 
   const quickActions: { label: string; icon: typeof Boxes; target: QuickActionTarget }[] = [
@@ -504,7 +509,7 @@ export default function DashboardView({ onNavigate, onViewSalesOrder, onViewPurc
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-6 gap-5" style={{ gridAutoFlow: 'row dense' }}>
             {orderedKeys.filter(isVisible).map((key) => (
-              <div key={key} style={{ gridColumn: `span ${SECTION_SPAN[key]} / span ${SECTION_SPAN[key]}` }}>
+              <div key={key} className={`h-full [&>*]:h-full ${SPAN_CLASS[SECTION_SPAN[key]] || 'col-span-1'}`}>
                 {sectionContent[key]}
               </div>
             ))}
@@ -512,6 +517,15 @@ export default function DashboardView({ onNavigate, onViewSalesOrder, onViewPurc
         )}
       </DashboardShell>
 
+      {customizing && (
+        <Button
+          variant="outline"
+          className="fixed bottom-6 right-24 z-50 shadow-lg bg-secondary hover:bg-secondary"
+          onClick={resetLayout}
+        >
+          <RotateCcw className="w-4 h-4" /> Reset to Default
+        </Button>
+      )}
       <Button
         variant="default"
         size="icon"

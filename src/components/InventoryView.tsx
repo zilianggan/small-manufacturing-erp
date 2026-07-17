@@ -25,9 +25,10 @@ import SegmentedControl from './SegmentedControl';
 import FilterDialog from './FilterDialog';
 import InfiniteScrollSentinel from './InfiniteScrollSentinel';
 import {
-  PageHeader, SectionCard, FilterBar, DataTable, StatCard, ChartCard, MetricCard,
+  PageHeader, SectionCard, FilterBar, DataTable, StatCard, ChartCard, MetricCard, ColumnsMenu,
 } from './shell';
 import type { DataTableColumn, FilterChip } from './shell';
+import { useColumnVisibility } from '../hooks/useColumnVisibility';
 import {
   Button, Badge, ActionsMenu, Sheet, Dialog, FormField, fieldInputClassName,
   Tabs, TabsList, TabsTrigger, TabsContent, useToast,
@@ -139,7 +140,7 @@ export default function InventoryView({ onViewPurchaseOrder, onViewSalesOrder }:
   // depending on type; item is material.name OR product.name) — PostgREST has
   // no clean way to order by "whichever of two joined columns is set", so
   // those are sorted client-side over whatever's currently loaded instead.
-  const SERVER_SORT_FIELDS: readonly string[] = ['date', 'type', 'quantity'];
+  const SERVER_SORT_FIELDS: readonly string[] = ['date', 'type', 'quantity', 'createdAt'];
   type DisplaySortField = InventoryLedgerSortField | 'reference' | 'item' | 'status';
   const [sortField, setSortField] = useState<DisplaySortField>('date');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
@@ -264,6 +265,7 @@ export default function InventoryView({ onViewPurchaseOrder, onViewSalesOrder }:
   const resetFilters = () => {
     setAppliedTypeFilters([]); setAppliedMaterialIds([]); setAppliedProductIds([]); setAppliedStatuses([]);
     setDateFrom(monthStart(0)); setDateTo(monthEnd(0)); setActiveQuickRange('thisMonth'); setSearchQuery('');
+    resetColumns();
   };
 
   const filterChips: FilterChip[] = [
@@ -459,7 +461,16 @@ export default function InventoryView({ onViewPurchaseOrder, onViewSalesOrder }:
       key: 'status', header: 'Status', sortable: true, className: 'w-[1%] whitespace-nowrap',
       render: (tx) => tx.status ? <Badge variant="secondary">{tx.status}</Badge> : <span className="text-muted-foreground">—</span>
     },
+    {
+      // No "Modified" column: the ledger is insert-only (see the module comment
+      // in InventoryTransactionService.ts), so there's no updated_at to show.
+      key: 'createdAt', header: 'Created', sortable: true, className: 'w-32',
+      render: (tx) => <span className="text-muted-foreground font-mono text-[11px]">{formatDateTime(tx.createdAt)}</span>
+    },
   ];
+
+  const { hidden: hiddenColumns, toggle: toggleColumn, reset: resetColumns } = useColumnVisibility('columns:inventory-transactions');
+  const visibleColumns = columns.filter(c => !hiddenColumns.has(c.key));
 
   return (
     <div ref={contentRef} className="flex flex-col gap-5 min-[1440px]:h-full min-[1440px]:min-h-0" id="inventory-view">
@@ -483,7 +494,12 @@ export default function InventoryView({ onViewPurchaseOrder, onViewSalesOrder }:
           chips={filterChips}
           onOpenFilters={openFilterDialog}
           filterCount={activeFilterCount}
-          right={<Button variant="outline" size="sm" onClick={resetFilters}><RotateCcw className="w-3.5 h-3.5" /> Reset</Button>}
+          right={
+            <>
+              <ColumnsMenu columns={columns.map(c => ({ key: c.key, label: String(c.header) }))} hidden={hiddenColumns} onToggle={toggleColumn} onSelectAll={resetColumns} />
+              <Button variant="outline" size="sm" onClick={resetFilters}><RotateCcw className="w-3.5 h-3.5" /> Reset</Button>
+            </>
+          }
         />
         <QuickRangePills activeKey={activeQuickRange} onSelect={applyQuickRange} />
       </SectionCard>
@@ -492,7 +508,7 @@ export default function InventoryView({ onViewPurchaseOrder, onViewSalesOrder }:
       <SectionCard title="Transactions" description={`${transactions.length} loaded${hasMore ? '+' : ''}`} className="flex-1 min-h-0" contentClassName="p-0 flex-1 min-h-0 flex flex-col">
         <div ref={tableScrollRef} className="flex-1 min-h-0 overflow-auto">
           <DataTable
-            columns={columns}
+            columns={visibleColumns}
             rows={displayedTransactions}
             rowKey={(tx) => tx.id}
             sortField={sortField}

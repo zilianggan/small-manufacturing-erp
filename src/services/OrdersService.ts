@@ -100,7 +100,7 @@ const mapSalesHeaderRow = (row: any): SalesHeader => ({
   updatedAt: row.updated_at,
 });
 
-export type SalesSortField = 'reference' | 'client' | 'date' | 'totalAmount' | 'productionDue' | 'status';
+export type SalesSortField = 'reference' | 'client' | 'date' | 'totalAmount' | 'productionDue' | 'status' | 'createdAt' | 'updatedAt';
 export type SortDir = 'asc' | 'desc';
 
 export interface SalesFilters {
@@ -174,6 +174,12 @@ export const getSalesOrders = async (
       break;
     case 'productionDue':
       query = query.order('production_due_date', { ascending: sortDir === 'asc', nullsFirst: false });
+      break;
+    case 'createdAt':
+      query = query.order('created_at', { ascending: sortDir === 'asc' });
+      break;
+    case 'updatedAt':
+      query = query.order('updated_at', { ascending: sortDir === 'asc' });
       break;
     case 'date':
     default:

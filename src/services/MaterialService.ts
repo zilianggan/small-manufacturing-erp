@@ -43,7 +43,7 @@ export const getMaterials = async (search = ''): Promise<Material[]> => {
   return (data || []).map(mapMaterialRow);
 };
 
-export type MaterialSortField = 'name' | 'code' | 'stock' | 'restock' | 'latestPurchase' | 'oldestPurchase';
+export type MaterialSortField = 'name' | 'code' | 'stock' | 'restock' | 'latestPurchase' | 'oldestPurchase' | 'createdAt' | 'updatedAt';
 export type SortDir = 'asc' | 'desc';
 
 const SORT_FIELD_TO_RPC: Record<MaterialSortField, string> = {
@@ -53,6 +53,8 @@ const SORT_FIELD_TO_RPC: Record<MaterialSortField, string> = {
   restock: 'restock',
   latestPurchase: 'latest_purchase',
   oldestPurchase: 'oldest_purchase',
+  createdAt: 'created_at',
+  updatedAt: 'updated_at',
 };
 
 // Paginated, filterable, sortable material catalog for MaterialView.tsx — via

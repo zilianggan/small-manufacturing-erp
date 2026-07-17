@@ -27,7 +27,8 @@ import FilterDialog from './FilterDialog';
 import { formatDateTime, toDateTimeLocal, fromDateTimeLocal, monthStart, monthEnd } from '../utils/date';
 import { QUICK_RANGES } from '../utils/dateRanges';
 import QuickRangePills from './QuickRangePills';
-import { PageHeader, SectionCard, FilterBar, DataTable } from './shell';
+import { PageHeader, SectionCard, FilterBar, DataTable, ColumnsMenu } from './shell';
+import { useColumnVisibility } from '../hooks/useColumnVisibility';
 import type { DataTableColumn, FilterChip } from './shell';
 import {
   Button, Badge, Sheet, FormField, fieldInputClassName, ActionsMenu,
@@ -52,7 +53,7 @@ type DisplaySortField = PurchaseSortField | 'items';
 // sales_header.sales_no) — PostgREST's order(col, {foreignTable}) doesn't
 // reliably sort by a nullable/embedded relation, so they're sorted
 // client-side below, same trick as 'items'.
-const SERVER_SORT_FIELDS: readonly string[] = ['reference', 'date', 'totalCost', 'status'];
+const SERVER_SORT_FIELDS: readonly string[] = ['reference', 'date', 'totalCost', 'status', 'createdAt', 'updatedAt'];
 
 // PO-tab-only statuses (QUOTATION tab is always a single status, filtering it is a no-op).
 const PO_STATUSES: PurchaseHeader['status'][] = ['ORDERED', 'PARTIALLY_RECEIVED', 'RECEIVED', 'PARTIALLY_RETURNED', 'RETURNED', 'CANCELLED'];
@@ -215,6 +216,7 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
     setAppliedFilters({ dateFrom: monthStart(0), dateTo: monthEnd(0) });
     setActiveQuickRange('thisMonth');
     setSearchQuery(prev => ({ ...prev, [activeTab]: '' }));
+    resetColumns();
   };
 
   // ─── Sort ─────────────────────────────────────────────────────────────
@@ -732,11 +734,16 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
       )
     },
     { key: 'totalCost', header: 'Total Cost', sortable: true, align: 'right', className: 'w-32', render: (p) => <span className="font-mono font-medium text-foreground">RM {p.totalPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span> },
+    { key: 'createdAt', header: 'Created', sortable: true, className: 'w-32', render: (p) => <span className="text-muted-foreground font-mono text-[11px]">{formatDateTime(p.createdAt)}</span> },
+    { key: 'updatedAt', header: 'Modified', sortable: true, className: 'w-32', render: (p) => <span className="text-muted-foreground font-mono text-[11px]">{formatDateTime(p.updatedAt)}</span> },
     ...(activeTab === 'PO' ? [{
       key: 'status', header: 'Status', sortable: true, className: 'w-[1%] whitespace-nowrap',
       render: (p: PurchaseHeader) => <Badge variant={STATUS_META[p.status].variant}>{STATUS_META[p.status].label}</Badge>,
     } as DataTableColumn<PurchaseHeader>] : []),
   ];
+
+  const { hidden: hiddenColumns, toggle: toggleColumn, reset: resetColumns } = useColumnVisibility('columns:purchase-orders');
+  const visibleColumns = columns.filter(c => !hiddenColumns.has(c.key));
 
   return (
     <div ref={contentRef} className="flex flex-col gap-5 min-[1440px]:h-full min-[1440px]:min-h-0" id="purchases-view">
@@ -778,7 +785,12 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
               chips={filterChips}
               onOpenFilters={openFilterDialog}
               filterCount={activeFilterCount}
-              right={<Button variant="outline" size="sm" onClick={resetFilters}><RotateCcw className="w-3.5 h-3.5" /> Reset</Button>}
+              right={
+                <>
+                  <ColumnsMenu columns={columns.map(c => ({ key: c.key, label: String(c.header) }))} hidden={hiddenColumns} onToggle={toggleColumn} onSelectAll={resetColumns} />
+                  <Button variant="outline" size="sm" onClick={resetFilters}><RotateCcw className="w-3.5 h-3.5" /> Reset</Button>
+                </>
+              }
             />
             <QuickRangePills activeKey={activeQuickRange} onSelect={applyQuickRange} />
           </SectionCard>
@@ -786,7 +798,7 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
           <SectionCard title={activeTab === 'QUOTATION' ? 'Quotations' : 'Purchase Orders'} description={`${purchases.length} record${purchases.length === 1 ? '' : 's'}`} className="flex-1 min-h-0" contentClassName="p-0 flex-1 min-h-0 flex flex-col">
             <div className="flex-1 min-h-0 overflow-auto">
               <DataTable
-                columns={columns}
+                columns={visibleColumns}
                 rows={displayedPurchases}
                 rowKey={(p) => p.id}
                 sortField={sortField}

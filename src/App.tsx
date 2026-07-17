@@ -53,9 +53,28 @@ type TabType = 'DASHBOARD' | 'INVENTORY' | 'MATERIAL' | 'PRODUCT' | 'CONTACTS' |
 // Keep in sync with the latest release header in version.txt
 const APP_VERSION = '1.0.5';
 
+// ponytail: browser-back support only, Electron shell has no back gesture/button so skip there
+const isBrowser = !navigator.userAgent.includes('Electron');
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabType>('DASHBOARD');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  // Browser back/forward navigates between previously visited tabs.
+  useEffect(() => {
+    if (!isBrowser) return;
+    window.history.replaceState({ tab: activeTab }, '');
+    const onPopState = (e: PopStateEvent) => {
+      if (e.state?.tab) setActiveTab(e.state.tab);
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+  useEffect(() => {
+    if (!isBrowser) return;
+    if (window.history.state?.tab === activeTab) return;
+    window.history.pushState({ tab: activeTab }, '');
+  }, [activeTab]);
 
   // Cross-tab drill-in: ProductView.tsx's/MaterialView.tsx's/InventoryView.tsx's
   // inventory list links jump here — switch tabs and tell the destination

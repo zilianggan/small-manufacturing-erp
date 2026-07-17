@@ -75,6 +75,7 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
   } | null>(null);
   const [purchasePreview, setPurchasePreview] = useState<PurchaseImportPreview | null>(null);
   const [salesPreview, setSalesPreview] = useState<SalesImportPreview | null>(null);
+  const [addInventoryTransaction, setAddInventoryTransaction] = useState(true);
   const [flatPreview, setFlatPreview] = useState<{ category: FlatOrProductionCategory; totalRows: number; errors: ImportRowError[]; records: any[]; stockAdjustments?: { itemId: string; quantity: number }[] } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -290,7 +291,7 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
 
   const handleConfirmPurchaseImport = async () => {
     if (!purchasePreview) return;
-    const result = await commitPurchaseImport(purchasePreview.groups);
+    const result = await commitPurchaseImport(purchasePreview.groups, addInventoryTransaction);
     setPurchasePreview(null);
     if (result.failed) {
       setStatus({
@@ -308,7 +309,7 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
 
   const handleConfirmSalesImport = async () => {
     if (!salesPreview) return;
-    const result = await commitSalesImport(salesPreview.groups);
+    const result = await commitSalesImport(salesPreview.groups, addInventoryTransaction);
     setSalesPreview(null);
     if (result.failed) {
       setStatus({
@@ -547,6 +548,18 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
                       ))}
                     </ul>
                   </div>
+                )}
+
+                {isHeaderDetailCategory(activeCategory) && (
+                  <label className="flex items-center space-x-2 text-xs text-slate-700 select-none">
+                    <input
+                      type="checkbox"
+                      checked={addInventoryTransaction}
+                      onChange={(e) => setAddInventoryTransaction(e.target.checked)}
+                      className="rounded border-slate-300"
+                    />
+                    <span>Add inventory transaction (adjust stock) for this import</span>
+                  </label>
                 )}
 
                 <div className="flex space-x-3 justify-end pt-2 border-t border-slate-100">

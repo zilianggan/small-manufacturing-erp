@@ -34,8 +34,9 @@ import ComboBox from './ComboBox';
 import DatePicker from './DatePicker';
 import DateTimePicker from './DateTimePicker';
 import FilterDialog from './FilterDialog';
-import { PageHeader, SectionCard, FilterBar, DataTable } from './shell';
+import { PageHeader, SectionCard, FilterBar, DataTable, ColumnsMenu } from './shell';
 import { useAndroidBackButton } from '../hooks/useAndroidBackButton';
+import { useColumnVisibility } from '../hooks/useColumnVisibility';
 import type { DataTableColumn, FilterChip } from './shell';
 import {
   Button, Badge, Sheet, FormField, fieldInputClassName, ActionsMenu,
@@ -57,7 +58,7 @@ type DisplaySortField = SalesSortField | 'items' | 'priority';
 // 'client' is a joined column (clients.company_name) — PostgREST's
 // order(col, {foreignTable}) doesn't reliably sort by it, so it's sorted
 // client-side below, same trick as 'items'/'priority'.
-const SERVER_SORT_FIELDS: readonly string[] = ['reference', 'date', 'totalAmount', 'productionDue', 'status'];
+const SERVER_SORT_FIELDS: readonly string[] = ['reference', 'date', 'totalAmount', 'productionDue', 'status', 'createdAt', 'updatedAt'];
 
 // SO-tab-only statuses (QUOTATION tab is always a single status, filtering it is a no-op).
 const SO_STATUSES: SalesHeader['status'][] = ['ORDERED', 'IN_PRODUCTION', 'DONE_IN_PRODUCTION', 'PARTIALLY_DELIVERED', 'DELIVERED', 'PARTIALLY_RETURNED', 'RETURNED', 'CANCELLED'];
@@ -302,6 +303,7 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, init
     setAppliedFilters({ dateFrom: monthStart(0), dateTo: monthEnd(0) });
     setActiveQuickRange('thisMonth');
     setSearchQuery(prev => ({ ...prev, [activeTab]: '' }));
+    resetColumns();
   };
 
   // ─── Sort ─────────────────────────────────────────────────────────────
@@ -1080,11 +1082,16 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, init
       key: 'priority', header: 'Priority', sortable: true, className: 'w-[1%] whitespace-nowrap',
       render: (o) => <Badge variant={PRIORITY_META[o.priority].variant}>{PRIORITY_META[o.priority].label}</Badge>,
     },
+    { key: 'createdAt', header: 'Created', sortable: true, className: 'w-32', render: (o) => <span className="text-muted-foreground font-mono text-[11px]">{formatDateTime(o.createdAt)}</span> },
+    { key: 'updatedAt', header: 'Modified', sortable: true, className: 'w-32', render: (o) => <span className="text-muted-foreground font-mono text-[11px]">{formatDateTime(o.updatedAt)}</span> },
     ...(activeTab === 'SO' ? [{
       key: 'status', header: 'Status', sortable: true, className: 'w-[1%] whitespace-nowrap',
       render: (o: SalesHeader) => <Badge variant={STATUS_META[o.status].variant}>{STATUS_META[o.status].label}</Badge>,
     } as DataTableColumn<SalesHeader>] : []),
   ];
+
+  const { hidden: hiddenColumns, toggle: toggleColumn, reset: resetColumns } = useColumnVisibility('columns:sales-orders');
+  const visibleColumns = columns.filter(c => !hiddenColumns.has(c.key));
 
   return (
     <div ref={contentRef} className="flex flex-col gap-5 min-[1440px]:h-full min-[1440px]:min-h-0" id="orders-view">
@@ -1130,7 +1137,12 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, init
               chips={filterChips}
               onOpenFilters={openFilterDialog}
               filterCount={activeFilterCount}
-              right={<Button variant="outline" size="sm" onClick={resetFilters}><RotateCcw className="w-3.5 h-3.5" /> Reset</Button>}
+              right={
+                <>
+                  <ColumnsMenu columns={columns.map(c => ({ key: c.key, label: String(c.header) }))} hidden={hiddenColumns} onToggle={toggleColumn} onSelectAll={resetColumns} />
+                  <Button variant="outline" size="sm" onClick={resetFilters}><RotateCcw className="w-3.5 h-3.5" /> Reset</Button>
+                </>
+              }
             />
             <div className="flex items-center justify-between flex-wrap gap-2">
               <QuickRangePills activeKey={activeQuickRange} onSelect={applyQuickRange} />
@@ -1156,7 +1168,7 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, init
           <SectionCard title={activeTab === 'QUOTATION' ? 'Quotations' : 'Sales Orders'} description={`${displayedOrders.length} record${displayedOrders.length === 1 ? '' : 's'}`} className="flex-1 min-h-0" contentClassName="p-0 flex-1 min-h-0 flex flex-col">
             <div className="flex-1 min-h-0 overflow-auto">
               <DataTable
-                columns={columns}
+                columns={visibleColumns}
                 rows={displayedOrders}
                 rowKey={(o) => o.id}
                 sortField={sortField}

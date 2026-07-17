@@ -16,14 +16,16 @@ import SortMenu, { SortOption } from './SortMenu';
 import InfiniteScrollSentinel from './InfiniteScrollSentinel';
 import { InventoryHistoryTable } from './InventoryListShared';
 import {
-  PageHeader, SectionCard, SplitView, DetailPanel, FilterBar, DataTable, MetricCard,
+  PageHeader, SectionCard, SplitView, DetailPanel, FilterBar, DataTable, MetricCard, ColumnsMenu,
 } from './shell';
 import type { DataTableColumn, FilterChip } from './shell';
 import { Button, Badge, ActionsMenu, Sheet, useToast, useConfirm } from './ui';
 import type { ActionMenuItem } from './ui';
 import { CallAPI } from './UIHelper';
 import { useFadeInOnMount } from '../hooks/useFadeInOnMount';
+import { useColumnVisibility } from '../hooks/useColumnVisibility';
 import { openDataUrlInNewTab } from '../lib/utils';
+import { formatDateTime } from '../utils/date';
 import { debounce } from 'lodash';
 
 const PAGE_SIZE = 20;
@@ -34,6 +36,8 @@ const SORT_OPTIONS: SortOption[] = [
   { value: 'stock', label: 'Stock Qty' },
   { value: 'latestSale', label: 'Latest Sale Date' },
   { value: 'oldestSale', label: 'Oldest Sale Date' },
+  { value: 'createdAt', label: 'Created Date' },
+  { value: 'updatedAt', label: 'Modified Date' },
 ];
 
 interface ProductViewProps {
@@ -366,7 +370,12 @@ export default function ProductView({ onViewSalesOrder, initialProductId, onInit
       key: 'status', header: 'Status', className: 'w-[1%] whitespace-nowrap',
       render: (p) => <Badge variant={p.status === 'INACTIVE' ? 'secondary' : 'success'}>{p.status || 'ACTIVE'}</Badge>,
     },
+    { key: 'createdAt', header: 'Created', sortable: true, className: 'w-32', render: (p) => <span className="text-muted-foreground font-mono text-[11px]">{formatDateTime(p.createdAt)}</span> },
+    { key: 'updatedAt', header: 'Modified', sortable: true, className: 'w-32', render: (p) => <span className="text-muted-foreground font-mono text-[11px]">{formatDateTime(p.updatedAt)}</span> },
   ];
+
+  const { hidden: hiddenColumns, toggle: toggleColumn, reset: resetColumns } = useColumnVisibility('columns:products');
+  const visibleColumns = columns.filter(c => !hiddenColumns.has(c.key));
 
   const selectedCategoryName = selectedProduct?.productCategoryId ? productCategoryMap.get(selectedProduct.productCategoryId) : undefined;
 
@@ -456,7 +465,12 @@ export default function ProductView({ onViewSalesOrder, initialProductId, onInit
                     <Trash2 className="w-3.5 h-3.5" /> Delete {selectedKeys.size}
                   </Button>
                 }
-                right={<SortMenu options={SORT_OPTIONS} sortField={sortField} sortDir={sortDir} onChange={changeSort} />}
+                right={
+                  <>
+                    <SortMenu options={SORT_OPTIONS} sortField={sortField} sortDir={sortDir} onChange={changeSort} />
+                    <ColumnsMenu columns={columns.map(c => ({ key: c.key, label: String(c.header) }))} hidden={hiddenColumns} onToggle={toggleColumn} onSelectAll={resetColumns} />
+                  </>
+                }
               />
               <div className="flex items-center gap-2 flex-wrap">
                 {productCategories.filter(c => c.is_active).map((c) => (
@@ -474,7 +488,7 @@ export default function ProductView({ onViewSalesOrder, initialProductId, onInit
 
             <div ref={tableScrollRef} className="flex-1 min-h-0 overflow-auto">
               <DataTable
-                columns={columns}
+                columns={visibleColumns}
                 rows={products}
                 rowKey={(p) => p.id}
                 sortField={sortField}

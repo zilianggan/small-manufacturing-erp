@@ -42,7 +42,7 @@ const mapTransactionRow = (row: any): InventoryTransaction => {
   };
 };
 
-export type InventoryLedgerSortField = 'date' | 'type' | 'quantity' | 'unitCost';
+export type InventoryLedgerSortField = 'date' | 'type' | 'quantity' | 'unitCost' | 'createdAt';
 export type SortDir = 'asc' | 'desc';
 
 const SORT_COLUMN: Record<InventoryLedgerSortField, string> = {
@@ -50,6 +50,7 @@ const SORT_COLUMN: Record<InventoryLedgerSortField, string> = {
   type: 'transaction_type',
   quantity: 'quantity',
   unitCost: 'unit_cost',
+  createdAt: 'created_at',
 };
 
 // status isn't a column on inventory_transaction — it's whatever the linked purchase/sales header's
@@ -63,6 +64,23 @@ const resolveStatusFilterIds = async (statuses: string[]) => {
     supabase.from('purchase_detail').select('detail_id, purchase_header!inner(status)').in('purchase_header.status', statuses),
     supabase.from('sales_detail').select('detail_id, sales_header!inner(status)').in('sales_header.status', statuses),
     supabase.from('production_material_usage').select('id, sales_detail!inner(sales_header!inner(status))').in('sales_detail.sales_header.status', statuses),
+  ]);
+  return {
+    purchaseDetailIds: (pd.data || []).map((r: any) => r.detail_id),
+    salesDetailIds: (sd.data || []).map((r: any) => r.detail_id),
+    productionMaterialUsageIds: (pmu.data || []).map((r: any) => r.id),
+  };
+};
+
+// Same "resolve ids via the embedded header, then filter" shape as
+// resolveStatusFilterIds above, but matching the search text against
+// purchase_no/sales_no instead of status — the ledger row itself has no
+// reference-no column, only the FKs to the header that carries one.
+const resolveReferenceNoIds = async (q: string) => {
+  const [pd, sd, pmu] = await Promise.all([
+    supabase.from('purchase_detail').select('detail_id, purchase_header!inner(purchase_no)').ilike('purchase_header.purchase_no', `%${q}%`),
+    supabase.from('sales_detail').select('detail_id, sales_header!inner(sales_no)').ilike('sales_header.sales_no', `%${q}%`),
+    supabase.from('production_material_usage').select('id, sales_detail!inner(sales_header!inner(sales_no))').ilike('sales_detail.sales_header.sales_no', `%${q}%`),
   ]);
   return {
     purchaseDetailIds: (pd.data || []).map((r: any) => r.detail_id),
@@ -107,23 +125,29 @@ export const getInventoryTransactions = async (params: {
 
   const q = search.trim();
   if (q) {
-    // inventory_transaction has no denormalized name column, so search is
-    // done by first resolving matching material/product ids via their own
-    // services, then filtering the ledger by those ids.
-    const [matchedMaterials, matchedProducts] = await Promise.all([
+    // inventory_transaction has no denormalized name/reference column, so
+    // search is done by first resolving matching material/product ids and
+    // matching purchase_no/sales_no ids via their own lookups, then
+    // filtering the ledger by all of those ids OR'd together.
+    const [matchedMaterials, matchedProducts, refIds] = await Promise.all([
       getMaterials(q),
       getProducts(q),
+      resolveReferenceNoIds(q),
     ]);
     const searchMaterialIds = matchedMaterials.map(m => m.id);
     const searchProductIds = matchedProducts.map(p => p.id);
 
-    if (searchMaterialIds.length === 0 && searchProductIds.length === 0) {
+    if (searchMaterialIds.length === 0 && searchProductIds.length === 0
+      && refIds.purchaseDetailIds.length === 0 && refIds.salesDetailIds.length === 0 && refIds.productionMaterialUsageIds.length === 0) {
       return { rows: [], hasMore: false, totalCount: 0 };
     }
 
     const orParts: string[] = [];
     if (searchMaterialIds.length > 0) orParts.push(`material_id.in.(${searchMaterialIds.join(',')})`);
     if (searchProductIds.length > 0) orParts.push(`product_id.in.(${searchProductIds.join(',')})`);
+    if (refIds.purchaseDetailIds.length > 0) orParts.push(`purchase_detail_id.in.(${refIds.purchaseDetailIds.join(',')})`);
+    if (refIds.salesDetailIds.length > 0) orParts.push(`sales_detail_id.in.(${refIds.salesDetailIds.join(',')})`);
+    if (refIds.productionMaterialUsageIds.length > 0) orParts.push(`production_material_usage_id.in.(${refIds.productionMaterialUsageIds.join(',')})`);
     query = query.or(orParts.join(','));
   }
 

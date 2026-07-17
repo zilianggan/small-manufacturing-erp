@@ -5,7 +5,7 @@ import { cn } from '../../lib/utils';
 export const Tabs = RadixTabs.Root;
 
 export function TabsList({ className, ...props }: React.ComponentProps<typeof RadixTabs.List>) {
-  return <RadixTabs.List className={cn('inline-flex items-center gap-1 rounded-xl bg-secondary p-1', className)} {...props} />;
+  return <RadixTabs.List className={cn('flex items-center gap-1 rounded-xl bg-secondary p-1 max-w-full overflow-x-auto', className)} {...props} />;
 }
 
 export function TabsTrigger({ className, ...props }: React.ComponentProps<typeof RadixTabs.Trigger>) {

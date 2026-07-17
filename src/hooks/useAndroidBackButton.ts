@@ -11,10 +11,29 @@ App.addListener('backButton', () => {
   else App.exitApp();
 });
 
+// ponytail: browser back button/gesture — Electron shell has no back gesture, so skip there.
+const isBrowser = !navigator.userAgent.includes('Electron');
+if (isBrowser) {
+  window.addEventListener('popstate', () => {
+    if (activeHandler) activeHandler();
+  });
+}
+
 export function useAndroidBackButton(active: boolean, onBack: () => void) {
   useEffect(() => {
     if (!active) return;
     activeHandler = onBack;
     return () => { if (activeHandler === onBack) activeHandler = null; };
   }, [active, onBack]);
+
+  // Push a history entry while the detail is open so browser back has
+  // something to pop; if it closes any other way, pop that entry back off.
+  useEffect(() => {
+    if (!isBrowser) return;
+    if (active) {
+      window.history.pushState({ detail: true }, '');
+    } else if (window.history.state?.detail) {
+      window.history.back();
+    }
+  }, [active]);
 }

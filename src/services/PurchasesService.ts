@@ -72,7 +72,7 @@ const mapPurchaseHeaderRow = (row: any): PurchaseHeader => ({
   updatedAt: row.updated_at,
 });
 
-export type PurchaseSortField = 'reference' | 'supplier' | 'date' | 'totalCost' | 'salesNo' | 'status';
+export type PurchaseSortField = 'reference' | 'supplier' | 'date' | 'totalCost' | 'salesNo' | 'status' | 'createdAt' | 'updatedAt';
 export type SortDir = 'asc' | 'desc';
 
 export interface PurchaseFilters {
@@ -146,6 +146,12 @@ export const getPurchases = async (
       break;
     case 'totalCost':
       query = query.order('total_price', { ascending: sortDir === 'asc' });
+      break;
+    case 'createdAt':
+      query = query.order('created_at', { ascending: sortDir === 'asc' });
+      break;
+    case 'updatedAt':
+      query = query.order('updated_at', { ascending: sortDir === 'asc' });
       break;
     case 'date':
     default:

@@ -10,6 +10,7 @@ export type { TimelineEntry } from './TimelineCard';
 export { NotificationCard } from './NotificationCard';
 export { DataTable } from './DataTable';
 export type { DataTableColumn } from './DataTable';
+export { ColumnsMenu } from './ColumnsMenu';
 export { FilterBar } from './FilterBar';
 export type { FilterChip } from './FilterBar';
 export { SplitView } from './SplitView';

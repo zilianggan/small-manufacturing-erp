@@ -18,14 +18,16 @@ import SortMenu, { SortOption } from './SortMenu';
 import InfiniteScrollSentinel from './InfiniteScrollSentinel';
 import { InventoryHistoryTable } from './InventoryListShared';
 import {
-  PageHeader, SectionCard, SplitView, DetailPanel, FilterBar, DataTable, MetricCard,
+  PageHeader, SectionCard, SplitView, DetailPanel, FilterBar, DataTable, MetricCard, ColumnsMenu,
 } from './shell';
 import type { DataTableColumn, FilterChip } from './shell';
 import { Button, Badge, ActionsMenu, Sheet, useToast, useConfirm } from './ui';
 import type { ActionMenuItem } from './ui';
 import { CallAPI } from './UIHelper';
 import { useFadeInOnMount } from '../hooks/useFadeInOnMount';
+import { useColumnVisibility } from '../hooks/useColumnVisibility';
 import { openDataUrlInNewTab } from '../lib/utils';
+import { formatDateTime } from '../utils/date';
 import { debounce } from 'lodash';
 
 const PAGE_SIZE = 20;
@@ -37,6 +39,8 @@ const SORT_OPTIONS: SortOption[] = [
   { value: 'restock', label: 'Restock Urgency' },
   { value: 'latestPurchase', label: 'Latest Purchase Date' },
   { value: 'oldestPurchase', label: 'Oldest Purchase Date' },
+  { value: 'createdAt', label: 'Created Date' },
+  { value: 'updatedAt', label: 'Modified Date' },
 ];
 
 const MATERIAL_TYPE_LABEL: Record<MaterialType, string> = {
@@ -402,7 +406,12 @@ export default function MaterialView({ onViewPurchaseOrder, onViewSalesOrder, on
       key: 'status', header: 'Status', className: 'w-[1%] whitespace-nowrap',
       render: (m) => <Badge variant={m.status === 'INACTIVE' ? 'secondary' : 'success'}>{m.status || 'ACTIVE'}</Badge>,
     },
+    { key: 'createdAt', header: 'Created', sortable: true, className: 'w-32', render: (m) => <span className="text-muted-foreground font-mono text-[11px]">{formatDateTime(m.createdAt)}</span> },
+    { key: 'updatedAt', header: 'Modified', sortable: true, className: 'w-32', render: (m) => <span className="text-muted-foreground font-mono text-[11px]">{formatDateTime(m.updatedAt)}</span> },
   ];
+
+  const { hidden: hiddenColumns, toggle: toggleColumn, reset: resetColumns } = useColumnVisibility('columns:materials');
+  const visibleColumns = columns.filter(c => !hiddenColumns.has(c.key));
 
   const belowMinimum = selectedMaterial ? selectedMaterial.quantity < selectedMaterial.minimumStock : false;
   const selectedCategoryName = selectedMaterial?.materialCategoryId ? materialCategoryMap.get(selectedMaterial.materialCategoryId) : undefined;
@@ -539,7 +548,12 @@ export default function MaterialView({ onViewPurchaseOrder, onViewSalesOrder, on
                     <Trash2 className="w-3.5 h-3.5" /> Delete {selectedKeys.size}
                   </Button>
                 }
-                right={<SortMenu options={SORT_OPTIONS} sortField={sortField} sortDir={sortDir} onChange={changeSort} />}
+                right={
+                  <>
+                    <SortMenu options={SORT_OPTIONS} sortField={sortField} sortDir={sortDir} onChange={changeSort} />
+                    <ColumnsMenu columns={columns.map(c => ({ key: c.key, label: String(c.header) }))} hidden={hiddenColumns} onToggle={toggleColumn} onSelectAll={resetColumns} />
+                  </>
+                }
               />
               <div className="flex items-center gap-2 flex-wrap">
                 {materialCategories.filter(c => c.is_active).map((c) => (
@@ -564,7 +578,7 @@ export default function MaterialView({ onViewPurchaseOrder, onViewSalesOrder, on
 
             <div ref={tableScrollRef} className="flex-1 min-h-0 overflow-auto">
               <DataTable
-                columns={columns}
+                columns={visibleColumns}
                 rows={materials}
                 rowKey={(m) => m.id}
                 sortField={sortField}

@@ -532,8 +532,9 @@ export interface PurchaseImportCommitResult {
 // its PURCHASE inventory_transaction (the update_material_stock() trigger then
 // raises material.quantity) and received_quantity = quantity, which also keeps
 // receivePurchaseOrder's idempotency guard from double-counting if the order is
-// ever "received" again from the UI.
-export const commitPurchaseImport = async (groups: PurchaseImportGroup[]): Promise<PurchaseImportCommitResult> => {
+// ever "received" again from the UI. Pass addInventoryTransaction=false to skip
+// the stock movement (e.g. stock was already accounted for elsewhere).
+export const commitPurchaseImport = async (groups: PurchaseImportGroup[], addInventoryTransaction: boolean = true): Promise<PurchaseImportCommitResult> => {
   const succeeded: string[] = [];
 
   for (let i = 0; i < groups.length; i += COMMIT_CHUNK_SIZE) {
@@ -579,21 +580,23 @@ export const commitPurchaseImport = async (groups: PurchaseImportGroup[]): Promi
       return { succeeded, failed: { purchaseNo: chunk[0].purchaseNo, message: detailError.message } };
     }
 
-    const { error: txError } = await supabase.from('inventory_transaction').insert(
-      lines.map((d, idx) => ({
-        id: generateId(),
-        transaction_type: 'PURCHASE',
-        quantity: d.quantity,
-        unit_cost: d.unitCost,
-        material_id: d.materialId,
-        purchase_detail_id: (insertedDetails || [])[idx]?.detail_id,
-        transaction_date: new Date(d.orderDate).toISOString(),
-      }))
-    );
-    if (txError) {
-      console.error('commitPurchaseImport(inventory_transaction)', txError);
-      await supabase.from('purchase_header').delete().in('id', ids);
-      return { succeeded, failed: { purchaseNo: chunk[0].purchaseNo, message: txError.message } };
+    if (addInventoryTransaction) {
+      const { error: txError } = await supabase.from('inventory_transaction').insert(
+        lines.map((d, idx) => ({
+          id: generateId(),
+          transaction_type: 'PURCHASE',
+          quantity: d.quantity,
+          unit_cost: d.unitCost,
+          material_id: d.materialId,
+          purchase_detail_id: (insertedDetails || [])[idx]?.detail_id,
+          transaction_date: new Date(d.orderDate).toISOString(),
+        }))
+      );
+      if (txError) {
+        console.error('commitPurchaseImport(inventory_transaction)', txError);
+        await supabase.from('purchase_header').delete().in('id', ids);
+        return { succeeded, failed: { purchaseNo: chunk[0].purchaseNo, message: txError.message } };
+      }
     }
 
     succeeded.push(...chunk.map(g => g.purchaseNo));
@@ -750,7 +753,8 @@ export interface SalesImportCommitResult {
 }
 
 // Chunked write — see commitPurchaseImport for the batching rationale.
-export const commitSalesImport = async (groups: SalesImportGroup[]): Promise<SalesImportCommitResult> => {
+// Pass addInventoryTransaction=false to skip the SALES stock movement below.
+export const commitSalesImport = async (groups: SalesImportGroup[], addInventoryTransaction: boolean = true): Promise<SalesImportCommitResult> => {
   const succeeded: string[] = [];
 
   for (let i = 0; i < groups.length; i += COMMIT_CHUNK_SIZE) {
@@ -811,19 +815,21 @@ export const commitSalesImport = async (groups: SalesImportGroup[]): Promise<Sal
     // rows to link against are already inserted above, so a future pass could
     // wire this up. Until then imported rows carry no order link and show in
     // the ledger as product movements only.
-    const { error: txError } = await supabase.from('inventory_transaction').insert(
-      chunk.flatMap(group => group.details.map(d => ({
-        id: generateId(),
-        transaction_type: 'SALES',
-        quantity: -d.quantity,
-        product_id: d.productId,
-        transaction_date: new Date(group.orderDate).toISOString(),
-      })))
-    );
-    if (txError) {
-      console.error('commitSalesImport(inventory_transaction)', txError);
-      await supabase.from('sales_header').delete().in('id', ids);
-      return { succeeded, failed: { salesNo: chunk[0].salesNo, message: txError.message } };
+    if (addInventoryTransaction) {
+      const { error: txError } = await supabase.from('inventory_transaction').insert(
+        chunk.flatMap(group => group.details.map(d => ({
+          id: generateId(),
+          transaction_type: 'SALES',
+          quantity: -d.quantity,
+          product_id: d.productId,
+          transaction_date: new Date(group.orderDate).toISOString(),
+        })))
+      );
+      if (txError) {
+        console.error('commitSalesImport(inventory_transaction)', txError);
+        await supabase.from('sales_header').delete().in('id', ids);
+        return { succeeded, failed: { salesNo: chunk[0].salesNo, message: txError.message } };
+      }
     }
 
     succeeded.push(...chunk.map(g => g.salesNo));

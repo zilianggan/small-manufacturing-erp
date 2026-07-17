@@ -282,6 +282,10 @@ BEGIN
         WHEN 'latest_purchase:desc' THEN 'pdate.latest_date DESC NULLS LAST'
         WHEN 'oldest_purchase:asc' THEN 'pdate.oldest_date ASC NULLS LAST'
         WHEN 'oldest_purchase:desc' THEN 'pdate.oldest_date DESC NULLS LAST'
+        WHEN 'created_at:asc' THEN 'm.created_at ASC'
+        WHEN 'created_at:desc' THEN 'm.created_at DESC'
+        WHEN 'updated_at:asc' THEN 'm.updated_at ASC'
+        WHEN 'updated_at:desc' THEN 'm.updated_at DESC'
         ELSE 'm.name ASC'
     END;
 
@@ -357,6 +361,10 @@ BEGIN
         WHEN 'latest_sale:desc' THEN 'sdate.latest_date DESC NULLS LAST'
         WHEN 'oldest_sale:asc' THEN 'sdate.oldest_date ASC NULLS LAST'
         WHEN 'oldest_sale:desc' THEN 'sdate.oldest_date DESC NULLS LAST'
+        WHEN 'created_at:asc' THEN 'p.created_at ASC'
+        WHEN 'created_at:desc' THEN 'p.created_at DESC'
+        WHEN 'updated_at:asc' THEN 'p.updated_at ASC'
+        WHEN 'updated_at:desc' THEN 'p.updated_at DESC'
         ELSE 'p.name ASC'
     END;
 

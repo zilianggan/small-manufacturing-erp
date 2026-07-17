@@ -10,6 +10,11 @@ Version 1.0.5
 - Change date picker and time picker design
 - Dashboard arrangement
 - Add whatsapp quotation template
+- Add columns to show in inventory listing, sales listing, purchase listing
+- Add the control for browser back button to back to previous page
+- Add checkbox for inventory transaction control in import hub
+- Add created date time and modified date time columns in all table
+- Add a cross in search input
 
 Version 1.0.4
 --------------------
