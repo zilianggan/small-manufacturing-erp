@@ -15,3 +15,6 @@ export async function openDataUrlInNewTab(dataUrl: string): Promise<void> {
   const blobUrl = URL.createObjectURL(blob);
   window.open(blobUrl, '_blank');
 }
+
+// Phone numbers are stored E.164 (+60123456789) but wa.me wants digits only.
+export const waLink = (phone: string): string => `https://wa.me/${phone.replace(/^\+/, '')}`;

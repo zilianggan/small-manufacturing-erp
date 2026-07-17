@@ -13,10 +13,10 @@ import { getVendors, getClients, getContacts } from "./ContactsService";
 import { getMaterials, getMaterialCategories } from "./MaterialService";
 import { getProducts, getProductCategories } from "./ProductService";
 import { getPurchases } from "./PurchasesService";
-import { getSalesOrders } from "./OrdersService";
+import { getSalesOrders, getProductStock, NewMaterialUsage } from "./OrdersService";
 import { getInventoryTransactions } from "./InventoryTransactionService";
 import { nowIso } from "../utils/date";
-import { isValidEmail, isValidPhone } from "../utils/validators";
+import { isValidEmail, isValidPhone, normalizeEmail, toE164Phone } from "../utils/validators";
 import { Vendor, Client, Contact, Material, Product, Attachment, InventoryTransaction } from "../types";
 
 // Groups per DB round-trip pair (header insert + detail insert) for
@@ -32,6 +32,18 @@ const COMMIT_CHUNK_SIZE = 25;
 const attachmentName = (r: { attachments?: Attachment[] }): string => r.attachments?.[0]?.name || '';
 const attachmentLink = (r: { attachments?: Attachment[] }): string | undefined => r.attachments?.[0]?.dataUrl;
 
+// A date-formatted Excel cell arrives here as a JS Date (the modal reads the
+// workbook with cellDates: true); a typed/manual entry arrives as a plain
+// string. Local calendar components (not toISOString, which is UTC) avoid a
+// day-shift for timezones ahead of UTC around midnight.
+const excelCellToDateString = (val: unknown): string => {
+  if (val instanceof Date) {
+    const y = val.getFullYear(), m = String(val.getMonth() + 1).padStart(2, '0'), d = String(val.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  return String(val || '').trim();
+};
+
 export interface ImportColumn {
   key: string;
   label: string;
@@ -41,6 +53,11 @@ export interface ImportColumn {
 export interface FlatImportResult<T> {
   records: T[];
   errors: ImportRowError[];
+  // Material/Product only: a row's initial-quantity value becomes an
+  // ADJUSTMENT inventory_transaction at commit time — keeps
+  // update_material_stock() as the only writer of the quantity column
+  // instead of setting it directly (see MATERIAL_COLUMNS/PRODUCT_COLUMNS).
+  stockAdjustments?: { itemId: string; quantity: number }[];
 }
 
 export const VENDOR_COLUMNS: ImportColumn[] = [
@@ -84,7 +101,11 @@ export const validateVendorsImport = async (rows: Record<string, any>[]): Promis
     if (!rowValid) return;
 
     const match = byName.get(companyName.toLowerCase());
-    records.push({ id: match?.id || generateId(), attachments: match?.attachments, companyName, email, officeNo, address: String(raw.address || ''), description: String(raw.description || '') });
+    records.push({
+      id: match?.id || generateId(), attachments: match?.attachments, companyName,
+      email: email ? normalizeEmail(email) : email, officeNo: officeNo ? toE164Phone(officeNo) : officeNo,
+      address: String(raw.address || ''), description: String(raw.description || ''),
+    });
   });
 
   return { records, errors };
@@ -117,7 +138,11 @@ export const validateClientsImport = async (rows: Record<string, any>[]): Promis
     if (!rowValid) return;
 
     const match = byName.get(companyName.toLowerCase());
-    records.push({ id: match?.id || generateId(), attachments: match?.attachments, companyName, email, officeNo, address: String(raw.address || ''), description: String(raw.description || '') });
+    records.push({
+      id: match?.id || generateId(), attachments: match?.attachments, companyName,
+      email: email ? normalizeEmail(email) : email, officeNo: officeNo ? toE164Phone(officeNo) : officeNo,
+      address: String(raw.address || ''), description: String(raw.description || ''),
+    });
   });
 
   return { records, errors };
@@ -178,8 +203,8 @@ export const validateContactsImport = async (rows: Record<string, any>[]): Promi
     records.push({
       id: match?.id || generateId(),
       fullName,
-      email,
-      contactNo,
+      email: email ? normalizeEmail(email) : email,
+      contactNo: contactNo ? toE164Phone(contactNo) : contactNo,
       vendorId: type === 'VENDOR' ? owner.id : undefined,
       clientId: type === 'CLIENT' ? owner.id : undefined,
       attachments: match?.attachments,
@@ -232,6 +257,7 @@ export const MATERIAL_COLUMNS: ImportColumn[] = [
   { key: 'description', label: 'Description', required: false },
   { key: 'minimumStock', label: 'Minimum Stock', required: false },
   { key: 'category', label: 'Category', required: false },
+  { key: 'quantity', label: 'Quantity', required: false },
 ];
 
 export const PRODUCT_COLUMNS: ImportColumn[] = [
@@ -241,6 +267,7 @@ export const PRODUCT_COLUMNS: ImportColumn[] = [
   { key: 'description', label: 'Description', required: false },
   { key: 'sellingPrice', label: 'Selling Price', required: false },
   { key: 'category', label: 'Category', required: false },
+  { key: 'quantity', label: 'Quantity', required: false },
 ];
 
 // Merge-by-(name+code) — mirrors the DB's own UNIQUE(name, code, dimension)
@@ -254,6 +281,7 @@ export const validateMaterialsImport = async (rows: Record<string, any>[]): Prom
   const seenInFile = new Set<string>();
   const errors: ImportRowError[] = [];
   const records: Material[] = [];
+  const stockAdjustments: { itemId: string; quantity: number }[] = [];
 
   rows.forEach((raw, index) => {
     const rowNum = index + 1;
@@ -280,8 +308,9 @@ export const validateMaterialsImport = async (rows: Record<string, any>[]): Prom
 
     const materialType = VALID_MATERIAL_TYPES.includes(raw.materialType) ? raw.materialType : undefined;
     const match = byNameCode.get(`${name.toLowerCase()}::${code.toLowerCase()}`);
+    const id = match?.id || generateId();
     records.push({
-      id: match?.id || generateId(),
+      id,
       name,
       code,
       materialType,
@@ -293,9 +322,12 @@ export const validateMaterialsImport = async (rows: Record<string, any>[]): Prom
       minimumStock: Number(raw.minimumStock) || 0,
       materialCategoryId: categoryId,
     });
+
+    const quantity = Number(raw.quantity) || 0;
+    if (quantity > 0) stockAdjustments.push({ itemId: id, quantity });
   });
 
-  return { records, errors };
+  return { records, errors, stockAdjustments };
 };
 
 export const validateProductsImport = async (rows: Record<string, any>[]): Promise<FlatImportResult<Product>> => {
@@ -305,6 +337,7 @@ export const validateProductsImport = async (rows: Record<string, any>[]): Promi
   const seenInFile = new Set<string>();
   const errors: ImportRowError[] = [];
   const records: Product[] = [];
+  const stockAdjustments: { itemId: string; quantity: number }[] = [];
 
   rows.forEach((raw, index) => {
     const rowNum = index + 1;
@@ -330,8 +363,9 @@ export const validateProductsImport = async (rows: Record<string, any>[]): Promi
     if (!rowValid) return;
 
     const match = byNameCode.get(`${name.toLowerCase()}::${code.toLowerCase()}`);
+    const id = match?.id || generateId();
     records.push({
-      id: match?.id || generateId(),
+      id,
       name,
       code,
       dimension: String(raw.dimension || ''),
@@ -341,9 +375,12 @@ export const validateProductsImport = async (rows: Record<string, any>[]): Promi
       sellingPrice: Number(raw.sellingPrice) || 0,
       productCategoryId: categoryId,
     });
+
+    const quantity = Number(raw.quantity) || 0;
+    if (quantity > 0) stockAdjustments.push({ itemId: id, quantity });
   });
 
-  return { records, errors };
+  return { records, errors, stockAdjustments };
 };
 
 export const buildMaterialExportRows = (materials: Material[], categories: { id: string; name: string }[]) => {
@@ -386,7 +423,7 @@ export const PURCHASE_COLUMNS: ImportColumn[] = [
   { key: 'purchaseNo', label: 'Purchase No', required: true },
   { key: 'vendorName', label: 'Vendor', required: true },
   { key: 'orderDate', label: 'Order Date', required: true },
-  { key: 'materialName', label: 'Material', required: true },
+  { key: 'materialCode', label: 'Material Code', required: true },
   { key: 'quantity', label: 'Quantity', required: true },
   { key: 'unitCost', label: 'Unit Cost', required: true },
 ];
@@ -395,7 +432,7 @@ export interface PurchaseImportRow {
   purchaseNo: string;
   vendorName: string;
   orderDate: string;
-  materialName: string;
+  materialCode: string;
   quantity: number;
   unitCost: number;
 }
@@ -425,7 +462,7 @@ export const validatePurchaseImport = async (rows: PurchaseImportRow[]): Promise
     [...existingQuotations, ...existingOrders].map(p => p.purchaseNo.toLowerCase())
   );
   const vendorByName = new Map(vendors.map(v => [v.companyName.toLowerCase(), v]));
-  const materialByName = new Map(materials.map(m => [m.name.toLowerCase(), m]));
+  const materialByCode = new Map(materials.filter(m => m.code).map(m => [m.code!.toLowerCase(), m]));
 
   const errors: ImportRowError[] = [];
   const groupsByNo = new Map<string, PurchaseImportGroup>();
@@ -442,10 +479,10 @@ export const validatePurchaseImport = async (rows: PurchaseImportRow[]): Promise
     const vendor = vendorByName.get(String(raw.vendorName || '').trim().toLowerCase());
     if (!vendor) errors.push({ row: rowNum, message: `Vendor "${raw.vendorName}" not found.` });
 
-    const material = materialByName.get(String(raw.materialName || '').trim().toLowerCase());
-    if (!material) errors.push({ row: rowNum, message: `Material "${raw.materialName}" not found.` });
+    const material = materialByCode.get(String(raw.materialCode || '').trim().toLowerCase());
+    if (!material) errors.push({ row: rowNum, message: `Material code "${raw.materialCode}" not found.` });
 
-    const orderDate = String(raw.orderDate || '').trim();
+    const orderDate = excelCellToDateString(raw.orderDate);
     const orderDateValid = !!orderDate && !isNaN(Date.parse(orderDate));
     if (!orderDateValid) errors.push({ row: rowNum, message: `Order Date "${raw.orderDate}" is not a valid date.` });
 
@@ -589,7 +626,7 @@ export const SALES_COLUMNS: ImportColumn[] = [
   { key: 'clientName', label: 'Client', required: true },
   { key: 'orderDate', label: 'Order Date', required: true },
   { key: 'deliveryDate', label: 'Delivery Date', required: false },
-  { key: 'productName', label: 'Product', required: true },
+  { key: 'productCode', label: 'Product Code', required: true },
   { key: 'quantity', label: 'Quantity', required: true },
   { key: 'unitPrice', label: 'Unit Price', required: true },
   { key: 'remark', label: 'Remark', required: false },
@@ -600,7 +637,7 @@ export interface SalesImportRow {
   clientName: string;
   orderDate: string;
   deliveryDate?: string;
-  productName: string;
+  productCode: string;
   quantity: number;
   unitPrice: number;
   remark?: string;
@@ -629,7 +666,21 @@ export const validateSalesImport = async (rows: SalesImportRow[]): Promise<Sales
     [...existingQuotations, ...existingOrders].map(s => s.salesNo.toLowerCase())
   );
   const clientByName = new Map(clients.map(c => [c.companyName.toLowerCase(), c]));
-  const productByName = new Map(products.map(p => [p.name.toLowerCase(), p]));
+  const productByCode = new Map(products.filter(p => p.code).map(p => [p.code!.toLowerCase(), p]));
+  // getProducts() doesn't populate quantity (it's only aggregated by
+  // getProductsPage()) — fetch live stock the same way startProduction's
+  // checkProductionStock does.
+  const productStock = await getProductStock(products.map(p => p.id));
+
+  // Lands as DELIVERED (see commitSalesImport below), so it debits stock the
+  // moment it's imported — sum demand per product across the whole file
+  // (it can span multiple Sales No) before allowing any of it through.
+  const demandByProduct = new Map<string, number>();
+  rows.forEach(raw => {
+    const product = productByCode.get(String(raw.productCode || '').trim().toLowerCase());
+    const quantity = Number(raw.quantity);
+    if (product && quantity > 0) demandByProduct.set(product.id, (demandByProduct.get(product.id) || 0) + quantity);
+  });
 
   const errors: ImportRowError[] = [];
   const groupsByNo = new Map<string, SalesImportGroup>();
@@ -646,10 +697,20 @@ export const validateSalesImport = async (rows: SalesImportRow[]): Promise<Sales
     const client = clientByName.get(String(raw.clientName || '').trim().toLowerCase());
     if (!client) errors.push({ row: rowNum, message: `Client "${raw.clientName}" not found.` });
 
-    const product = productByName.get(String(raw.productName || '').trim().toLowerCase());
-    if (!product) errors.push({ row: rowNum, message: `Product "${raw.productName}" not found.` });
+    const product = productByCode.get(String(raw.productCode || '').trim().toLowerCase());
+    if (!product) errors.push({ row: rowNum, message: `Product code "${raw.productCode}" not found.` });
 
-    const orderDate = String(raw.orderDate || '').trim();
+    let stockSufficient = true;
+    if (product) {
+      const available = productStock[product.id] || 0;
+      const totalDemand = demandByProduct.get(product.id) || 0;
+      if (totalDemand > available) {
+        errors.push({ row: rowNum, message: `Insufficient stock for Product "${product.name}": ${available} available, ${totalDemand} requested across this file.` });
+        stockSufficient = false;
+      }
+    }
+
+    const orderDate = excelCellToDateString(raw.orderDate);
     const orderDateValid = !!orderDate && !isNaN(Date.parse(orderDate));
     if (!orderDateValid) errors.push({ row: rowNum, message: `Order Date "${raw.orderDate}" is not a valid date.` });
 
@@ -666,13 +727,13 @@ export const validateSalesImport = async (rows: SalesImportRow[]): Promise<Sales
     }
     seenInFile.add(salesNoKey);
 
-    if (!client || !product || !orderDateValid || !(quantity > 0) || !(unitPrice >= 0) || isDuplicateSalesNo) return;
+    if (!client || !product || !stockSufficient || !orderDateValid || !(quantity > 0) || !(unitPrice >= 0) || isDuplicateSalesNo) return;
 
     let group = groupsByNo.get(salesNoKey);
     if (!group) {
       group = {
         salesNo, clientId: client.id, clientName: client.companyName, orderDate,
-        deliveryDate: String(raw.deliveryDate || '').trim() || undefined, details: [],
+        deliveryDate: excelCellToDateString(raw.deliveryDate) || undefined, details: [],
       };
       groupsByNo.set(salesNoKey, group);
     }
@@ -831,7 +892,7 @@ export const validateInventoryImport = async (rows: Record<string, any>[]): Prom
 
     if (!rowValid || !item) return;
 
-    const date = String(raw.date || '').trim();
+    const date = excelCellToDateString(raw.date);
     const transactionDate = date && !isNaN(Date.parse(date)) ? new Date(date).toISOString() : nowIso();
 
     records.push({
@@ -907,6 +968,138 @@ export const getAllExportSheets = async () => {
   };
 };
 
+export const PRODUCTION_MATERIAL_COLUMNS: ImportColumn[] = [
+  { key: 'salesNo', label: 'Sales No', required: true },
+  { key: 'productCode', label: 'Product Code', required: true },
+  { key: 'materialCode', label: 'Material Code', required: true },
+  { key: 'plannedQuantity', label: 'Planned Quantity', required: true },
+  { key: 'remark', label: 'Remark', required: false },
+];
+
+// Sales No + Product Code resolve an existing sales_detail line — this
+// import only ADDS material usage to a sales order that already exists, it
+// never creates sales orders itself. Unlike the live "Add Material" UI
+// action (OrdersService.addMaterialUsage, planning-only, no stock effect),
+// this lands as already-consumed — same backfill semantics as
+// commitPurchaseImport/commitSalesImport — so it debits material.quantity
+// immediately (see commitProductionMaterialsImport) and must be blocked if
+// stock can't cover it. Consumption Mode is deliberately not a column: it's
+// a Material-level setting (see ProductionMaterialUsage in types.ts) that
+// nothing writes per-usage anymore.
+export const validateProductionMaterialsImport = async (rows: Record<string, any>[]): Promise<FlatImportResult<NewMaterialUsage>> => {
+  const [quotations, orders, materials] = await Promise.all([
+    getSalesOrders('QUOTATION', ''), getSalesOrders('SO', ''), getMaterials(''),
+  ]);
+  const detailByKey = new Map<string, string>(); // `${salesNo}::${productCode}` -> detailId
+  [...quotations, ...orders].forEach(header => {
+    header.details.forEach(detail => {
+      if (!detail.productCode) return;
+      detailByKey.set(`${header.salesNo.toLowerCase()}::${detail.productCode.toLowerCase()}`, detail.detailId);
+    });
+  });
+  const materialByCode = new Map(materials.filter(m => m.code).map(m => [m.code!.toLowerCase(), m]));
+
+  // Sum demand per material across the whole file (it can span multiple
+  // Sales No/Product Code lines) before allowing any of it through.
+  const demandByMaterial = new Map<string, number>();
+  rows.forEach(raw => {
+    const material = materialByCode.get(String(raw.materialCode || '').trim().toLowerCase());
+    const plannedQuantity = Number(raw.plannedQuantity);
+    if (material && plannedQuantity > 0) demandByMaterial.set(material.id, (demandByMaterial.get(material.id) || 0) + plannedQuantity);
+  });
+
+  const errors: ImportRowError[] = [];
+  const records: NewMaterialUsage[] = [];
+  const seenInFile = new Set<string>();
+
+  rows.forEach((raw, index) => {
+    const rowNum = index + 1;
+    const salesNo = String(raw.salesNo || '').trim();
+    const productCode = String(raw.productCode || '').trim();
+    const materialCode = String(raw.materialCode || '').trim();
+    const plannedQuantity = Number(raw.plannedQuantity);
+    let rowValid = true;
+
+    if (!salesNo) { errors.push({ row: rowNum, message: "Missing 'Sales No'." }); rowValid = false; }
+    if (!productCode) { errors.push({ row: rowNum, message: "Missing 'Product Code'." }); rowValid = false; }
+
+    const detailId = salesNo && productCode ? detailByKey.get(`${salesNo.toLowerCase()}::${productCode.toLowerCase()}`) : undefined;
+    if (salesNo && productCode && !detailId) {
+      errors.push({ row: rowNum, message: `Sales No "${salesNo}" with Product Code "${productCode}" not found.` });
+      rowValid = false;
+    }
+
+    if (!materialCode) { errors.push({ row: rowNum, message: "Missing 'Material Code'." }); rowValid = false; }
+    const material = materialCode ? materialByCode.get(materialCode.toLowerCase()) : undefined;
+    if (materialCode && !material) { errors.push({ row: rowNum, message: `Material code "${materialCode}" not found.` }); rowValid = false; }
+
+    if (material) {
+      const totalDemand = demandByMaterial.get(material.id) || 0;
+      if (totalDemand > material.quantity) {
+        errors.push({ row: rowNum, message: `Insufficient stock for Material "${material.name}": ${material.quantity} available, ${totalDemand} requested across this file.` });
+        rowValid = false;
+      }
+    }
+
+    if (!(plannedQuantity > 0)) { errors.push({ row: rowNum, message: 'Planned Quantity must be greater than zero.' }); rowValid = false; }
+
+    if (salesNo && productCode && materialCode) {
+      const key = `${salesNo.toLowerCase()}::${productCode.toLowerCase()}::${materialCode.toLowerCase()}`;
+      if (seenInFile.has(key)) { errors.push({ row: rowNum, message: `Duplicate Sales No "${salesNo}" + Product "${productCode}" + Material "${materialCode}" in file.` }); rowValid = false; }
+      seenInFile.add(key);
+    }
+
+    if (!rowValid || !detailId || !material) return;
+
+    records.push({ detailId, materialId: material.id, plannedQuantity, remark: raw.remark ? String(raw.remark) : undefined });
+  });
+
+  return { records, errors };
+};
+
+// Lands as already-consumed: inserts the usage row (actual_quantity = planned,
+// same reasoning as commitPurchaseImport's received_quantity/commitSalesImport's
+// delivered_quantity — these rows describe something that already happened, not
+// a future reservation) AND immediately debits material.quantity via a
+// PRODUCTION inventory_transaction, linked back via production_material_usage_id
+// the same way startProduction's reservation links. Only call this with a
+// preview that has zero errors — including the stock-sufficiency check above.
+export const commitProductionMaterialsImport = async (rows: NewMaterialUsage[]): Promise<void> => {
+  const payload = rows.filter(r => r.plannedQuantity > 0);
+  if (payload.length === 0) return;
+
+  for (let i = 0; i < payload.length; i += COMMIT_CHUNK_SIZE) {
+    const chunk = payload.slice(i, i + COMMIT_CHUNK_SIZE);
+
+    const { data: insertedUsage, error: usageError } = await supabase.from('production_material_usage').insert(
+      chunk.map(r => ({
+        sales_detail_id: r.detailId, material_id: r.materialId,
+        planned_quantity: r.plannedQuantity, actual_quantity: r.plannedQuantity,
+        remark: r.remark || null,
+      }))
+    ).select('id');
+    if (usageError) {
+      console.error('commitProductionMaterialsImport(usage)', usageError);
+      throw usageError;
+    }
+
+    const { error: txError } = await supabase.from('inventory_transaction').insert(
+      chunk.map((r, idx) => ({
+        id: generateId(),
+        transaction_type: 'PRODUCTION',
+        quantity: -r.plannedQuantity,
+        material_id: r.materialId,
+        production_material_usage_id: (insertedUsage || [])[idx]?.id,
+        transaction_date: nowIso(),
+      }))
+    );
+    if (txError) {
+      console.error('commitProductionMaterialsImport(inventory_transaction)', txError);
+      throw txError;
+    }
+  }
+};
+
 export type FlatCategory = 'VENDORS' | 'CLIENTS' | 'CONTACTS' | 'MATERIAL' | 'PRODUCT' | 'INVENTORY';
 
 const FLAT_LS_KEY: Record<FlatCategory, string> = {
@@ -923,4 +1116,24 @@ const FLAT_LS_KEY: Record<FlatCategory, string> = {
 // a per-row insert loop.
 export const commitFlatImport = async (category: FlatCategory, records: any[]): Promise<void> => {
   await upsertRecords(FLAT_LS_KEY[category], records);
+};
+
+// Material/Product's initial-quantity import column lands here, as an
+// ADJUSTMENT transaction per row — never as a direct write to
+// material.quantity/product.quantity, which stays trigger-owned
+// (update_material_stock()) same as every other stock change in the app.
+export const commitStockAdjustments = async (
+  category: 'MATERIAL' | 'PRODUCT',
+  adjustments: { itemId: string; quantity: number }[]
+): Promise<void> => {
+  if (adjustments.length === 0) return;
+  const transactions: InventoryTransaction[] = adjustments.map(a => ({
+    id: generateId(),
+    transactionType: 'ADJUSTMENT' as const,
+    quantity: a.quantity,
+    materialId: category === 'MATERIAL' ? a.itemId : undefined,
+    productId: category === 'PRODUCT' ? a.itemId : undefined,
+    transactionDate: nowIso(),
+  }));
+  await upsertRecords('erp_inventory_transaction', transactions);
 };

@@ -17,6 +17,8 @@ import { sortByField } from '../utils/sortRows';
 import { useFadeInOnMount } from '../hooks/useFadeInOnMount';
 import { useAndroidBackButton } from '../hooks/useAndroidBackButton';
 import { debounce } from 'lodash'
+import { waLink } from '../lib/utils';
+import { isValidEmail, isValidPhone, normalizeEmail, toE164Phone } from '../utils/validators';
 
 type CompanyType = 'VENDORS' | 'CLIENTS';
 type Company = Vendor | Client;
@@ -115,12 +117,14 @@ export default function ContactsView() {
 
   const handleSaveCompany = async () => {
     if (!companyName.trim()) return;
+    if (companyEmail && !isValidEmail(companyEmail)) { toast.error('Enter a valid email address.'); return; }
+    if (companyOfficeNo && !isValidPhone(companyOfficeNo)) { toast.error('Enter a valid phone number.'); return; }
 
     const record: Company = {
       id: editCompanyId || generateId(),
       companyName: companyName.trim(),
-      email: companyEmail,
-      officeNo: companyOfficeNo,
+      email: companyEmail ? normalizeEmail(companyEmail) : companyEmail,
+      officeNo: companyOfficeNo ? toE164Phone(companyOfficeNo) : companyOfficeNo,
       address: companyAddress,
       description: companyDescription,
       attachments: companyAttachment ? [companyAttachment] : []
@@ -329,7 +333,7 @@ function CompanyCard({
           {company.officeNo && (
             <div className="flex items-center space-x-2">
               <Phone className="w-3.5 h-3.5 shrink-0 text-slate-400" />
-              <span className="font-mono text-slate-900 hover:underline cursor-pointer" onClick={(e) => { e.stopPropagation(); window.open(`https://wa.me/${company.officeNo}`, "_blank") }}>{company.officeNo}</span>
+              <span className="font-mono text-slate-900 hover:underline cursor-pointer" onClick={(e) => { e.stopPropagation(); window.open(waLink(company.officeNo), "_blank") }}>{company.officeNo}</span>
             </div>
           )}
           {company.address && (

@@ -367,6 +367,7 @@ export interface NewMaterialUsage {
   detailId: string;
   materialId: string;
   plannedQuantity: number;
+  remark?: string;
 }
 
 export const addMaterialUsage = async (rows: NewMaterialUsage[]): Promise<void> => {
@@ -374,7 +375,7 @@ export const addMaterialUsage = async (rows: NewMaterialUsage[]): Promise<void> 
   if (payload.length === 0) return;
 
   const { error } = await supabase.from('production_material_usage').insert(
-    payload.map(r => ({ sales_detail_id: r.detailId, material_id: r.materialId, planned_quantity: r.plannedQuantity }))
+    payload.map(r => ({ sales_detail_id: r.detailId, material_id: r.materialId, planned_quantity: r.plannedQuantity, remark: r.remark || null }))
   );
   if (error) {
     console.error('addMaterialUsage', error);

@@ -5,7 +5,7 @@
 
 import { Attachment } from '../types';
 import AttachmentSection from './AttachmentSection';
-import { FormField, fieldInputClassName } from './ui';
+import { FormField, fieldInputClassName, PhoneInput } from './ui';
 
 interface CompanyFormFieldsProps {
   companyName: string; setCompanyName: (v: string) => void;
@@ -42,11 +42,7 @@ export default function CompanyFormFields({
         />
       </FormField>
       <FormField label="Office No.">
-        <input
-          type="text" value={companyOfficeNo} onChange={(e) => setCompanyOfficeNo(e.target.value)}
-          placeholder="+60 3-8012 3456"
-          className={fieldInputClassName}
-        />
+        <PhoneInput value={companyOfficeNo} onChange={setCompanyOfficeNo} />
       </FormField>
       <FormField label="Address" colSpan="sm:col-span-2">
         <input

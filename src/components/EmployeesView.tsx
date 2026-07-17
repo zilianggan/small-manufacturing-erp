@@ -13,9 +13,11 @@ import { generateId, getEmployees, getEmployeeById, getEmployeeConsumableUsage, 
 import ComboBox from './ComboBox';
 import EmployeeDetailView from './EmployeeDetailView';
 import { PageHeader } from './shell';
-import { Sheet, Card, FormField, fieldInputClassName, SearchInput, Button, Badge, Skeleton, useToast, useConfirm } from './ui';
+import { Sheet, Card, FormField, fieldInputClassName, PhoneInput, SearchInput, Button, Badge, Skeleton, useToast, useConfirm } from './ui';
 import { CallAPI } from './UIHelper';
 import { useFadeInOnMount } from '../hooks/useFadeInOnMount';
+import { waLink } from '../lib/utils';
+import { isValidEmail, isValidPhone, normalizeEmail, toE164Phone } from '../utils/validators';
 
 interface EmployeesViewProps {
   // Cross-tab drill-in from MaterialView's Usage History employee link.
@@ -161,14 +163,16 @@ export default function EmployeesView({ initialEmployeeId, onInitialEmployeeHand
 
   const handleSubmit = async () => {
     if (!fullName.trim()) return;
+    if (email.trim() && !isValidEmail(email.trim())) { toast.error('Enter a valid email address.'); return; }
+    if (contactNo.trim() && !isValidPhone(contactNo.trim())) { toast.error('Enter a valid phone number.'); return; }
 
     const savedEmployee: Employee = {
       id: editingEmployee ? editingEmployee.id : generateId(),
       fullName: fullName.trim(),
       jobPositionId: jobPositionId || undefined,
       status,
-      email: email.trim() || undefined,
-      contactNo: contactNo.trim() || undefined
+      email: email.trim() ? normalizeEmail(email.trim()) : undefined,
+      contactNo: contactNo.trim() ? toE164Phone(contactNo.trim()) : undefined
     };
 
     const previous = employees;
@@ -281,7 +285,7 @@ export default function EmployeesView({ initialEmployeeId, onInitialEmployeeHand
                     </div>
                   )}
                   {emp.contactNo && (
-                    <div className="flex items-center space-x-2 cursor-pointer" onClick={(e) => { e.stopPropagation(); window.open(`https://wa.me/${emp.contactNo}`, "_blank") }}>
+                    <div className="flex items-center space-x-2 cursor-pointer" onClick={(e) => { e.stopPropagation(); window.open(waLink(emp.contactNo), "_blank") }}>
                       <Phone className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                       <span className="font-mono text-[11px] text-slate-900 hover:underline">{emp.contactNo}</span>
                     </div>
@@ -372,13 +376,7 @@ export default function EmployeesView({ initialEmployeeId, onInitialEmployeeHand
           </FormField>
 
           <FormField label="Phone Contact">
-            <input
-              type="text"
-              value={contactNo}
-              onChange={(e) => setContactNo(e.target.value)}
-              placeholder="e.g. +60 12-345-6789"
-              className={fieldInputClassName}
-            />
+            <PhoneInput value={contactNo} onChange={setContactNo} />
           </FormField>
         </div>
       </Sheet>

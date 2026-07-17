@@ -2,6 +2,7 @@ export { default as Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton
 export { Sheet } from './Sheet';
 export { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter, CardEmptyState } from './Card';
 export { default as FormField, fieldInputClassName } from './FormField';
+export { default as PhoneInput } from './PhoneInput';
 export { default as SearchInput } from './SearchInput';
 export { ToastProvider, useToast } from './Toast';
 export { ConfirmProvider, useConfirm } from './ConfirmDialog';

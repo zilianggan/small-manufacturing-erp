@@ -14,8 +14,10 @@ import AttachmentSection from './AttachmentSection';
 import CompanyLogo from './CompanyLogo';
 import ComboBox from './ComboBox';
 import CompanyFormFields from './CompanyFormFields';
-import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, FormField, fieldInputClassName, SearchInput, Button, useToast, useConfirm } from './ui';
+import { Dialog, DialogFooter, DialogCancelButton, DialogSubmitButton, Card, FormField, fieldInputClassName, PhoneInput, SearchInput, Button, useToast, useConfirm } from './ui';
 import { CallAPI } from './UIHelper';
+import { waLink } from '../lib/utils';
+import { isValidEmail, isValidPhone, normalizeEmail, toE164Phone } from '../utils/validators';
 
 type CompanyType = 'VENDORS' | 'CLIENTS';
 type Company = Vendor | Client;
@@ -157,12 +159,14 @@ export default function ContactDetailView({ company, companyType, onBack, onComp
   const handleSaveContact = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!contactFullName.trim()) return;
+    if (contactEmail && !isValidEmail(contactEmail)) { toast.error('Enter a valid email address.'); return; }
+    if (contactNo && !isValidPhone(contactNo)) { toast.error('Enter a valid phone number.'); return; }
 
     const newContact: Contact = {
       id: editContactId || generateId(),
       fullName: contactFullName.trim(),
-      contactNo: contactNo || undefined,
-      email: contactEmail || undefined,
+      contactNo: contactNo ? toE164Phone(contactNo) : undefined,
+      email: contactEmail ? normalizeEmail(contactEmail) : undefined,
       jobPositionId: contactJobPositionId || undefined,
       vendorId: companyType === 'VENDORS' ? company.id : undefined,
       clientId: companyType === 'CLIENTS' ? company.id : undefined,
@@ -217,7 +221,7 @@ export default function ContactDetailView({ company, companyType, onBack, onComp
                   </div>
                 )}
                 {company.officeNo && (
-                  <div className="flex items-center space-x-1.5 cursor-pointer" onClick={(e) => { e.stopPropagation(); window.open(`https://wa.me/${company.officeNo}`, "_blank") }}>
+                  <div className="flex items-center space-x-1.5 cursor-pointer" onClick={(e) => { e.stopPropagation(); window.open(waLink(company.officeNo), "_blank") }}>
                     <Phone className="w-3.5 h-3.5 shrink-0 text-slate-400" />
                     <span className="font-mono text-primary hover:underline">{company.officeNo}</span>
                   </div>
@@ -309,7 +313,7 @@ export default function ContactDetailView({ company, companyType, onBack, onComp
                   </div>
                   <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-500">
                     {contact.contactNo && (
-                      <span className="flex items-center space-x-1 cursor-pointer" onClick={(e) => { e.stopPropagation(); window.open(`https://wa.me/${contact.contactNo}`, "_blank") }}><Phone className="w-3 h-3 text-slate-400" /><span className="font-mono text-primary hover:underline">{contact.contactNo}</span></span>
+                      <span className="flex items-center space-x-1 cursor-pointer" onClick={(e) => { e.stopPropagation(); window.open(waLink(contact.contactNo), "_blank") }}><Phone className="w-3 h-3 text-slate-400" /><span className="font-mono text-primary hover:underline">{contact.contactNo}</span></span>
                     )}
                     {contact.email && (
                       <span className="flex items-center space-x-1 cursor-pointer" onClick={(e) => { e.stopPropagation(); window.open(`mailto:${contact.email}`, "_blank") }}><Mail className="w-3 h-3 text-slate-400" /><span className="font-mono text-primary hover:underline">{contact.email}</span></span>
@@ -397,11 +401,7 @@ export default function ContactDetailView({ company, companyType, onBack, onComp
             />
           </FormField>
           <FormField label="Contact No." labelClassName="font-semibold block text-slate-700">
-            <input
-              type="text" value={contactNo} onChange={(e) => setContactNo(e.target.value)}
-              placeholder="+60 12-345 6789"
-              className={fieldInputClassName}
-            />
+            <PhoneInput value={contactNo} onChange={setContactNo} />
           </FormField>
           <FormField label="Email" labelClassName="font-semibold block text-slate-700">
             <input

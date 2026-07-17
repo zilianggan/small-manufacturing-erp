@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isValidEmail, isValidPhone } from './validators';
+import { isValidEmail, isValidPhone, normalizeEmail, toE164Phone } from './validators';
 
 test('isValidEmail accepts a well-formed address', () => {
   assert.equal(isValidEmail('someone@example.com'), true);
@@ -24,4 +24,20 @@ test('isValidPhone accepts a number with an explicit non-MY country code', () =>
 
 test('isValidPhone rejects an obviously invalid string', () => {
   assert.equal(isValidPhone('abcdef'), false);
+});
+
+test('normalizeEmail trims and lowercases', () => {
+  assert.equal(normalizeEmail('  Fan@Gmail.com '), 'fan@gmail.com');
+});
+
+test('toE164Phone converts a Malaysian local number to E.164', () => {
+  assert.equal(toE164Phone('012-354 6467'), '+60123546467');
+});
+
+test('toE164Phone leaves an already-E.164 number unchanged', () => {
+  assert.equal(toE164Phone('+60123546467'), '+60123546467');
+});
+
+test('toE164Phone falls back to the original string on unparseable input', () => {
+  assert.equal(toE164Phone('abcdef'), 'abcdef');
 });

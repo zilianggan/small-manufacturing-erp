@@ -8,12 +8,13 @@ import * as XLSX from 'xlsx';
 import ExcelJS from 'exceljs';
 import {
   UploadCloud, CheckCircle2, AlertTriangle, Download, Clipboard, Info,
-  Database, ArrowRight, FileSpreadsheet, Layers, Users, ShoppingBag, Briefcase, Package, UserPlus, Boxes,
+  Database, ArrowRight, FileSpreadsheet, Layers, Users, ShoppingBag, Briefcase, Package, UserPlus, Boxes, Cog,
 } from 'lucide-react';
 import {
   ImportColumn, ImportRowError, FlatCategory,
-  VENDOR_COLUMNS, CLIENT_COLUMNS, CONTACT_COLUMNS, MATERIAL_COLUMNS, PRODUCT_COLUMNS, PURCHASE_COLUMNS, SALES_COLUMNS, INVENTORY_COLUMNS,
+  VENDOR_COLUMNS, CLIENT_COLUMNS, CONTACT_COLUMNS, MATERIAL_COLUMNS, PRODUCT_COLUMNS, PURCHASE_COLUMNS, SALES_COLUMNS, INVENTORY_COLUMNS, PRODUCTION_MATERIAL_COLUMNS,
   validateVendorsImport, validateClientsImport, validateContactsImport, validateMaterialsImport, validateProductsImport, validateInventoryImport, commitFlatImport,
+  validateProductionMaterialsImport, commitProductionMaterialsImport, commitStockAdjustments,
   validatePurchaseImport, commitPurchaseImport, PurchaseImportPreview, PurchaseImportRow,
   validateSalesImport, commitSalesImport, SalesImportPreview, SalesImportRow,
   getVendorExportRows, getClientExportRows, getContactExportRows, getMaterialExportRows, getProductExportRows,
@@ -27,7 +28,7 @@ interface ImportExportModalProps {
   onDataImported: () => void; // Refresh current views
 }
 
-type Category = 'VENDORS' | 'CLIENTS' | 'CONTACTS' | 'MATERIAL' | 'PRODUCT' | 'PURCHASE' | 'SALES' | 'INVENTORY';
+type Category = 'VENDORS' | 'CLIENTS' | 'CONTACTS' | 'MATERIAL' | 'PRODUCT' | 'PURCHASE' | 'SALES' | 'INVENTORY' | 'PRODUCTION_MATERIALS';
 
 const EXPECTED_COLUMNS: Record<Category, ImportColumn[]> = {
   VENDORS: VENDOR_COLUMNS,
@@ -38,6 +39,7 @@ const EXPECTED_COLUMNS: Record<Category, ImportColumn[]> = {
   PURCHASE: PURCHASE_COLUMNS,
   SALES: SALES_COLUMNS,
   INVENTORY: INVENTORY_COLUMNS,
+  PRODUCTION_MATERIALS: PRODUCTION_MATERIAL_COLUMNS,
 };
 
 const CATEGORY_LIST: { id: Category; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
@@ -49,10 +51,16 @@ const CATEGORY_LIST: { id: Category; label: string; icon: React.ComponentType<{ 
   { id: 'PURCHASE', label: 'Purchase Orders', icon: ShoppingBag },
   { id: 'SALES', label: 'Sales Orders', icon: FileSpreadsheet },
   { id: 'INVENTORY', label: 'Inventory Transactions', icon: Boxes },
+  { id: 'PRODUCTION_MATERIALS', label: 'Production Materials', icon: Cog },
 ];
 
 const isHeaderDetailCategory = (category: Category): category is 'PURCHASE' | 'SALES' =>
   category === 'PURCHASE' || category === 'SALES';
+
+// Every category that isn't Purchase/Sales shares the flat validate-then-
+// preview-then-confirm flow, including Production Materials (which commits
+// via a dedicated function, not commitFlatImport — see handleConfirmFlatImport).
+type FlatOrProductionCategory = Exclude<Category, 'PURCHASE' | 'SALES'>;
 
 export default function ImportExportModal({ isOpen, onClose, onDataImported }: ImportExportModalProps) {
   const toast = useToast();
@@ -67,7 +75,7 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
   } | null>(null);
   const [purchasePreview, setPurchasePreview] = useState<PurchaseImportPreview | null>(null);
   const [salesPreview, setSalesPreview] = useState<SalesImportPreview | null>(null);
-  const [flatPreview, setFlatPreview] = useState<{ category: FlatCategory; totalRows: number; errors: ImportRowError[]; records: any[] } | null>(null);
+  const [flatPreview, setFlatPreview] = useState<{ category: FlatOrProductionCategory; totalRows: number; errors: ImportRowError[]; records: any[]; stockAdjustments?: { itemId: string; quantity: number }[] } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   if (!isOpen) return null;
@@ -151,11 +159,16 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
       const { rows } = await getInventoryExportRows();
       appendRowsSheet(wb, 'Inventory_Transactions', rows);
       exportedCount = rows.length;
-    } else {
+    } else if (category === 'SALES') {
       const { headerRows, itemRows, attachmentLinks } = await getSalesExportSheets();
       appendRowsSheet(wb, 'Sales_Items', itemRows);
       appendRowsSheet(wb, 'Sales_Orders', headerRows, attachmentLinks);
       exportedCount = headerRows.length;
+    } else {
+      // Production Materials adds usage rows to existing Sales Orders rather
+      // than owning its own record set, so there's nothing standalone to export.
+      toast.warning('Production Materials has no standalone export — see it on the Sales Order it was added to.');
+      return;
     }
 
     await downloadWorkbook(wb, fileName);
@@ -189,16 +202,17 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
     return `Required columns:\n${required}${optional ? `\nOptional columns:\n${optional}` : ''}`;
   };
 
-  const runFlatValidation = async (category: FlatCategory, rows: Record<string, any>[]) => {
+  const runFlatValidation = async (category: FlatOrProductionCategory, rows: Record<string, any>[]) => {
     try {
       const result = category === 'VENDORS' ? await validateVendorsImport(rows)
         : category === 'CLIENTS' ? await validateClientsImport(rows)
         : category === 'CONTACTS' ? await validateContactsImport(rows)
         : category === 'MATERIAL' ? await validateMaterialsImport(rows)
         : category === 'PRODUCT' ? await validateProductsImport(rows)
+        : category === 'PRODUCTION_MATERIALS' ? await validateProductionMaterialsImport(rows)
         : await validateInventoryImport(rows);
 
-      setFlatPreview({ category, totalRows: rows.length, errors: result.errors, records: result.records });
+      setFlatPreview({ category, totalRows: rows.length, errors: result.errors, records: result.records, stockAdjustments: result.stockAdjustments });
     } catch (err: any) {
       setStatus({ type: 'error', message: 'Validation failed!', details: [err.message || 'Make sure the Excel file is correctly formatted.'] });
       toast.error(err.message || 'Validation failed. Make sure the Excel file is correctly formatted.');
@@ -208,8 +222,16 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
   const handleConfirmFlatImport = async () => {
     if (!flatPreview) return;
     try {
-      await commitFlatImport(flatPreview.category, flatPreview.records);
-      setStatus({ type: 'success', message: 'Successfully completed import.', details: [`Imported ${flatPreview.records.length} record(s).`] });
+      if (flatPreview.category === 'PRODUCTION_MATERIALS') {
+        await commitProductionMaterialsImport(flatPreview.records);
+      } else {
+        await commitFlatImport(flatPreview.category as FlatCategory, flatPreview.records);
+        if (flatPreview.stockAdjustments?.length) {
+          await commitStockAdjustments(flatPreview.category as 'MATERIAL' | 'PRODUCT', flatPreview.stockAdjustments);
+        }
+      }
+      const adjustmentNote = flatPreview.stockAdjustments?.length ? [`${flatPreview.stockAdjustments.length} stock adjustment(s) recorded.`] : [];
+      setStatus({ type: 'success', message: 'Successfully completed import.', details: [`Imported ${flatPreview.records.length} record(s).`, ...adjustmentNote] });
       toast.success('Import completed successfully.');
       onDataImported();
       setFlatPreview(null);
@@ -312,7 +334,9 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
         return;
       }
 
-      const workbook = XLSX.read(data, { type: 'binary' });
+      // cellDates: true — a date-formatted Excel cell otherwise reads as a raw
+      // serial number (e.g. 46220), which fails Postgres date parsing downstream.
+      const workbook = XLSX.read(data, { type: 'binary', cellDates: true });
       const sheetName = workbook.SheetNames[0];
       const worksheet = workbook.Sheets[sheetName];
       const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' }) as any[][];
@@ -382,7 +406,7 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
             </span>
             <div>
               <h3 className="font-sans font-bold text-slate-900 text-sm">ERP Data Import & Export Hub</h3>
-              <p className="text-[10px] text-slate-500 font-mono">Load or export Vendors, Clients, Contacts, Material, Product, Purchase, Sales and Inventory Transactions</p>
+              <p className="text-[10px] text-slate-500 font-mono">Load or export Vendors, Clients, Contacts, Material, Product, Purchase, Sales, Inventory Transactions and Production Materials</p>
             </div>
           </div>
           <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-600 font-bold text-base p-1.5 leading-none bg-transparent">
@@ -437,6 +461,9 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
               </p>
               <p className="leading-relaxed">
                 Purchase/Sales rows are grouped into orders by Purchase No/Sales No. Every order is validated before anything is saved — you'll see a preview with any errors first.
+              </p>
+              <p className="leading-relaxed">
+                Production Materials adds material usage to a Sales Order that must already exist (matched by Sales No + Product Code) — it never creates orders itself.
               </p>
             </div>
 

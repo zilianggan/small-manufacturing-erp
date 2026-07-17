@@ -129,7 +129,7 @@ export const upsertRecord = async (lsKey: string, item: any): Promise<void> => {
     if (!serialiser) return;
     const row = serialiser(item);
     const { error } = await supabase.from(tableName).upsert(row);
-    if (error) console.error(`upsertRecord(${tableName}) error:`, error);
+    if (error) { console.error(`upsertRecord(${tableName}) error:`, error); throw error; }
 };
 
 const BATCH_SIZE = 500;
@@ -144,7 +144,7 @@ export const upsertRecords = async (lsKey: string, items: any[]): Promise<void> 
     for (let i = 0; i < rows.length; i += BATCH_SIZE) {
         const batch = rows.slice(i, i + BATCH_SIZE);
         const { error } = await supabase.from(tableName).upsert(batch);
-        if (error) console.error(`upsertRecords(${tableName}) error:`, error);
+        if (error) { console.error(`upsertRecords(${tableName}) error:`, error); throw error; }
     }
 };
 
