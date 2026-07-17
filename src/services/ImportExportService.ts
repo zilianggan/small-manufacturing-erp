@@ -17,7 +17,7 @@ import { getSalesOrders } from "./OrdersService";
 import { getInventoryTransactions } from "./InventoryTransactionService";
 import { nowIso } from "../utils/date";
 import { isValidEmail, isValidPhone } from "../utils/validators";
-import { Vendor, Client, Contact, Material, Product, Attachment } from "../types";
+import { Vendor, Client, Contact, Material, Product, Attachment, InventoryTransaction } from "../types";
 
 // Groups per DB round-trip pair (header insert + detail insert) for
 // Purchase/Sales commit — keeps big files from firing one request per order.
@@ -807,28 +807,39 @@ export const INVENTORY_COLUMNS: ImportColumn[] = [
 // Bulk stock adjustments only (ADJUSTMENT type) — PURCHASE/SALES/*_RETURN
 // rows are always system-generated off a purchase/sales order, never
 // hand-entered here.
-export const importInventoryTransactions = async (rows: Record<string, any>[]): Promise<RowImportResult> => {
+export const validateInventoryImport = async (rows: Record<string, any>[]): Promise<FlatImportResult<InventoryTransaction>> => {
   const [materials, products] = await Promise.all([getMaterials(''), getProducts('')]);
   const materialByCode = new Map(materials.filter(m => m.code).map(m => [m.code!.toLowerCase(), m]));
   const productByCode = new Map(products.filter(p => p.code).map(p => [p.code!.toLowerCase(), p]));
+  const errors: ImportRowError[] = [];
+  const records: InventoryTransaction[] = [];
 
-  const parsed = rows.map((raw, index) => {
+  rows.forEach((raw, index) => {
+    const rowNum = index + 1;
     const itemType = String(raw.itemType || '').trim().toUpperCase();
-    if (itemType !== 'MATERIAL' && itemType !== 'PRODUCT') throw new Error(`Record #${index + 1}: 'Item Type' must be Material or Product.`);
-
     const code = String(raw.code || '').trim();
-    if (!code) throw new Error(`Record #${index + 1} is missing a required 'code' field.`);
-
-    const item = itemType === 'MATERIAL' ? materialByCode.get(code.toLowerCase()) : productByCode.get(code.toLowerCase());
-    if (!item) throw new Error(`Record #${index + 1}: ${itemType === 'MATERIAL' ? 'Material' : 'Product'} code "${code}" not found.`);
-
     const quantity = Number(raw.quantity);
-    if (!quantity) throw new Error(`Record #${index + 1}: Quantity must be a non-zero number.`);
+    let rowValid = true;
+
+    if (itemType !== 'MATERIAL' && itemType !== 'PRODUCT') { errors.push({ row: rowNum, message: "'Item Type' must be Material or Product." }); rowValid = false; }
+    if (!code) { errors.push({ row: rowNum, message: "Missing 'Item Code'." }); rowValid = false; }
+
+    const item = itemType === 'MATERIAL' ? materialByCode.get(code.toLowerCase())
+      : itemType === 'PRODUCT' ? productByCode.get(code.toLowerCase())
+      : undefined;
+    if (code && (itemType === 'MATERIAL' || itemType === 'PRODUCT') && !item) {
+      errors.push({ row: rowNum, message: `${itemType === 'MATERIAL' ? 'Material' : 'Product'} code "${code}" not found.` });
+      rowValid = false;
+    }
+
+    if (!quantity) { errors.push({ row: rowNum, message: 'Quantity must be a non-zero number.' }); rowValid = false; }
+
+    if (!rowValid || !item) return;
 
     const date = String(raw.date || '').trim();
     const transactionDate = date && !isNaN(Date.parse(date)) ? new Date(date).toISOString() : nowIso();
 
-    return {
+    records.push({
       id: generateId(),
       transactionType: 'ADJUSTMENT' as const,
       quantity,
@@ -837,12 +848,10 @@ export const importInventoryTransactions = async (rows: Record<string, any>[]): 
       materialId: itemType === 'MATERIAL' ? item.id : undefined,
       productId: itemType === 'PRODUCT' ? item.id : undefined,
       transactionDate,
-    };
+    });
   });
 
-  await upsertRecords('erp_inventory_transaction', parsed);
-
-  return { successCount: parsed.length, logs: [`Imported ${parsed.length} inventory transaction(s) as stock adjustments.`] };
+  return { records, errors };
 };
 
 export const getInventoryExportRows = async () => {
