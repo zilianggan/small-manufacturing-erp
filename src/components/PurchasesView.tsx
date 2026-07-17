@@ -11,10 +11,12 @@ import {
   PurchaseDetailInput, PurchaseFilters, PurchaseSortField, SortDir, PurchaseReturnLine, ReceiveLine,
 } from '../services/PurchasesService';
 import { getMaterials, getMaterialsPage } from '../services/MaterialService';
-import { getVendors } from '../services/ContactsService';
+import { getVendors, getContacts } from '../services/ContactsService';
 import { getSalesOrdersForLinking, SalesOrderLinkOption, getSalesOrderMaterialRequirements, SalesOrderMaterialRequirement } from '../services/OrdersService';
-import { PurchaseHeader, Vendor, Material, Attachment, MaterialCategory } from '../types';
-import { Plus, Calendar, Check, Paperclip, Trash2, Edit, ArrowRightCircle, Eye, RotateCcw, FileText, Undo2 } from 'lucide-react';
+import { getWhatsappTemplates } from '../services/SystemAdminService';
+import { PurchaseHeader, Vendor, Contact, Material, Attachment, MaterialCategory } from '../types';
+import { buildWhatsappUrl, fillPurchaseTemplate } from '../utils/whatsapp';
+import { Plus, Calendar, Check, Paperclip, Trash2, Edit, ArrowRightCircle, Eye, RotateCcw, FileText, Undo2, MessageCircle } from 'lucide-react';
 import AttachmentSection from './AttachmentSection';
 import PurchaseOrderDetailView from './PurchaseOrderDetailView';
 import PurchaseInvoiceModal from './PurchaseInvoiceModal';
@@ -351,6 +353,8 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
   const [formVendorId, setFormVendorId] = useState('');
   const [formOrderDate, setFormOrderDate] = useState('');
   const [formSalesHeaderId, setFormSalesHeaderId] = useState('');
+  const [formContactId, setFormContactId] = useState('');
+  const [formContacts, setFormContacts] = useState<Contact[]>([]);
   const [formDetails, setFormDetails] = useState<PurchaseDetailInput[]>([]);
   const [tempMaterialId, setTempMaterialId] = useState('');
   const [tempQuantity, setTempQuantity] = useState(10);
@@ -367,16 +371,37 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
     setIsInvoiceModalOpen(true);
   };
 
+  // Fetches the current Purchase template fresh each click (System Admin may have just edited it)
+  // and opens wa.me with it filled in. No contact/phone → nothing to click (button isn't rendered).
+  const handleWhatsappClick = async (purchase: PurchaseHeader) => {
+    if (!purchase.contactPhone) return;
+    const templates = await getWhatsappTemplates();
+    const template = templates.find(t => t.type === 'PURCHASE');
+    if (!template) return;
+    window.open(buildWhatsappUrl(purchase.contactPhone, fillPurchaseTemplate(template.content, purchase)), '_blank');
+  };
+
   useEffect(() => {
     if (!formSalesHeaderId) { setRequiredMaterials([]); return; }
     getSalesOrderMaterialRequirements(formSalesHeaderId).then(setRequiredMaterials).catch(console.error);
   }, [formSalesHeaderId]);
+
+  // Contact picker is scoped to whichever vendor is currently selected —
+  // switching vendors clears any contact picked for the old one.
+  useEffect(() => {
+    if (!formVendorId) { setFormContacts([]); setFormContactId(''); return; }
+    getContacts({ vendorId: formVendorId }).then((contacts) => {
+      setFormContacts(contacts);
+      setFormContactId(prev => contacts.some(c => c.id === prev) ? prev : '');
+    }).catch(console.error);
+  }, [formVendorId]);
 
   const resetForm = () => {
     setEditHeaderId(null);
     setFormVendorId('');
     setFormOrderDate('');
     setFormSalesHeaderId('');
+    setFormContactId('');
     setFormDetails([]);
     setTempMaterialId('');
     setTempQuantity(10);
@@ -417,6 +442,7 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
     setEditHeaderStatus(purchase.status);
     setFormVendorId(purchase.vendorId);
     setFormSalesHeaderId(purchase.salesHeaderId || '');
+    setFormContactId(purchase.contactId || '');
     setFormAttachment(purchase.attachments?.[0]);
     setFormDetails(detailsFromHeader(purchase));
     setShowFormSheet(true);
@@ -428,6 +454,7 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
     setEditHeaderId(purchase.id);
     setFormVendorId(purchase.vendorId);
     setFormSalesHeaderId(purchase.salesHeaderId || '');
+    setFormContactId(purchase.contactId || '');
     setFormAttachment(purchase.attachments?.[0]);
     setFormDetails(detailsFromHeader(purchase));
     setFormOrderDate(nowLocal());
@@ -513,6 +540,7 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
     const input = {
       vendorId: formVendorId,
       salesHeaderId: formSalesHeaderId || undefined,
+      contactId: formContactId || undefined,
       attachments: formAttachment ? [formAttachment] : [],
       details: finalDetails,
     };
@@ -646,6 +674,20 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
     { key: 'reference', header: 'Reference', sortable: true, className: 'w-32', render: (p) => <span className="font-mono font-medium text-foreground">{p.purchaseNo}</span> },
     { key: 'supplier', header: 'Supplier', sortable: true, className: 'w-40', render: (p) => <span className="font-medium text-card-foreground truncate">{p.vendorName}</span> },
     {
+      key: 'contact', header: 'Contact', className: 'w-36',
+      render: (p) => p.contactName && p.contactPhone ? (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); handleWhatsappClick(p); }}
+          className="inline-flex items-center gap-1 text-primary hover:underline"
+          title="Message on WhatsApp"
+        >
+          <MessageCircle className="w-3.5 h-3.5 shrink-0" />
+          <span className="truncate">{p.contactName}</span>
+        </button>
+      ) : <span className="text-muted-foreground">—</span>,
+    },
+    {
       key: 'salesNo', header: 'Sales Ref No', sortable: true, className: 'w-32',
       render: (p) => p.salesNo && p.salesHeaderId ? (
         <button type="button" onClick={(e) => { e.stopPropagation(); onViewSalesOrder?.(p.salesHeaderId!, p.id); }} className="font-mono text-primary hover:underline">
@@ -711,6 +753,7 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
           onReturn={openReturn}
           onOpenInvoiceDoc={openInvoiceDoc}
           onViewSalesOrder={onViewSalesOrder ? (salesHeaderId) => onViewSalesOrder(salesHeaderId, selectedPurchase.id) : undefined}
+          onWhatsapp={handleWhatsappClick}
         />
       ) : (
         <>
@@ -855,6 +898,16 @@ export default function PurchasesView({ initialPurchaseId, onInitialPurchaseHand
                     onChange={setFormVendorId}
                     noneLabel="-- Select Vendor --"
                     options={vendors.map(v => ({ value: v.id, label: v.companyName, sublabel: v.officeNo || v.email }))}
+                  />
+                </FormField>
+
+                <FormField label="Contact Person (Optional)" colSpan="sm:col-span-2">
+                  <ComboBox
+                    value={formContactId}
+                    onChange={setFormContactId}
+                    disabled={!formVendorId}
+                    noneLabel="-- No Contact Person --"
+                    options={formContacts.map(c => ({ value: c.id, label: c.fullName, sublabel: c.contactNo || c.email }))}
                   />
                 </FormField>
 

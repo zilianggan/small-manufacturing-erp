@@ -148,6 +148,9 @@ export interface PurchaseHeader {
   attachments?: Attachment[];
   salesHeaderId?: string; // FK -> sales_header.id, optional link to the sales order this purchase serves
   salesNo?: string; // joined via sales_header.sales_no, display only
+  contactId?: string; // FK -> contacts.id, optional vendor-side contact person for this quotation
+  contactName?: string; // joined, display only
+  contactPhone?: string; // joined (contacts.contact_no), display only — drives the WhatsApp link
   details: PurchaseDetail[];
   createdAt?: string;
   updatedAt?: string;
@@ -218,6 +221,9 @@ export interface SalesHeader {
   totalAmount: number;
   remark?: string;
   attachments?: Attachment[];
+  contactId?: string; // FK -> contacts.id, optional client-side contact person for this quotation
+  contactName?: string; // joined, display only
+  contactPhone?: string; // joined (contacts.contact_no), display only — drives the WhatsApp link
   details: SalesDetail[];
   createdAt?: string;
   updatedAt?: string;
@@ -435,4 +441,14 @@ export interface SystemAdminData {
   job_positions: JobPosition[];
   material_categories: MaterialCategory[];
   product_categories: ProductCategory[];
+}
+
+export type WhatsappTemplateType = 'PURCHASE' | 'SALES';
+
+// One row per type — no name field, no multi-template list (see brainstorming design).
+export interface WhatsappTemplate {
+  id: string;
+  type: WhatsappTemplateType;
+  content: string;
+  updatedAt?: string;
 }

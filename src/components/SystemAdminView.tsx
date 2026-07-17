@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { Clock, Edit, Plus, Trash2 } from 'lucide-react';
-import { CompanyProfile, JobPosition, MaterialCategory, ProductCategory } from '../types';
+import { CompanyProfile, JobPosition, MaterialCategory, ProductCategory, WhatsappTemplateType } from '../types';
 import { generateId } from '../helper';
 import {
   Badge, Button, Sheet,
@@ -10,12 +10,12 @@ import {
 import type { ActionMenuItem } from './ui';
 import { PageHeader, SectionCard, FilterBar, DataTable } from './shell';
 import type { DataTableColumn } from './shell';
-import { getJobPositions, getMaterialCategories, getProductCategories, loadSystemAdminData, saveJobPositions, saveMaterialCategories, saveProductCategories } from '../services/SystemAdminService';
+import { getJobPositions, getMaterialCategories, getProductCategories, getWhatsappTemplates, loadSystemAdminData, saveJobPositions, saveMaterialCategories, saveProductCategories, saveWhatsappTemplate } from '../services/SystemAdminService';
 import { getCompanyProfile, saveCompanyProfile } from '../services/CompanyProfileService';
 import { CallAPI } from './UIHelper';
 
 type CrudKind = 'JOB_POSITION' | 'MATERIAL_CATEGORY' | 'PRODUCT_CATEGORY';
-type ParameterKind = CrudKind | 'NUMBERING';
+type ParameterKind = CrudKind | 'NUMBERING' | 'WHATSAPP_TEMPLATES';
 // All parameter kinds now share the exact same minimal shape:
 type ParameterRecord = JobPosition | MaterialCategory | ProductCategory;
 
@@ -30,7 +30,168 @@ const SECTIONS: SectionConfig[] = [
   { kind: 'MATERIAL_CATEGORY', title: 'Material Category', shortTitle: 'Materials' },
   { kind: 'PRODUCT_CATEGORY', title: 'Product Category', shortTitle: 'Products' },
   { kind: 'NUMBERING', title: 'Document Numbering', shortTitle: 'Auto Numbering' },
+  { kind: 'WHATSAPP_TEMPLATES', title: 'WhatsApp Templates', shortTitle: 'WhatsApp' },
 ];
+
+const emptyWhatsappForm: Record<WhatsappTemplateType, string> = { PURCHASE: '', SALES: '' };
+
+// Matches the vars each template type actually fills (see utils/whatsapp.ts's
+// fillPurchaseTemplate/fillSalesTemplate) — only offer tokens that do something.
+const TEMPLATE_TOKENS: Record<WhatsappTemplateType, string[]> = {
+  PURCHASE: ['{{vendor_name}}', '{{quotation_no}}', '{{items}}'],
+  SALES: ['{{customer_name}}', '{{quotation_no}}', '{{items}}', '{{grand_total}}'],
+};
+
+const TOKEN_PATTERN = /\{\{\w+\}\}/g;
+
+const CHIP_CLASSNAME = 'inline-flex items-center px-1.5 py-0.5 mx-0.5 rounded bg-primary/15 text-primary font-mono text-[11px] font-semibold select-none align-baseline';
+
+const makeChip = (token: string): HTMLElement => {
+  const span = document.createElement('span');
+  span.contentEditable = 'false';
+  span.dataset.token = token;
+  span.className = CHIP_CLASSNAME;
+  span.textContent = `{{${token}}}`;
+  return span;
+};
+
+// text -> DOM nodes: {{token}} runs become atomic chip spans, everything else stays plain text.
+const textToNodes = (text: string): Node[] => {
+  const nodes: Node[] = [];
+  let last = 0;
+  TOKEN_PATTERN.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = TOKEN_PATTERN.exec(text))) {
+    if (m.index > last) nodes.push(document.createTextNode(text.slice(last, m.index)));
+    nodes.push(makeChip(m[0].slice(2, -2)));
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) nodes.push(document.createTextNode(text.slice(last)));
+  return nodes;
+};
+
+// DOM -> text: re-materializes {{token}} from each chip's data-token attribute. Only text nodes and
+// chip spans are ever inserted into the editor (typing, token buttons, plain-text paste, and a
+// manual "\n" text node for Enter — see below), so the DOM never grows anything else to walk.
+const domToText = (root: HTMLElement): string => {
+  let out = '';
+  root.childNodes.forEach((node) => {
+    if (node.nodeType === Node.TEXT_NODE) out += node.textContent || '';
+    else if (node instanceof HTMLElement && node.dataset.token) out += `{{${node.dataset.token}}}`;
+  });
+  return out;
+};
+
+export interface TemplateTokenEditorHandle {
+  insertToken: (token: string) => void;
+}
+
+interface TemplateTokenEditorProps {
+  value: string;
+  onChange: (next: string) => void;
+}
+
+// A textarea can't render styled inline elements, so template tokens are rendered as real atomic
+// chips here via a contentEditable box instead: a chip is a contentEditable="false" span, which
+// browsers already treat as a single unit for the caret, arrow keys, and Backspace/Delete — the same
+// technique Gmail/Slack/Notion use for @mention chips. That native behavior is what makes tokens
+// non-editable-a-character-at-a-time for free; no manual key interception needed for that part.
+// Line breaks are plain "\n" text nodes (not browser-inserted <div>/<br>), so DOM<->string stays a
+// lossless round trip without diffing browser-specific line-break markup.
+const TemplateTokenEditor = forwardRef<TemplateTokenEditorHandle, TemplateTokenEditorProps>(({ value, onChange }, ref) => {
+  const elRef = useRef<HTMLDivElement>(null);
+  const lastValue = useRef('');
+
+  // Rebuilds the DOM only when `value` changes from OUTSIDE this component (token insert, initial
+  // load) — comparing against the string this component itself last emitted means a normal keystroke
+  // (which updates `value` via onChange right back to what's already in the DOM) never triggers a
+  // rebuild, which would otherwise fight the browser's own caret placement mid-edit.
+  useEffect(() => {
+    if (!elRef.current || value === lastValue.current) return;
+    elRef.current.innerHTML = '';
+    textToNodes(value).forEach((n) => elRef.current!.appendChild(n));
+    lastValue.current = value;
+  }, [value]);
+
+  const emit = () => {
+    if (!elRef.current) return;
+    const next = domToText(elRef.current);
+    lastValue.current = next;
+    onChange(next);
+  };
+
+  useImperativeHandle(ref, () => ({
+    insertToken: (token: string) => {
+      const el = elRef.current;
+      const sel = window.getSelection();
+      if (!el || !sel) return;
+      if (sel.rangeCount === 0 || !el.contains(sel.anchorNode)) {
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        range.collapse(false);
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+      const range = sel.getRangeAt(0);
+      range.deleteContents();
+      const chip = makeChip(token.slice(2, -2));
+      range.insertNode(chip);
+      range.setStartAfter(chip);
+      range.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(range);
+      emit();
+    },
+  }));
+
+  // Enter would otherwise let the browser insert its own (inconsistent-across-browsers) line-break
+  // markup — replace it with a plain "\n" text node instead, rendered via white-space: pre-wrap.
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return;
+    const range = sel.getRangeAt(0);
+    range.deleteContents();
+    const node = document.createTextNode('\n');
+    range.insertNode(node);
+    range.setStartAfter(node);
+    range.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(range);
+    emit();
+  };
+
+  // Force plain-text paste — anything else risks the browser dropping in rich-HTML markup domToText
+  // doesn't know how to read back.
+  const handlePaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return;
+    const range = sel.getRangeAt(0);
+    range.deleteContents();
+    const node = document.createTextNode(e.clipboardData.getData('text/plain'));
+    range.insertNode(node);
+    range.setStartAfter(node);
+    range.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(range);
+    emit();
+  };
+
+  return (
+    <div
+      ref={elRef}
+      contentEditable
+      suppressContentEditableWarning
+      onInput={emit}
+      onKeyDown={handleKeyDown}
+      onPaste={handlePaste}
+      className={`${fieldInputClassName} font-mono whitespace-pre-wrap min-h-[18rem] max-h-[28rem] overflow-y-auto`}
+    />
+  );
+});
+TemplateTokenEditor.displayName = 'TemplateTokenEditor';
 
 const emptyNumberingForm = {
   so_number_format: 'SO-0000',
@@ -60,6 +221,9 @@ export default function SystemAdminView() {
   const [companyProfile, setCompanyProfile] = useState<CompanyProfile | null>(null);
   const [numberingForm, setNumberingForm] = useState(emptyNumberingForm);
   const [numberingSaving, setNumberingSaving] = useState(false);
+  const [whatsappForm, setWhatsappForm] = useState(emptyWhatsappForm);
+  const [whatsappSaving, setWhatsappSaving] = useState(false);
+  const whatsappEditorRefs = useRef<Record<WhatsappTemplateType, TemplateTokenEditorHandle | null>>({ PURCHASE: null, SALES: null });
 
   const loaders = {
     JOB_POSITION: {
@@ -125,7 +289,29 @@ export default function SystemAdminView() {
       },
       onError: console.error,
     });
+    CallAPI(getWhatsappTemplates, {
+      onCompleted: (templates) => {
+        setWhatsappForm(prev => {
+          const next = { ...prev };
+          for (const t of templates) next[t.type] = t.content;
+          return next;
+        });
+      },
+      onError: console.error,
+    });
   }, []);
+
+  const handleSaveWhatsappTemplates = async () => {
+    setWhatsappSaving(true);
+    await CallAPI(() => Promise.all([
+      saveWhatsappTemplate('PURCHASE', whatsappForm.PURCHASE),
+      saveWhatsappTemplate('SALES', whatsappForm.SALES),
+    ]), {
+      onCompleted: () => toast.success('WhatsApp templates updated.'),
+      onError: (err) => { console.error(err); toast.error('Failed to save templates.'); },
+    });
+    setWhatsappSaving(false);
+  };
 
   const handleSaveNumbering = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -256,7 +442,7 @@ export default function SystemAdminView() {
       <PageHeader
         title="System Admin"
         description="Manage lookup lists and document numbering."
-        actions={activeKind !== 'NUMBERING' && <Button onClick={openCreateDialog}><Plus className="w-4 h-4" /> Add {activeSection.title}</Button>}
+        actions={!['NUMBERING', 'WHATSAPP_TEMPLATES'].includes(activeKind) && <Button onClick={openCreateDialog}><Plus className="w-4 h-4" /> Add {activeSection.title}</Button>}
       />
 
       <Tabs value={activeKind} onValueChange={(v) => { setActiveKind(v as ParameterKind); setSearchTerm(''); }}>
@@ -265,7 +451,42 @@ export default function SystemAdminView() {
         </TabsList>
       </Tabs>
 
-      {activeKind === 'NUMBERING' ? (
+      {activeKind === 'WHATSAPP_TEMPLATES' ? (
+        <SectionCard title="WhatsApp Templates" description="Click a token to insert it, or type {{token}} manually. Tokens are atomic — deleting any character removes the whole token." className="flex-1 min-h-0" contentClassName="p-5 overflow-auto">
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+            {(['PURCHASE', 'SALES'] as WhatsappTemplateType[]).map((type) => (
+              <div key={type} className="space-y-2 min-w-0">
+                <FormField label={type === 'PURCHASE' ? 'Purchase Quotation Template' : 'Sales Quotation Template'}>
+                  <div className="flex flex-wrap gap-1.5 mb-2">
+                    {TEMPLATE_TOKENS[type].map((token) => (
+                      <Button
+                        key={token}
+                        variant="secondary"
+                        size="sm"
+                        className="font-mono"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => whatsappEditorRefs.current[type]?.insertToken(token)}
+                      >
+                        {token}
+                      </Button>
+                    ))}
+                  </div>
+                  <TemplateTokenEditor
+                    ref={(handle) => { whatsappEditorRefs.current[type] = handle; }}
+                    value={whatsappForm[type]}
+                    onChange={(next) => setWhatsappForm(p => ({ ...p, [type]: next }))}
+                  />
+                </FormField>
+              </div>
+            ))}
+          </div>
+          <div className="flex justify-end mt-5">
+            <Button onClick={handleSaveWhatsappTemplates} disabled={whatsappSaving}>
+              {whatsappSaving ? 'Saving...' : 'Save Templates'}
+            </Button>
+          </div>
+        </SectionCard>
+      ) : activeKind === 'NUMBERING' ? (
         <SectionCard title="Document Numbering" description="Format uses a run of zeros to mark the padded number, e.g. SO-0000 → SO-0001" className="flex-1 min-h-0" contentClassName="p-5 overflow-auto">
           {!companyProfile ? (
             <p className="text-sm text-muted-foreground">Loading...</p>

@@ -39,6 +39,7 @@ export interface SalesDetailInput {
 
 export interface SalesFormInput {
   clientId: string;
+  contactId?: string;
   remark?: string;
   attachments?: Attachment[];
   details: SalesDetailInput[];
@@ -91,6 +92,9 @@ const mapSalesHeaderRow = (row: any): SalesHeader => ({
   totalAmount: Number(row.total_amount) || 0,
   remark: row.remark || undefined,
   attachments: row.attachments || [],
+  contactId: row.contact_id || undefined,
+  contactName: row.contacts?.full_name || undefined,
+  contactPhone: row.contacts?.contact_no || undefined,
   details: (row.sales_detail || []).map(mapSalesDetailRow),
   createdAt: row.created_at,
   updatedAt: row.updated_at,
@@ -124,8 +128,8 @@ export const getSalesOrders = async (
   let query = supabase
     .from('sales_header')
     .select(useProductFilter
-      ? '*, clients(company_name), sales_detail!inner(*, product(name, code, dimension), production_material_usage(*, material(name, code, material_type, consumption_mode)))'
-      : '*, clients(company_name), sales_detail(*, product(name, code, dimension), production_material_usage(*, material(name, code, material_type, consumption_mode)))');
+      ? '*, clients(company_name), contacts(full_name, contact_no), sales_detail!inner(*, product(name, code, dimension), production_material_usage(*, material(name, code, material_type, consumption_mode)))'
+      : '*, clients(company_name), contacts(full_name, contact_no), sales_detail(*, product(name, code, dimension), production_material_usage(*, material(name, code, material_type, consumption_mode)))');
 
   query = tab === 'QUOTATION'
     ? query.eq('status', 'QUOTATION')
@@ -192,7 +196,7 @@ export const getSalesOrders = async (
 export const getSalesOrderById = async (id: string): Promise<SalesHeader | null> => {
   const { data, error } = await supabase
     .from('sales_header')
-    .select('*, clients(company_name), sales_detail(*, product(name, code, dimension), production_material_usage(*, material(name, code, material_type, consumption_mode)))')
+    .select('*, clients(company_name), contacts(full_name, contact_no), sales_detail(*, product(name, code, dimension), production_material_usage(*, material(name, code, material_type, consumption_mode)))')
     .eq('id', id)
     .maybeSingle();
   if (error) {
@@ -265,6 +269,7 @@ export const createSalesQuotation = async (input: SalesFormInput): Promise<void>
     order_date: nowIso(),
     status: 'QUOTATION',
     client_id: input.clientId,
+    contact_id: input.contactId || null,
     total_amount: totalAmount,
     remark: input.remark || null,
     attachments: input.attachments || [],
@@ -286,6 +291,7 @@ export const updateSalesOrder = async (headerId: string, input: SalesFormInput):
     .from('sales_header')
     .update({
       client_id: input.clientId,
+      contact_id: input.contactId || null,
       total_amount: totalAmount,
       remark: input.remark || null,
       attachments: input.attachments || [],
@@ -308,6 +314,7 @@ export const convertToSalesOrder = async (headerId: string, input: SalesFormInpu
     .from('sales_header')
     .update({
       client_id: input.clientId,
+      contact_id: input.contactId || null,
       total_amount: totalAmount,
       remark: input.remark || null,
       attachments: input.attachments || [],

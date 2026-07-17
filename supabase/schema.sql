@@ -355,3 +355,34 @@ create table dashboard_preferences (
   section_order jsonb not null default '[]'::jsonb,
   updated_at timestamptz not null default now()
 );
+
+-- Optional contact person on a quotation (vendor-side for purchases, client-side for sales) — drives
+-- the WhatsApp quotation message. Not enforced against vendor_id/client_id at the DB level: the picker
+-- scopes the ComboBox client-side, same trust level as everything else in this app.
+ALTER TABLE purchase_header ADD COLUMN contact_id UUID REFERENCES contacts(id) ON DELETE SET NULL;
+ALTER TABLE sales_header    ADD COLUMN contact_id UUID REFERENCES contacts(id) ON DELETE SET NULL;
+
+-- One editable message template per quotation type (not a multi-template list — System Admin just
+-- edits these two rows' content). {{token}} placeholders are filled client-side in utils/whatsapp.ts.
+CREATE TABLE whatsapp_templates (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  type TEXT UNIQUE NOT NULL CHECK (type IN ('PURCHASE','SALES')),
+  content TEXT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO whatsapp_templates (type, content) VALUES
+('PURCHASE', E'Hi {{vendor_name}},\n\nWe would like to request a quotation.\n\nQuotation No:\n{{quotation_no}}\n\n{{items}}\n\nThank you.'),
+('SALES', E'Hi {{customer_name}},\n\nThank you for your enquiry.\n\nQuotation No:\n{{quotation_no}}\n\n{{items}}\n\nGrand Total:\n{{grand_total}}\n\nThank you.');
+
+ALTER TABLE whatsapp_templates ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS whatsapp_templates_all ON whatsapp_templates;
+CREATE POLICY whatsapp_templates_all ON whatsapp_templates FOR ALL TO public USING (true) WITH CHECK (true);
+
+-- Default greeting now leads with a title before the contact's name. Only touches rows still on the
+-- seed default — a template someone already customized in System Admin is left alone.
+UPDATE whatsapp_templates SET content = E'Hi Mr/Ms {{vendor_name}},\n\nWe would like to request a quotation.\n\nQuotation No:\n{{quotation_no}}\n\n{{items}}\n\nThank you.'
+WHERE type = 'PURCHASE' AND content = E'Hi {{vendor_name}},\n\nWe would like to request a quotation.\n\nQuotation No:\n{{quotation_no}}\n\n{{items}}\n\nThank you.';
+
+UPDATE whatsapp_templates SET content = E'Hi Mr/Ms {{customer_name}},\n\nThank you for your enquiry.\n\nQuotation No:\n{{quotation_no}}\n\n{{items}}\n\nGrand Total:\n{{grand_total}}\n\nThank you.'
+WHERE type = 'SALES' AND content = E'Hi {{customer_name}},\n\nThank you for your enquiry.\n\nQuotation No:\n{{quotation_no}}\n\n{{items}}\n\nGrand Total:\n{{grand_total}}\n\nThank you.';

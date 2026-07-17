@@ -14,14 +14,15 @@ import {
 } from '../services/OrdersService';
 import { getProducts, getProductsPage } from '../services/ProductService';
 import { getMaterials } from '../services/MaterialService';
-import { getMaterialCategories } from '../services/SystemAdminService';
-import { getClients } from '../services/ContactsService';
-import { SalesHeader, Client, Product, Material, MaterialCategory, Attachment, SalesPriority } from '../types';
+import { getMaterialCategories, getWhatsappTemplates } from '../services/SystemAdminService';
+import { getClients, getContacts } from '../services/ContactsService';
+import { SalesHeader, Client, Contact, Product, Material, MaterialCategory, Attachment, SalesPriority } from '../types';
+import { buildWhatsappUrl, fillSalesTemplate } from '../utils/whatsapp';
 import { PRIORITY_META, PRIORITY_OPTIONS, getDueUrgency } from '../utils/priority';
 import { formatDateTime, formatDate, toDateTimeLocal, fromDateTimeLocal, monthStart, monthEnd } from '../utils/date';
 import { QUICK_RANGES } from '../utils/dateRanges';
 import QuickRangePills from './QuickRangePills';
-import { Plus, Calendar, Check, CheckCheck, Factory, Paperclip, Trash2, Edit, FileText, ArrowRightCircle, Eye, RotateCcw, Undo2, AlertTriangle } from 'lucide-react';
+import { Plus, Calendar, Check, CheckCheck, Factory, Paperclip, Trash2, Edit, FileText, ArrowRightCircle, Eye, RotateCcw, Undo2, AlertTriangle, MessageCircle } from 'lucide-react';
 import AttachmentSection from './AttachmentSection';
 import SalesQuotationModal from './SalesQuotationModal';
 import ProductionCompletionModal from './ProductionCompletionModal';
@@ -460,6 +461,8 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, init
   const [editHeaderId, setEditHeaderId] = useState<string | null>(null);
   const [editHeaderStatus, setEditHeaderStatus] = useState<SalesHeader['status'] | null>(null);
   const [formClientId, setFormClientId] = useState('');
+  const [formContactId, setFormContactId] = useState('');
+  const [formContacts, setFormContacts] = useState<Contact[]>([]);
   const [formDeliveryDate, setFormDeliveryDate] = useState('');
   const [formProductionDueDate, setFormProductionDueDate] = useState('');
   const [formPriority, setFormPriority] = useState<SalesPriority>('MEDIUM');
@@ -488,9 +491,20 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, init
     setTempMaterialQty(1);
   };
 
+  // Contact picker is scoped to whichever client is currently selected —
+  // switching clients clears any contact picked for the old one.
+  useEffect(() => {
+    if (!formClientId) { setFormContacts([]); setFormContactId(''); return; }
+    getContacts({ clientId: formClientId }).then((contacts) => {
+      setFormContacts(contacts);
+      setFormContactId(prev => contacts.some(c => c.id === prev) ? prev : '');
+    }).catch(console.error);
+  }, [formClientId]);
+
   const resetForm = () => {
     setEditHeaderId(null);
     setFormClientId('');
+    setFormContactId('');
     setFormDeliveryDate('');
     setFormProductionDueDate('');
     setFormPriority('MEDIUM');
@@ -592,6 +606,7 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, init
     setEditHeaderId(order.id);
     setEditHeaderStatus(order.status);
     setFormClientId(order.clientId);
+    setFormContactId(order.contactId || '');
     setFormProductionDueDate(order.productionDueDate || '');
     setFormPriority(order.priority || 'MEDIUM');
     setFormRemark(order.remark || '');
@@ -605,6 +620,7 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, init
     setFormMode('CONVERT');
     setEditHeaderId(order.id);
     setFormClientId(order.clientId);
+    setFormContactId(order.contactId || '');
     setFormProductionDueDate(order.productionDueDate || '');
     setFormPriority(order.priority || 'MEDIUM');
     setFormRemark(order.remark || '');
@@ -747,6 +763,7 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, init
 
     const input = {
       clientId: formClientId,
+      contactId: formContactId || undefined,
       remark: formRemark || undefined,
       attachments: formAttachment ? [formAttachment] : [],
       details: finalDetails,
@@ -958,6 +975,16 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, init
     setIsQuotationModalOpen(true);
   };
 
+  // Fetches the current Sales template fresh each click (System Admin may have just edited it) and
+  // opens wa.me with it filled in. No contact/phone → nothing to click (button isn't rendered).
+  const handleWhatsappClick = async (order: SalesHeader) => {
+    if (!order.contactPhone) return;
+    const templates = await getWhatsappTemplates();
+    const template = templates.find(t => t.type === 'SALES');
+    if (!template) return;
+    window.open(buildWhatsappUrl(order.contactPhone, fillSalesTemplate(template.content, order)), '_blank');
+  };
+
   const editingQuotation = formMode === 'EDIT' && editHeaderStatus === 'QUOTATION';
 
   const sheetTitle = formMode === 'CREATE' ? 'Create Sales Quotation'
@@ -989,6 +1016,20 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, init
   const columns: DataTableColumn<SalesHeader>[] = [
     { key: 'reference', header: 'Contract ID', sortable: true, className: 'w-32', render: (o) => <span className="font-mono font-medium text-foreground">{o.salesNo}</span> },
     { key: 'client', header: 'Client', sortable: true, className: 'w-40', render: (o) => <span className="font-medium text-card-foreground truncate">{o.clientName}</span> },
+    {
+      key: 'contact', header: 'Contact', className: 'w-36',
+      render: (o) => o.contactName && o.contactPhone ? (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); handleWhatsappClick(o); }}
+          className="inline-flex items-center gap-1 text-primary hover:underline"
+          title="Message on WhatsApp"
+        >
+          <MessageCircle className="w-3.5 h-3.5 shrink-0" />
+          <span className="truncate">{o.contactName}</span>
+        </button>
+      ) : <span className="text-muted-foreground">—</span>,
+    },
     {
       key: 'items', header: 'Product & Quantity', sortable: true,
       render: (o) => (
@@ -1064,6 +1105,7 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, init
           onCancel={handleCancel}
           onReturn={openReturn}
           onOpenQuotationDoc={openQuotationDoc}
+          onWhatsapp={handleWhatsappClick}
         />
       ) : (
         <>
@@ -1226,6 +1268,16 @@ export default function OrdersView({ initialOrderId, onInitialOrderHandled, init
                     onChange={setFormClientId}
                     noneLabel="-- Select Client --"
                     options={clients.map(c => ({ value: c.id, label: c.companyName, sublabel: c.officeNo || c.email }))}
+                  />
+                </FormField>
+
+                <FormField label="Contact Person (Optional)" colSpan="sm:col-span-2">
+                  <ComboBox
+                    value={formContactId}
+                    onChange={setFormContactId}
+                    disabled={!formClientId}
+                    noneLabel="-- No Contact Person --"
+                    options={formContacts.map(c => ({ value: c.id, label: c.fullName, sublabel: c.contactNo || c.email }))}
                   />
                 </FormField>
 

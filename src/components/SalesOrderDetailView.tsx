@@ -7,7 +7,7 @@ import { useMemo, useState } from 'react';
 import { SalesHeader, SalesDetail, ProductionMaterialUsage } from '../types';
 import {
   ArrowLeft, Calendar, Paperclip, Trash2, Edit, FileText, ArrowRightCircle,
-  Check, CheckCheck, Factory, Boxes, Undo2, Layers, Plus,
+  Check, CheckCheck, Factory, Boxes, Undo2, Layers, Plus, MessageCircle,
 } from 'lucide-react';
 import { canStartProduction, canDeliver, canDeleteSalesOrder, canAddMaterial, suggestedProduceQuantity } from '../services/OrdersService';
 import { Card, Badge, Button } from './ui';
@@ -55,6 +55,8 @@ interface SalesOrderDetailViewProps {
   onCancel: (order: SalesHeader) => void;
   onReturn: (order: SalesHeader) => void;
   onOpenQuotationDoc: (order: SalesHeader) => void;
+  // Present only when order.contactName/contactPhone are set — opens WhatsApp with the filled Sales template.
+  onWhatsapp?: (order: SalesHeader) => void;
 }
 
 /**
@@ -68,7 +70,7 @@ interface SalesOrderDetailViewProps {
 export default function SalesOrderDetailView({
   order, onBack, backLabel = 'Back to Sales Contracts', transitioningId, stockByProductId,
   onEdit, onConvert, onDelete, onStartProduction, onAddMaterial, onProductionCompletion,
-  onMarkDelivered, onCancel, onReturn, onOpenQuotationDoc,
+  onMarkDelivered, onCancel, onReturn, onOpenQuotationDoc, onWhatsapp,
 }: SalesOrderDetailViewProps) {
   const contentRef = useFadeInOnMount<HTMLDivElement>([order.id]);
   const status = STATUS_META[order.status];
@@ -151,6 +153,17 @@ export default function SalesOrderDetailView({
             <div>
               <h2 className="font-mono font-bold text-foreground text-lg leading-snug">{order.salesNo}</h2>
               <p className="text-xs text-muted-foreground mt-1">{order.clientName}</p>
+              {order.contactName && order.contactPhone && (
+                <button
+                  type="button"
+                  onClick={() => onWhatsapp?.(order)}
+                  className="inline-flex items-center gap-1.5 text-xs text-primary hover:underline mt-1"
+                  title="Message on WhatsApp"
+                >
+                  <MessageCircle className="w-3.5 h-3.5" />
+                  <span>{order.contactName}</span>
+                </button>
+              )}
             </div>
 
             <div className="flex items-center gap-1.5 flex-wrap">

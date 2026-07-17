@@ -32,6 +32,7 @@ export interface PurchaseDetailInput {
 export interface PurchaseFormInput {
   vendorId: string;
   salesHeaderId?: string;
+  contactId?: string;
   attachments?: Attachment[];
   details: PurchaseDetailInput[];
 }
@@ -63,6 +64,9 @@ const mapPurchaseHeaderRow = (row: any): PurchaseHeader => ({
   attachments: row.attachments || [],
   salesHeaderId: row.sales_header_id || undefined,
   salesNo: row.sales_header?.sales_no || undefined,
+  contactId: row.contact_id || undefined,
+  contactName: row.contacts?.full_name || undefined,
+  contactPhone: row.contacts?.contact_no || undefined,
   details: (row.purchase_detail || []).map(mapPurchaseDetailRow),
   createdAt: row.created_at,
   updatedAt: row.updated_at,
@@ -96,8 +100,8 @@ export const getPurchases = async (
   let query = supabase
     .from('purchase_header')
     .select(useMaterialFilter
-      ? '*, vendors(company_name), sales_header(sales_no), purchase_detail!inner(*, material(name, code, dimension))'
-      : '*, vendors(company_name), sales_header(sales_no), purchase_detail(*, material(name, code, dimension))');
+      ? '*, vendors(company_name), sales_header(sales_no), contacts(full_name, contact_no), purchase_detail!inner(*, material(name, code, dimension))'
+      : '*, vendors(company_name), sales_header(sales_no), contacts(full_name, contact_no), purchase_detail(*, material(name, code, dimension))');
 
   query = tab === 'QUOTATION'
     ? query.eq('status', 'QUOTATION')
@@ -182,7 +186,7 @@ export const getLatestUnitCost = async (materialId: string): Promise<number | un
 export const getPurchaseById = async (id: string): Promise<PurchaseHeader | null> => {
   const { data, error } = await supabase
     .from('purchase_header')
-    .select('*, vendors(company_name), sales_header(sales_no), purchase_detail(*, material(name, code, dimension))')
+    .select('*, vendors(company_name), sales_header(sales_no), contacts(full_name, contact_no), purchase_detail(*, material(name, code, dimension))')
     .eq('id', id)
     .maybeSingle();
   if (error) {
@@ -234,6 +238,7 @@ export const createPurchaseQuotation = async (input: PurchaseFormInput): Promise
     status: 'QUOTATION',
     vendor_id: input.vendorId,
     sales_header_id: input.salesHeaderId || null,
+    contact_id: input.contactId || null,
     total_price: totalPrice,
     attachments: input.attachments || [],
   });
@@ -257,6 +262,7 @@ export const updatePurchase = async (headerId: string, input: PurchaseFormInput)
     .update({
       vendor_id: input.vendorId,
       sales_header_id: input.salesHeaderId || null,
+      contact_id: input.contactId || null,
       total_price: totalPrice,
       attachments: input.attachments || [],
     })
@@ -277,6 +283,7 @@ export const convertToPurchaseOrder = async (headerId: string, input: PurchaseFo
     .update({
       vendor_id: input.vendorId,
       sales_header_id: input.salesHeaderId || null,
+      contact_id: input.contactId || null,
       total_price: totalPrice,
       attachments: input.attachments || [],
       order_date: orderDate,

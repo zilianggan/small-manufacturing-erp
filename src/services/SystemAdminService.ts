@@ -1,4 +1,4 @@
-import { JobPosition, MaterialCategory, ProductCategory, SystemAdminData } from "../types";
+import { JobPosition, MaterialCategory, ProductCategory, SystemAdminData, WhatsappTemplate, WhatsappTemplateType } from "../types";
 import { deleteRecord, getRecords, getStorageItem, removeStorageItem, setStorageItem, upsertRecord } from "../helper";
 import { supabase } from "./supabase";
 
@@ -48,4 +48,23 @@ export const loadSystemAdminData = async () => {
         .single<SystemAdminData>();
     if (error) throw error;
     return data;
+};
+
+// Two rows total (PURCHASE/SALES) — read fresh each time, no localStorage cache, so an edit in
+// System Admin is picked up immediately by the next WhatsApp click.
+export const getWhatsappTemplates = async (): Promise<WhatsappTemplate[]> => {
+    const { data, error } = await supabase.from('whatsapp_templates').select('*');
+    if (error) {
+        console.error('getWhatsappTemplates', error);
+        return [];
+    }
+    return (data || []).map((row: any) => ({ id: row.id, type: row.type, content: row.content, updatedAt: row.updated_at }));
+};
+
+export const saveWhatsappTemplate = async (type: WhatsappTemplateType, content: string): Promise<void> => {
+    const { error } = await supabase.from('whatsapp_templates').update({ content, updated_at: new Date().toISOString() }).eq('type', type);
+    if (error) {
+        console.error('saveWhatsappTemplate', error);
+        throw error;
+    }
 };

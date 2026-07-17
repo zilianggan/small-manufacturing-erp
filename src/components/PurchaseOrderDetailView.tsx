@@ -6,7 +6,7 @@
 import { useMemo, useState } from 'react';
 import { PurchaseHeader, PurchaseDetail } from '../types';
 import {
-  ArrowLeft, Calendar, Paperclip, Trash2, Edit, ArrowRightCircle, Check, Boxes, FileSpreadsheet, FileText, Undo2,
+  ArrowLeft, Calendar, Paperclip, Trash2, Edit, ArrowRightCircle, Check, Boxes, FileSpreadsheet, FileText, Undo2, MessageCircle,
 } from 'lucide-react';
 import { Card, Badge, Button } from './ui';
 import { SectionCard, DataTable } from './shell';
@@ -45,6 +45,8 @@ interface PurchaseOrderDetailViewProps {
   // Present only when purchase.salesHeaderId is set — jumps to the sales
   // order this purchase was raised against.
   onViewSalesOrder?: (salesHeaderId: string) => void;
+  // Present only when purchase.contactName/contactPhone are set — opens WhatsApp with the filled Purchase template.
+  onWhatsapp?: (purchase: PurchaseHeader) => void;
 }
 
 const sortByField = <K extends LineItemSortKey>(rows: PurchaseDetail[], key: K, dir: 'asc' | 'desc'): PurchaseDetail[] => {
@@ -70,7 +72,7 @@ const sortByField = <K extends LineItemSortKey>(rows: PurchaseDetail[], key: K, 
  */
 export default function PurchaseOrderDetailView({
   purchase, onBack, backLabel = 'Back to Purchases',
-  onEdit, onConvert, onDelete, onReceive, onCancel, onReturn, onOpenInvoiceDoc, onViewSalesOrder
+  onEdit, onConvert, onDelete, onReceive, onCancel, onReturn, onOpenInvoiceDoc, onViewSalesOrder, onWhatsapp
 }: PurchaseOrderDetailViewProps) {
   const contentRef = useFadeInOnMount<HTMLDivElement>([purchase.id]);
   const status = STATUS_META[purchase.status];
@@ -129,6 +131,17 @@ export default function PurchaseOrderDetailView({
               <div>
                 <h2 className="font-mono font-bold text-foreground text-lg leading-snug">{purchase.purchaseNo}</h2>
                 <p className="text-xs text-muted-foreground mt-1">{purchase.vendorName}</p>
+                {purchase.contactName && purchase.contactPhone && (
+                  <button
+                    type="button"
+                    onClick={() => onWhatsapp?.(purchase)}
+                    className="inline-flex items-center gap-1.5 text-xs text-primary hover:underline mt-1"
+                    title="Message on WhatsApp"
+                  >
+                    <MessageCircle className="w-3.5 h-3.5" />
+                    <span>{purchase.contactName}</span>
+                  </button>
+                )}
               </div>
 
               <Badge variant={status.variant}>{status.label}</Badge>

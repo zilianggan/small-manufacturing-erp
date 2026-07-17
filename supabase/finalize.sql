@@ -161,6 +161,7 @@ CREATE TABLE sales_header (
   client_id UUID REFERENCES clients(id) ON DELETE SET NULL,
   production_due_date date,
   priority TEXT NOT NULL DEFAULT 'MEDIUM' CHECK (priority IN ('LOW','MEDIUM','HIGH','URGENT')),
+  contact_id UUID REFERENCES contacts(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -203,6 +204,7 @@ CREATE TABLE purchase_header (
   total_price NUMERIC DEFAULT 0,
   vendor_id UUID REFERENCES vendors(id) ON DELETE SET NULL,
   sales_header_id UUID REFERENCES sales_header(id) ON DELETE SET NULL,
+  contact_id UUID REFERENCES contacts(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -275,6 +277,19 @@ CREATE TABLE workflow_tasks (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- One editable WhatsApp message template per quotation type (PURCHASE/SALES) — System Admin edits
+-- these two rows' content. {{token}} placeholders are filled client-side in utils/whatsapp.ts.
+CREATE TABLE whatsapp_templates (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  type TEXT UNIQUE NOT NULL CHECK (type IN ('PURCHASE','SALES')),
+  content TEXT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO whatsapp_templates (type, content) VALUES
+('PURCHASE', E'Hi Mr/Ms {{vendor_name}},\n\nWe would like to request a quotation.\n\nQuotation No:\n{{quotation_no}}\n\n{{items}}\n\nThank you.'),
+('SALES', E'Hi Mr/Ms {{customer_name}},\n\nThank you for your enquiry.\n\nQuotation No:\n{{quotation_no}}\n\n{{items}}\n\nGrand Total:\n{{grand_total}}\n\nThank you.');
+
 -- Row Level Security — every table below gets RLS enabled with one permissive "allow everything to
 -- public" policy (auth/authorization is handled in the app layer, not in Postgres, for this project).
 -- company_profile is deliberately excluded — it's a single-row config table.
@@ -298,7 +313,8 @@ BEGIN
         'sales_detail',
         'production_material_usage',
         'inventory_transaction',
-        'workflow_tasks'
+        'workflow_tasks',
+        'whatsapp_templates'
     ]
     LOOP
         EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY;', tbl);

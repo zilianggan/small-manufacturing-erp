@@ -8,6 +8,8 @@ Version 1.0.5
 - Add more filter option (inventory add movement type and status, sales and purchase order listing add status)
 - Separate material table and product table in sales form
 - Change date picker and time picker design
+- Dashboard arrangement
+- Add whatsapp quotation template
 
 Version 1.0.4
 --------------------
