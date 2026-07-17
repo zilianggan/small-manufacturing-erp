@@ -38,11 +38,6 @@ export interface ImportColumn {
   required: boolean;
 }
 
-export interface RowImportResult {
-  successCount: number;
-  logs: string[];
-}
-
 export interface FlatImportResult<T> {
   records: T[];
   errors: ImportRowError[];
@@ -910,4 +905,22 @@ export const getAllExportSheets = async () => {
       Sales_Orders: sales.attachmentLinks,
     },
   };
+};
+
+export type FlatCategory = 'VENDORS' | 'CLIENTS' | 'CONTACTS' | 'MATERIAL' | 'PRODUCT' | 'INVENTORY';
+
+const FLAT_LS_KEY: Record<FlatCategory, string> = {
+  VENDORS: 'erp_vendors',
+  CLIENTS: 'erp_clients',
+  CONTACTS: 'erp_contacts',
+  MATERIAL: 'erp_material',
+  PRODUCT: 'erp_product',
+  INVENTORY: 'erp_inventory_transaction',
+};
+
+// Every flat category's commit is the same shape: one upsertRecords call.
+// upsertRecords (helper.ts) already chunk-batches internally — this is not
+// a per-row insert loop.
+export const commitFlatImport = async (category: FlatCategory, records: any[]): Promise<void> => {
+  await upsertRecords(FLAT_LS_KEY[category], records);
 };
