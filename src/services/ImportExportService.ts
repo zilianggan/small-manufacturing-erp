@@ -252,84 +252,103 @@ export const PRODUCT_COLUMNS: ImportColumn[] = [
 // constraint. `quantity` is never part of the import row: it's owned by the
 // update_material_stock() DB trigger, same as every other Material write
 // path (saveMaterial's own row serializer already omits it).
-export const importMaterials = async (rows: Record<string, any>[]): Promise<RowImportResult> => {
-  const parsed = rows.map((raw, index) => {
-    const name = String(raw.name || '').trim();
-    if (!name) throw new Error(`Record #${index + 1} is missing a required 'name' field.`);
-    const materialType = VALID_MATERIAL_TYPES.includes(raw.materialType) ? raw.materialType : undefined;
-    return {
-      name,
-      code: raw.code || '',
-      materialType,
-      dimension: raw.dimension || '',
-      description: raw.description || '',
-      minimumStock: Number(raw.minimumStock) || 0,
-      categoryName: String(raw.category || '').trim(),
-    };
-  });
-
+export const validateMaterialsImport = async (rows: Record<string, any>[]): Promise<FlatImportResult<Material>> => {
   const [existing, categories] = await Promise.all([getMaterials(''), getMaterialCategories()]);
   const byNameCode = new Map(existing.map(m => [`${m.name.toLowerCase()}::${(m.code || '').toLowerCase()}`, m]));
   const categoryByName = new Map(categories.map(c => [c.name.toLowerCase(), c.id]));
+  const seenInFile = new Set<string>();
+  const errors: ImportRowError[] = [];
+  const records: Material[] = [];
 
-  const materials: Material[] = parsed.map(item => {
-    const key = `${item.name.toLowerCase()}::${item.code.toLowerCase()}`;
-    const match = byNameCode.get(key);
-    return {
+  rows.forEach((raw, index) => {
+    const rowNum = index + 1;
+    const name = String(raw.name || '').trim();
+    const code = String(raw.code || '').trim();
+    const categoryName = String(raw.category || '').trim();
+    let rowValid = true;
+
+    if (!name) { errors.push({ row: rowNum, message: "Missing 'Material Name'." }); rowValid = false; }
+
+    let categoryId: string | undefined;
+    if (categoryName) {
+      categoryId = categoryByName.get(categoryName.toLowerCase());
+      if (!categoryId) { errors.push({ row: rowNum, message: `Category "${categoryName}" not found.` }); rowValid = false; }
+    }
+
+    if (name) {
+      const key = `${name.toLowerCase()}::${code.toLowerCase()}`;
+      if (seenInFile.has(key)) { errors.push({ row: rowNum, message: `Duplicate Material "${name}"${code ? ` (${code})` : ''} in file.` }); rowValid = false; }
+      seenInFile.add(key);
+    }
+
+    if (!rowValid) return;
+
+    const materialType = VALID_MATERIAL_TYPES.includes(raw.materialType) ? raw.materialType : undefined;
+    const match = byNameCode.get(`${name.toLowerCase()}::${code.toLowerCase()}`);
+    records.push({
       id: match?.id || generateId(),
-      name: item.name,
-      code: item.code,
-      materialType: item.materialType,
-      dimension: item.dimension,
+      name,
+      code,
+      materialType,
+      dimension: String(raw.dimension || ''),
       quantity: match?.quantity ?? 0, // never written — helper.ts's erp_material serialiser omits this field
-      description: item.description,
+      description: String(raw.description || ''),
       attachments: match?.attachments, // preserve existing attachments on update; new records get none
       status: match?.status || 'ACTIVE',
-      minimumStock: item.minimumStock,
-      materialCategoryId: categoryByName.get(item.categoryName.toLowerCase()) || undefined,
-    };
+      minimumStock: Number(raw.minimumStock) || 0,
+      materialCategoryId: categoryId,
+    });
   });
-  await upsertRecords('erp_material', materials);
 
-  return { successCount: parsed.length, logs: [`Imported ${parsed.length} materials (created or updated by name+code).`] };
+  return { records, errors };
 };
 
-export const importProducts = async (rows: Record<string, any>[]): Promise<RowImportResult> => {
-  const parsed = rows.map((raw, index) => {
-    const name = String(raw.name || '').trim();
-    if (!name) throw new Error(`Record #${index + 1} is missing a required 'name' field.`);
-    return {
-      name,
-      code: raw.code || '',
-      dimension: raw.dimension || '',
-      description: raw.description || '',
-      sellingPrice: Number(raw.sellingPrice) || 0,
-      categoryName: String(raw.category || '').trim(),
-    };
-  });
-
+export const validateProductsImport = async (rows: Record<string, any>[]): Promise<FlatImportResult<Product>> => {
   const [existing, categories] = await Promise.all([getProducts(''), getProductCategories()]);
   const byNameCode = new Map(existing.map(p => [`${p.name.toLowerCase()}::${(p.code || '').toLowerCase()}`, p]));
   const categoryByName = new Map(categories.map(c => [c.name.toLowerCase(), c.id]));
+  const seenInFile = new Set<string>();
+  const errors: ImportRowError[] = [];
+  const records: Product[] = [];
 
-  const products: Product[] = parsed.map(item => {
-    const key = `${item.name.toLowerCase()}::${item.code.toLowerCase()}`;
-    const match = byNameCode.get(key);
-    return {
+  rows.forEach((raw, index) => {
+    const rowNum = index + 1;
+    const name = String(raw.name || '').trim();
+    const code = String(raw.code || '').trim();
+    const categoryName = String(raw.category || '').trim();
+    let rowValid = true;
+
+    if (!name) { errors.push({ row: rowNum, message: "Missing 'Product Name'." }); rowValid = false; }
+
+    let categoryId: string | undefined;
+    if (categoryName) {
+      categoryId = categoryByName.get(categoryName.toLowerCase());
+      if (!categoryId) { errors.push({ row: rowNum, message: `Category "${categoryName}" not found.` }); rowValid = false; }
+    }
+
+    if (name) {
+      const key = `${name.toLowerCase()}::${code.toLowerCase()}`;
+      if (seenInFile.has(key)) { errors.push({ row: rowNum, message: `Duplicate Product "${name}"${code ? ` (${code})` : ''} in file.` }); rowValid = false; }
+      seenInFile.add(key);
+    }
+
+    if (!rowValid) return;
+
+    const match = byNameCode.get(`${name.toLowerCase()}::${code.toLowerCase()}`);
+    records.push({
       id: match?.id || generateId(),
-      name: item.name,
-      code: item.code,
-      dimension: item.dimension,
-      description: item.description,
+      name,
+      code,
+      dimension: String(raw.dimension || ''),
+      description: String(raw.description || ''),
       attachments: match?.attachments, // preserve existing attachments on update; new records get none
       status: match?.status || 'ACTIVE',
-      sellingPrice: item.sellingPrice,
-      productCategoryId: categoryByName.get(item.categoryName.toLowerCase()) || undefined,
-    };
+      sellingPrice: Number(raw.sellingPrice) || 0,
+      productCategoryId: categoryId,
+    });
   });
-  await upsertRecords('erp_product', products);
 
-  return { successCount: parsed.length, logs: [`Imported ${parsed.length} products (created or updated by name+code).`] };
+  return { records, errors };
 };
 
 export const buildMaterialExportRows = (materials: Material[], categories: { id: string; name: string }[]) => {
