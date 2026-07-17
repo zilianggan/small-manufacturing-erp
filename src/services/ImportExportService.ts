@@ -16,6 +16,7 @@ import { getPurchases } from "./PurchasesService";
 import { getSalesOrders } from "./OrdersService";
 import { getInventoryTransactions } from "./InventoryTransactionService";
 import { nowIso } from "../utils/date";
+import { isValidEmail, isValidPhone } from "../utils/validators";
 import { Vendor, Client, Contact, Material, Product, Attachment } from "../types";
 
 // Groups per DB round-trip pair (header insert + detail insert) for
@@ -42,6 +43,11 @@ export interface RowImportResult {
   logs: string[];
 }
 
+export interface FlatImportResult<T> {
+  records: T[];
+  errors: ImportRowError[];
+}
+
 export const VENDOR_COLUMNS: ImportColumn[] = [
   { key: 'companyName', label: 'Company Name', required: true },
   { key: 'email', label: 'Email', required: false },
@@ -54,54 +60,72 @@ export const CLIENT_COLUMNS: ImportColumn[] = VENDOR_COLUMNS.map(c => ({ ...c })
 
 // Merge-by-natural-key only (no OVERWRITE/wipe mode): a companyName match
 // (case-insensitive) updates that row, otherwise a new one is created.
-export const importVendors = async (rows: Record<string, any>[]): Promise<RowImportResult> => {
-  const parsed = rows.map((raw, index) => {
-    const companyName = String(raw.companyName || '').trim();
-    if (!companyName) throw new Error(`Record #${index + 1} is missing a required 'companyName' field.`);
-    return {
-      companyName,
-      email: raw.email || '',
-      officeNo: raw.officeNo || '',
-      address: raw.address || '',
-      description: raw.description || '',
-    };
-  });
-
+// Validation only — no write. A row with any error is left out of `records`
+// entirely; the caller only commits once `errors` is empty.
+export const validateVendorsImport = async (rows: Record<string, any>[]): Promise<FlatImportResult<Vendor>> => {
   const existing = await getVendors('');
   const byName = new Map(existing.map(v => [v.companyName.toLowerCase(), v]));
+  const seenInFile = new Set<string>();
+  const errors: ImportRowError[] = [];
+  const records: Vendor[] = [];
 
-  const vendors: Vendor[] = parsed.map(item => {
-    const match = byName.get(item.companyName.toLowerCase());
-    return { id: match?.id || generateId(), attachments: match?.attachments, ...item };
+  rows.forEach((raw, index) => {
+    const rowNum = index + 1;
+    const companyName = String(raw.companyName || '').trim();
+    const email = String(raw.email || '').trim();
+    const officeNo = String(raw.officeNo || '').trim();
+    let rowValid = true;
+
+    if (!companyName) { errors.push({ row: rowNum, message: "Missing 'Company Name'." }); rowValid = false; }
+    if (email && !isValidEmail(email)) { errors.push({ row: rowNum, message: `Email "${email}" is not a valid email address.` }); rowValid = false; }
+    if (officeNo && !isValidPhone(officeNo)) { errors.push({ row: rowNum, message: `Office No. "${officeNo}" is not a valid phone number.` }); rowValid = false; }
+
+    if (companyName) {
+      const key = companyName.toLowerCase();
+      if (seenInFile.has(key)) { errors.push({ row: rowNum, message: `Duplicate Company Name "${companyName}" in file.` }); rowValid = false; }
+      seenInFile.add(key);
+    }
+
+    if (!rowValid) return;
+
+    const match = byName.get(companyName.toLowerCase());
+    records.push({ id: match?.id || generateId(), attachments: match?.attachments, companyName, email, officeNo, address: String(raw.address || ''), description: String(raw.description || '') });
   });
-  await upsertRecords('erp_vendors', vendors);
 
-  return { successCount: parsed.length, logs: [`Imported ${parsed.length} vendors (created or updated by company name).`] };
+  return { records, errors };
 };
 
-export const importClients = async (rows: Record<string, any>[]): Promise<RowImportResult> => {
-  const parsed = rows.map((raw, index) => {
-    const companyName = String(raw.companyName || '').trim();
-    if (!companyName) throw new Error(`Record #${index + 1} is missing a required 'companyName' field.`);
-    return {
-      companyName,
-      email: raw.email || '',
-      officeNo: raw.officeNo || '',
-      address: raw.address || '',
-      description: raw.description || '',
-    };
-  });
-
+export const validateClientsImport = async (rows: Record<string, any>[]): Promise<FlatImportResult<Client>> => {
   const existing = await getClients('');
   const byName = new Map(existing.map(c => [c.companyName.toLowerCase(), c]));
+  const seenInFile = new Set<string>();
+  const errors: ImportRowError[] = [];
+  const records: Client[] = [];
 
-  const clients: Client[] = parsed.map(item => {
-    const match = byName.get(item.companyName.toLowerCase());
-    return { id: match?.id || generateId(), attachments: match?.attachments, ...item };
+  rows.forEach((raw, index) => {
+    const rowNum = index + 1;
+    const companyName = String(raw.companyName || '').trim();
+    const email = String(raw.email || '').trim();
+    const officeNo = String(raw.officeNo || '').trim();
+    let rowValid = true;
+
+    if (!companyName) { errors.push({ row: rowNum, message: "Missing 'Company Name'." }); rowValid = false; }
+    if (email && !isValidEmail(email)) { errors.push({ row: rowNum, message: `Email "${email}" is not a valid email address.` }); rowValid = false; }
+    if (officeNo && !isValidPhone(officeNo)) { errors.push({ row: rowNum, message: `Office No. "${officeNo}" is not a valid phone number.` }); rowValid = false; }
+
+    if (companyName) {
+      const key = companyName.toLowerCase();
+      if (seenInFile.has(key)) { errors.push({ row: rowNum, message: `Duplicate Company Name "${companyName}" in file.` }); rowValid = false; }
+      seenInFile.add(key);
+    }
+
+    if (!rowValid) return;
+
+    const match = byName.get(companyName.toLowerCase());
+    records.push({ id: match?.id || generateId(), attachments: match?.attachments, companyName, email, officeNo, address: String(raw.address || ''), description: String(raw.description || '') });
   });
-  await upsertRecords('erp_clients', clients);
 
-  return { successCount: parsed.length, logs: [`Imported ${parsed.length} clients (created or updated by company name).`] };
+  return { records, errors };
 };
 
 export const CONTACT_COLUMNS: ImportColumn[] = [
