@@ -1123,8 +1123,13 @@ BEGIN
 
         UPDATE sales_detail SET produce_quantity = v_produce_qty WHERE detail_id = v_line.detail_id;
 
-        INSERT INTO workflow_tasks (sales_detail_id, status, stage, start_date)
-        VALUES (v_line.detail_id, 'IN_PRODUCTION', 'PREPARATION', CURRENT_DATE);
+        -- A line left at 0 (stock already covers it — the order is only in this run because another
+        -- line needs making) gets no Kanban card: nothing about it is actually being produced, and an
+        -- untouched card with no way to tell it apart from real work just confuses the shop floor.
+        IF v_produce_qty > 0 THEN
+            INSERT INTO workflow_tasks (sales_detail_id, status, stage, start_date)
+            VALUES (v_line.detail_id, 'IN_PRODUCTION', 'PREPARATION', CURRENT_DATE);
+        END IF;
 
         -- Scale each planned material to what's actually being produced, same formula as the old JS
         -- scaledPlan(): reserved = planned * produceQty / orderedQty, rounded to 2dp. Rewriting

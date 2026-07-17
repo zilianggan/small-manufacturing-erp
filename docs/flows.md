@@ -200,7 +200,7 @@ next_document_number('SO')                                              ▲ ▲ 
 | Available to promise | form's ATP panel (`getProductStock` + `getOutstandingDemand`) | read-only | **planning only** — per product on **this** order: in stock, outstanding elsewhere, available, this order's qty. Tells the user whether they can skip production |
 | Production gate | `canStartProduction(header)` | read-only | `true` only when status is `ORDERED`/`PARTIALLY_DELIVERED` **and** at least one line has production materials — an order with no BOM can't Start Production at all, it can only Deliver |
 | Stock gate | `checkProductionStock(header, produce)` | read-only | returns shortfalls for the **scaled** BOM; **blocks** Start Production |
-| Start Production | `startProduction(header, produce)` | single call to `apply_production_start()` (Postgres RPC, `function_trigger.sql`) — one transaction: idempotency-claims `ORDERED`/`PARTIALLY_DELIVERED` → `IN_PRODUCTION` (a retry after a rolled-back failure starts clean, never double-deducts), sets `sales_detail.produce_quantity`, **rewrites** each `production_material_usage.planned_quantity` to the scaled reservation, opens one `workflow_tasks` row per line, and deducts material via `apply_material_consumption()` (row-locked, throws on insufficient stock) | **material −reserved**, never below 0 — an over-request throws before writing anything, whole run rolls back. Throws up front if every line's `produce` qty is 0 — a run that makes nothing is refused, both in the modal (Confirm disabled) and in the service (hard guarantee) |
+| Start Production | `startProduction(header, produce)` | single call to `apply_production_start()` (Postgres RPC, `function_trigger.sql`) — one transaction: idempotency-claims `ORDERED`/`PARTIALLY_DELIVERED` → `IN_PRODUCTION` (a retry after a rolled-back failure starts clean, never double-deducts), sets `sales_detail.produce_quantity`, **rewrites** each `production_material_usage.planned_quantity` to the scaled reservation, opens one `workflow_tasks` row per line **with a positive produce qty** (a line left at 0 because stock already covers it gets no card — nothing about it is actually being made), and deducts material via `apply_material_consumption()` (row-locked, throws on insufficient stock) | **material −reserved**, never below 0 — an over-request throws before writing anything, whole run rolls back. Throws up front if every line's `produce` qty is 0 — a run that makes nothing is refused, both in the modal (Confirm disabled) and in the service (hard guarantee) |
 | Kanban | `updateWorkflowStage()` | `workflow_tasks.stage` | none |
 | Add consumable | `addOrderConsumable()` | `production_material_usage` row (`actual_quantity` set, planned 0) | **none at this point** |
 | Stock gate (completion) | `checkProductionCompletionStock(header, reconciliations)` | read-only | returns shortfalls for reconciliation rows using MORE than the Start Production reservation, plus AUTOMATIC consumables' fixed `actual_quantity`; **blocks** Confirm Production Done. Mirrors the Start Production stock gate above — front-runs the same guard `apply_material_consumption()` enforces server-side, instead of surfacing it only after the RPC throws |
@@ -332,8 +332,8 @@ Every stock movement in the system is one ledger row. Writers, all of them:
 | **Inventory tab → Stock Adjustment drawer, INCREASE** | `ADJUSTMENT` | `+` | material **or product** |
 | **Inventory tab → Stock Adjustment drawer, DECREASE** — via `apply_manual_stock_decrease()` RPC, can't exceed current stock | `ADJUSTMENT` | `−` | material **or product** |
 | **Import → inventory adjustments** (`ImportExportService.ts`) | `ADJUSTMENT` | signed, straight from the sheet | material **or product** |
-| **Import → `commitPurchaseImport()`** (`ImportExportService.ts:486`) | `PURCHASE` | `+` | material |
-| **Import → `commitSalesImport()`** (`ImportExportService.ts:679`) | `SALES` | `−` | **product** |
+| **Import → `commitPurchaseImport()`** (`ImportExportService.ts:537`) | `PURCHASE` | `+` | material — **skippable**, see below |
+| **Import → `commitSalesImport()`** (`ImportExportService.ts:757`) | `SALES` | `−` | **product** — **skippable**, see below |
 
 `cancelSalesOrder()` from `IN_PRODUCTION` used to write `SALES_RETURN`; it's `ADJUSTMENT` now.
 `SALES_RETURN` means one thing only: the client sent finished goods back via `returnSalesOrder()`.
@@ -359,7 +359,14 @@ into `inventory_transaction` directly via `supabase.from('inventory_transaction'
 movement history same as a normal receipt. `commitSalesImport()` does not: it leaves
 `sales_detail_id` unset even though the `sales_detail` rows it could link to are inserted
 immediately above, so imported SALES rows show in the ledger as bare product movements with no
-reference number back to the SO (see the comment at `ImportExportService.ts:674`).
+reference number back to the SO (see the comment at `ImportExportService.ts:813`).
+
+**Skippable via `addInventoryTransaction` param** (default `true`, wired to a checkbox on the
+Preview screen for Purchase/Sales only): when `false`, both functions still write the header/detail
+rows (status `RECEIVED`/`DELIVERED`, `received_quantity`/`delivered_quantity` = full quantity) but
+skip the `inventory_transaction` insert block entirely — so the order exists and reads as fully
+fulfilled, but `material.quantity`/`product.quantity` never move for it. For re-importing order
+history whose stock effect was already accounted for elsewhere.
 
 ### Reads
 

@@ -505,6 +505,9 @@ export const validatePurchaseImport = async (rows: PurchaseImportRow[]): Promise
     if (!group) {
       group = { purchaseNo, vendorId: vendor.id, vendorName: vendor.companyName, orderDate, details: [] };
       groupsByNo.set(purchaseNoKey, group);
+    } else if (group.vendorId !== vendor.id || group.orderDate !== orderDate) {
+      errors.push({ row: rowNum, message: `Purchase No "${purchaseNo}" has a different Vendor or Order Date than an earlier row with the same Purchase No.` });
+      return;
     }
     group.details.push({ materialId: material.id, materialName: material.name, materialCode: material.code, quantity, unitCost });
   });
@@ -739,6 +742,9 @@ export const validateSalesImport = async (rows: SalesImportRow[]): Promise<Sales
         deliveryDate: excelCellToDateString(raw.deliveryDate) || undefined, details: [],
       };
       groupsByNo.set(salesNoKey, group);
+    } else if (group.clientId !== client.id || group.orderDate !== orderDate) {
+      errors.push({ row: rowNum, message: `Sales No "${salesNo}" has a different Client or Order Date than an earlier row with the same Sales No.` });
+      return;
     }
     group.details.push({ productId: product.id, productName: product.name, productCode: product.code, quantity, unitPrice, remark: raw.remark || undefined });
   });
@@ -991,18 +997,26 @@ export const PRODUCTION_MATERIAL_COLUMNS: ImportColumn[] = [
 // immediately (see commitProductionMaterialsImport) and must be blocked if
 // stock can't cover it. Consumption Mode is deliberately not a column: it's
 // a Material-level setting (see ProductionMaterialUsage in types.ts) that
-// nothing writes per-usage anymore.
+// nothing writes per-usage anymore. Only matches lines on ORDERED-or-later
+// headers (getSalesOrders('SO', ...)) — a QUOTATION line is rejected with a
+// dedicated error instead of being matched, since debiting stock against one
+// would leave an inventory_transaction row blocking that quotation's delete.
 export const validateProductionMaterialsImport = async (rows: Record<string, any>[]): Promise<FlatImportResult<NewMaterialUsage>> => {
   const [quotations, orders, materials] = await Promise.all([
     getSalesOrders('QUOTATION', ''), getSalesOrders('SO', ''), getMaterials(''),
   ]);
+  // Only ORDERED-or-later lines are eligible — a QUOTATION hasn't been confirmed yet, and debiting
+  // material against one would leave a production_material_usage row with an inventory_transaction
+  // pointing at it, which blocks deleteSalesOrder() (QUOTATION is otherwise always deletable) once
+  // the FK cascade hits that row's RESTRICT-by-default link.
   const detailByKey = new Map<string, string>(); // `${salesNo}::${productCode}` -> detailId
-  [...quotations, ...orders].forEach(header => {
+  orders.forEach(header => {
     header.details.forEach(detail => {
       if (!detail.productCode) return;
       detailByKey.set(`${header.salesNo.toLowerCase()}::${detail.productCode.toLowerCase()}`, detail.detailId);
     });
   });
+  const quotationSalesNos = new Set(quotations.map(h => h.salesNo.toLowerCase()));
   const materialByCode = new Map(materials.filter(m => m.code).map(m => [m.code!.toLowerCase(), m]));
 
   // Sum demand per material across the whole file (it can span multiple
@@ -1031,7 +1045,12 @@ export const validateProductionMaterialsImport = async (rows: Record<string, any
 
     const detailId = salesNo && productCode ? detailByKey.get(`${salesNo.toLowerCase()}::${productCode.toLowerCase()}`) : undefined;
     if (salesNo && productCode && !detailId) {
-      errors.push({ row: rowNum, message: `Sales No "${salesNo}" with Product Code "${productCode}" not found.` });
+      errors.push({
+        row: rowNum,
+        message: quotationSalesNos.has(salesNo.toLowerCase())
+          ? `Sales No "${salesNo}" is still a Quotation — convert it to a Sales Order before importing production materials.`
+          : `Sales No "${salesNo}" with Product Code "${productCode}" not found.`,
+      });
       rowValid = false;
     }
 
@@ -1101,6 +1120,9 @@ export const commitProductionMaterialsImport = async (rows: NewMaterialUsage[]):
     );
     if (txError) {
       console.error('commitProductionMaterialsImport(inventory_transaction)', txError);
+      // Roll back this chunk's usage rows so a failed ledger insert can't leave a
+      // production_material_usage row reading as "consumed" with no matching stock deduction.
+      await supabase.from('production_material_usage').delete().in('id', (insertedUsage || []).map(u => u.id));
       throw txError;
     }
   }

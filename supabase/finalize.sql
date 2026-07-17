@@ -290,6 +290,14 @@ INSERT INTO whatsapp_templates (type, content) VALUES
 ('PURCHASE', E'Hi Mr/Ms {{vendor_name}},\n\nWe would like to request a quotation.\n\nQuotation No:\n{{quotation_no}}\n\n{{items}}\n\nThank you.'),
 ('SALES', E'Hi Mr/Ms {{customer_name}},\n\nThank you for your enquiry.\n\nQuotation No:\n{{quotation_no}}\n\n{{items}}\n\nGrand Total:\n{{grand_total}}\n\nThank you.');
 
+-- Dashboard widget visibility/order (single shared row, no per-user auth in this app).
+CREATE TABLE dashboard_preferences (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  visible_sections JSONB NOT NULL DEFAULT '{}'::jsonb,
+  section_order JSONB NOT NULL DEFAULT '[]'::jsonb,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- Row Level Security — every table below gets RLS enabled with one permissive "allow everything to
 -- public" policy (auth/authorization is handled in the app layer, not in Postgres, for this project).
 -- company_profile is deliberately excluded — it's a single-row config table.
@@ -314,7 +322,8 @@ BEGIN
         'production_material_usage',
         'inventory_transaction',
         'workflow_tasks',
-        'whatsapp_templates'
+        'whatsapp_templates',
+        'dashboard_preferences'
     ]
     LOOP
         EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY;', tbl);
@@ -608,6 +617,10 @@ BEGIN
         WHEN 'latest_purchase:desc' THEN 'pdate.latest_date DESC NULLS LAST'
         WHEN 'oldest_purchase:asc' THEN 'pdate.oldest_date ASC NULLS LAST'
         WHEN 'oldest_purchase:desc' THEN 'pdate.oldest_date DESC NULLS LAST'
+        WHEN 'created_at:asc' THEN 'm.created_at ASC'
+        WHEN 'created_at:desc' THEN 'm.created_at DESC'
+        WHEN 'updated_at:asc' THEN 'm.updated_at ASC'
+        WHEN 'updated_at:desc' THEN 'm.updated_at DESC'
         ELSE 'm.name ASC'
     END;
 
@@ -683,6 +696,10 @@ BEGIN
         WHEN 'latest_sale:desc' THEN 'sdate.latest_date DESC NULLS LAST'
         WHEN 'oldest_sale:asc' THEN 'sdate.oldest_date ASC NULLS LAST'
         WHEN 'oldest_sale:desc' THEN 'sdate.oldest_date DESC NULLS LAST'
+        WHEN 'created_at:asc' THEN 'p.created_at ASC'
+        WHEN 'created_at:desc' THEN 'p.created_at DESC'
+        WHEN 'updated_at:asc' THEN 'p.updated_at ASC'
+        WHEN 'updated_at:desc' THEN 'p.updated_at DESC'
         ELSE 'p.name ASC'
     END;
 
@@ -1405,8 +1422,13 @@ BEGIN
 
         UPDATE sales_detail SET produce_quantity = v_produce_qty WHERE detail_id = v_line.detail_id;
 
-        INSERT INTO workflow_tasks (sales_detail_id, status, stage, start_date)
-        VALUES (v_line.detail_id, 'IN_PRODUCTION', 'PREPARATION', CURRENT_DATE);
+        -- A line left at 0 (stock already covers it — the order is only in this run because another
+        -- line needs making) gets no Kanban card: nothing about it is actually being produced, and an
+        -- untouched card with no way to tell it apart from real work just confuses the shop floor.
+        IF v_produce_qty > 0 THEN
+            INSERT INTO workflow_tasks (sales_detail_id, status, stage, start_date)
+            VALUES (v_line.detail_id, 'IN_PRODUCTION', 'PREPARATION', CURRENT_DATE);
+        END IF;
 
         FOR v_usage IN
             SELECT pmu.id, pmu.planned_quantity, sd.quantity AS ordered_qty
