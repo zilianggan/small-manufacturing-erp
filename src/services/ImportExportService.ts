@@ -140,37 +140,58 @@ export const CONTACT_COLUMNS: ImportColumn[] = [
 // (mirrors Contact.vendorId/clientId being mutually exclusive). Merge key is
 // name + owner id, so the same person name under two different companies
 // imports as two contacts instead of colliding.
-export const importContacts = async (rows: Record<string, any>[]): Promise<RowImportResult> => {
+export const validateContactsImport = async (rows: Record<string, any>[]): Promise<FlatImportResult<Contact>> => {
   const [vendors, clients, existing] = await Promise.all([getVendors(''), getClients(''), getContacts({})]);
   const vendorByName = new Map(vendors.map(v => [v.companyName.toLowerCase(), v]));
   const clientByName = new Map(clients.map(c => [c.companyName.toLowerCase(), c]));
   const existingByKey = new Map(existing.map(c => [`${c.fullName.toLowerCase()}::${c.vendorId || c.clientId || ''}`, c]));
+  const seenInFile = new Set<string>();
+  const errors: ImportRowError[] = [];
+  const records: Contact[] = [];
 
-  const contacts: Contact[] = rows.map((raw, index) => {
+  rows.forEach((raw, index) => {
+    const rowNum = index + 1;
     const fullName = String(raw.fullName || '').trim();
-    if (!fullName) throw new Error(`Record #${index + 1} is missing a required 'fullName' field.`);
-
     const type = String(raw.type || '').trim().toUpperCase();
-    if (type !== 'CLIENT' && type !== 'VENDOR') throw new Error(`Record #${index + 1}: 'type' must be Client or Vendor.`);
-
     const companyName = String(raw.companyName || '').trim();
-    const owner = type === 'VENDOR' ? vendorByName.get(companyName.toLowerCase()) : clientByName.get(companyName.toLowerCase());
-    if (!owner) throw new Error(`Record #${index + 1}: ${type === 'VENDOR' ? 'Vendor' : 'Client'} "${companyName}" not found.`);
+    const email = String(raw.email || '').trim();
+    const contactNo = String(raw.contactNo || '').trim();
+    let rowValid = true;
+
+    if (!fullName) { errors.push({ row: rowNum, message: "Missing 'Contact Name'." }); rowValid = false; }
+    if (type !== 'CLIENT' && type !== 'VENDOR') { errors.push({ row: rowNum, message: "'Type' must be Client or Vendor." }); rowValid = false; }
+    if (email && !isValidEmail(email)) { errors.push({ row: rowNum, message: `Email "${email}" is not a valid email address.` }); rowValid = false; }
+    if (contactNo && !isValidPhone(contactNo)) { errors.push({ row: rowNum, message: `Contact No. "${contactNo}" is not a valid phone number.` }); rowValid = false; }
+
+    const owner = type === 'VENDOR' ? vendorByName.get(companyName.toLowerCase())
+      : type === 'CLIENT' ? clientByName.get(companyName.toLowerCase())
+      : undefined;
+    if ((type === 'CLIENT' || type === 'VENDOR') && !owner) {
+      errors.push({ row: rowNum, message: `${type === 'VENDOR' ? 'Vendor' : 'Client'} "${companyName}" not found.` });
+      rowValid = false;
+    }
+
+    if (fullName && owner) {
+      const key = `${fullName.toLowerCase()}::${owner.id}`;
+      if (seenInFile.has(key)) { errors.push({ row: rowNum, message: `Duplicate Contact "${fullName}" for "${companyName}" in file.` }); rowValid = false; }
+      seenInFile.add(key);
+    }
+
+    if (!rowValid || !owner) return;
 
     const match = existingByKey.get(`${fullName.toLowerCase()}::${owner.id}`);
-    return {
+    records.push({
       id: match?.id || generateId(),
       fullName,
-      email: raw.email || '',
-      contactNo: raw.contactNo || '',
+      email,
+      contactNo,
       vendorId: type === 'VENDOR' ? owner.id : undefined,
       clientId: type === 'CLIENT' ? owner.id : undefined,
       attachments: match?.attachments,
-    };
+    });
   });
 
-  await upsertRecords('erp_contacts', contacts);
-  return { successCount: contacts.length, logs: [`Imported ${contacts.length} contacts (created or updated by name + company).`] };
+  return { records, errors };
 };
 
 export const buildVendorExportRows = (vendors: Vendor[]) => vendors.map(v => ({
