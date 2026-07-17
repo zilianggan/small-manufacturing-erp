@@ -286,6 +286,17 @@ export interface DashboardData {
   lowStockCount: number;
 }
 
+export type DashboardSectionKey =
+  | 'KPI_ROW' | 'SALES_TREND' | 'INVENTORY_DISTRIBUTION' | 'PURCHASE_VS_SALES'
+  | 'INVENTORY_HEALTH' | 'QUICK_ACTIONS' | 'RECENT_SALES' | 'RECENT_PURCHASES'
+  | 'CRITICAL_STOCK_ALERTS' | 'PRODUCTION_STATUS' | 'ACTIVITY_TIMELINE';
+
+export interface DashboardPreferences {
+  id?: string;
+  visible_sections: Partial<Record<DashboardSectionKey, boolean>>;
+  section_order?: DashboardSectionKey[];
+}
+
 export interface CompanyProfile {
   id?: UUID,
   name: string;

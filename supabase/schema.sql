@@ -347,3 +347,11 @@ UPDATE sales_detail SET delivered_quantity = quantity
 WHERE header_id IN (
   SELECT id FROM sales_header WHERE status IN ('DELIVERED', 'PARTIALLY_RETURNED', 'RETURNED')
 );
+
+-- Dashboard widget visibility (single shared row, no per-user auth in this app)
+create table dashboard_preferences (
+  id uuid primary key default gen_random_uuid(),
+  visible_sections jsonb not null default '{}'::jsonb,
+  section_order jsonb not null default '[]'::jsonb,
+  updated_at timestamptz not null default now()
+);
