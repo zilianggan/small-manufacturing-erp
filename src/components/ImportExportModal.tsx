@@ -11,9 +11,9 @@ import {
   Database, ArrowRight, FileSpreadsheet, Layers, Users, ShoppingBag, Briefcase, Package, UserPlus, Boxes,
 } from 'lucide-react';
 import {
-  ImportColumn, ImportRowError,
+  ImportColumn, ImportRowError, FlatCategory,
   VENDOR_COLUMNS, CLIENT_COLUMNS, CONTACT_COLUMNS, MATERIAL_COLUMNS, PRODUCT_COLUMNS, PURCHASE_COLUMNS, SALES_COLUMNS, INVENTORY_COLUMNS,
-  importVendors, importClients, importContacts, importMaterials, importProducts, importInventoryTransactions,
+  validateVendorsImport, validateClientsImport, validateContactsImport, validateMaterialsImport, validateProductsImport, validateInventoryImport, commitFlatImport,
   validatePurchaseImport, commitPurchaseImport, PurchaseImportPreview, PurchaseImportRow,
   validateSalesImport, commitSalesImport, SalesImportPreview, SalesImportRow,
   getVendorExportRows, getClientExportRows, getContactExportRows, getMaterialExportRows, getProductExportRows,
@@ -67,6 +67,7 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
   } | null>(null);
   const [purchasePreview, setPurchasePreview] = useState<PurchaseImportPreview | null>(null);
   const [salesPreview, setSalesPreview] = useState<SalesImportPreview | null>(null);
+  const [flatPreview, setFlatPreview] = useState<{ category: FlatCategory; totalRows: number; errors: ImportRowError[]; records: any[] } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   if (!isOpen) return null;
@@ -188,31 +189,29 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
     return `Required columns:\n${required}${optional ? `\nOptional columns:\n${optional}` : ''}`;
   };
 
-  const downloadErrorExcel = (headers: string[], rows: any[][], errors: string[]) => {
-    const newHeaders = [...headers, 'Error Message'];
-    const newRows = rows.map((row, i) => [...row, errors[i] || '']);
-    const ws = XLSX.utils.aoa_to_sheet([newHeaders, ...newRows]);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Import_Errors');
-    XLSX.writeFile(wb, 'Import_Errors.xlsx');
+  const runFlatValidation = async (category: FlatCategory, rows: Record<string, any>[]) => {
+    try {
+      const result = category === 'VENDORS' ? await validateVendorsImport(rows)
+        : category === 'CLIENTS' ? await validateClientsImport(rows)
+        : category === 'CONTACTS' ? await validateContactsImport(rows)
+        : category === 'MATERIAL' ? await validateMaterialsImport(rows)
+        : category === 'PRODUCT' ? await validateProductsImport(rows)
+        : await validateInventoryImport(rows);
+
+      setFlatPreview({ category, totalRows: rows.length, errors: result.errors, records: result.records });
+    } catch (err: any) {
+      setStatus({ type: 'error', message: 'Validation failed!', details: [err.message || 'Make sure the Excel file is correctly formatted.'] });
+      toast.error(err.message || 'Validation failed. Make sure the Excel file is correctly formatted.');
+    }
   };
 
-  const runFlatImport = async (category: 'VENDORS' | 'CLIENTS' | 'CONTACTS' | 'MATERIAL' | 'PRODUCT' | 'INVENTORY', rows: Record<string, any>[]) => {
-    try {
-      const result = category === 'VENDORS' ? await importVendors(rows)
-        : category === 'CLIENTS' ? await importClients(rows)
-        : category === 'CONTACTS' ? await importContacts(rows)
-        : category === 'MATERIAL' ? await importMaterials(rows)
-        : category === 'PRODUCT' ? await importProducts(rows)
-        : await importInventoryTransactions(rows);
-
-      setStatus({ type: 'success', message: 'Successfully completed import.', details: result.logs });
-      toast.success('Import completed successfully.');
-      onDataImported();
-    } catch (err: any) {
-      setStatus({ type: 'error', message: 'Import failed!', details: [err.message || 'Make sure the Excel file is correctly formatted.'] });
-      toast.error(err.message || 'Import failed. Make sure the Excel file is correctly formatted.');
-    }
+  const handleConfirmFlatImport = async () => {
+    if (!flatPreview) return;
+    await commitFlatImport(flatPreview.category, flatPreview.records);
+    setStatus({ type: 'success', message: 'Successfully completed import.', details: [`Imported ${flatPreview.records.length} record(s).`] });
+    toast.success('Import completed successfully.');
+    onDataImported();
+    setFlatPreview(null);
   };
 
   const runHeaderDetailValidation = async (category: 'PURCHASE' | 'SALES', rows: Record<string, any>[]) => {
@@ -240,65 +239,26 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
       return;
     }
 
-    if (isHeaderDetailCategory(importCategory)) {
-      // Header+detail categories surface row-level errors in the Preview
-      // screen (validatePurchaseImport/validateSalesImport) instead of the
-      // download-an-error-Excel flow the flat categories use below.
-      const parsed: Record<string, any>[] = mappingState.dataRows.map((rowArray) => {
-        const rowObj: Record<string, any> = {};
-        mappingState.fileHeaders.forEach((header, index) => { rowObj[header] = rowArray[index]; });
-        const mappedObj: Record<string, any> = {};
-        expectedCols.forEach(col => {
-          const fileHeader = mappingState.mapping[col.key];
-          mappedObj[col.key] = fileHeader ? rowObj[fileHeader] : undefined;
-        });
-        return mappedObj;
-      });
-
-      setMappingState(null);
-      runHeaderDetailValidation(importCategory, parsed);
-      return;
-    }
-
-    const parsed: Record<string, any>[] = [];
-    const rowErrors: string[] = [];
-    let hasErrors = false;
-
-    mappingState.dataRows.forEach((rowArray) => {
+    // Every category surfaces row-level errors in the Preview screen
+    // (validateXImport) before anything is written.
+    const parsed: Record<string, any>[] = mappingState.dataRows.map((rowArray) => {
       const rowObj: Record<string, any> = {};
       mappingState.fileHeaders.forEach((header, index) => { rowObj[header] = rowArray[index]; });
-
       const mappedObj: Record<string, any> = {};
-      let rowError = '';
-
       expectedCols.forEach(col => {
         const fileHeader = mappingState.mapping[col.key];
-        const val = fileHeader ? rowObj[fileHeader] : undefined;
-        mappedObj[col.key] = val;
-        if (col.required && (val === undefined || val === null || String(val).trim() === '')) {
-          rowError += `Missing value for ${col.label}. `;
-          hasErrors = true;
-        }
+        mappedObj[col.key] = fileHeader ? rowObj[fileHeader] : undefined;
       });
-
-      parsed.push(mappedObj);
-      rowErrors.push(rowError);
+      return mappedObj;
     });
 
-    if (hasErrors) {
-      downloadErrorExcel(mappingState.fileHeaders, mappingState.dataRows, rowErrors);
-      setStatus({
-        type: 'error',
-        message: 'Import failed due to missing required data in some rows.',
-        details: ['An Excel file with error messages has been downloaded. Please fix the errors and try again.'],
-      });
-      toast.warning('Import failed: some rows are missing required data. Check the downloaded error file.');
-      setMappingState(null);
-      return;
-    }
-
     setMappingState(null);
-    runFlatImport(importCategory, parsed);
+
+    if (isHeaderDetailCategory(importCategory)) {
+      runHeaderDetailValidation(importCategory, parsed);
+    } else {
+      runFlatValidation(importCategory, parsed);
+    }
   };
 
   const handleConfirmPurchaseImport = async () => {
@@ -432,6 +392,7 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
                         setMappingState(null);
                         setPurchasePreview(null);
                         setSalesPreview(null);
+                        setFlatPreview(null);
                       }}
                       className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-xs font-medium border transition-all text-left ${isActive
                         ? 'bg-blue-600 text-white border-blue-600 shadow-sm font-semibold'
