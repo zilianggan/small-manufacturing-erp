@@ -207,11 +207,16 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
 
   const handleConfirmFlatImport = async () => {
     if (!flatPreview) return;
-    await commitFlatImport(flatPreview.category, flatPreview.records);
-    setStatus({ type: 'success', message: 'Successfully completed import.', details: [`Imported ${flatPreview.records.length} record(s).`] });
-    toast.success('Import completed successfully.');
-    onDataImported();
-    setFlatPreview(null);
+    try {
+      await commitFlatImport(flatPreview.category, flatPreview.records);
+      setStatus({ type: 'success', message: 'Successfully completed import.', details: [`Imported ${flatPreview.records.length} record(s).`] });
+      toast.success('Import completed successfully.');
+      onDataImported();
+      setFlatPreview(null);
+    } catch (err: any) {
+      setStatus({ type: 'error', message: 'Import failed!', details: [err.message || 'Import failed.'] });
+      toast.error(err.message || 'Import failed.');
+    }
   };
 
   const runHeaderDetailValidation = async (category: 'PURCHASE' | 'SALES', rows: Record<string, any>[]) => {
