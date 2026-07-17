@@ -352,7 +352,19 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
     if (e.dataTransfer.files && e.dataTransfer.files[0]) handleFileProcessing(e.dataTransfer.files[0]);
   };
 
-  const activePreview = activeCategory === 'PURCHASE' ? purchasePreview : activeCategory === 'SALES' ? salesPreview : null;
+  const activePreview = activeCategory === 'PURCHASE' ? purchasePreview
+    : activeCategory === 'SALES' ? salesPreview
+    : (flatPreview && flatPreview.category === activeCategory ? flatPreview : null);
+
+  // Display-only: the three preview shapes (Purchase/Sales/flat) share `errors`
+  // but differ on the other stat(s), so pull those out here instead of doing
+  // TS union-narrowing gymnastics inside the JSX below.
+  const previewGroupsCount = activeCategory === 'PURCHASE' ? purchasePreview?.groups.length
+    : activeCategory === 'SALES' ? salesPreview?.groups.length
+    : undefined;
+  const previewSecondaryCount = isHeaderDetailCategory(activeCategory)
+    ? (activeCategory === 'PURCHASE' ? purchasePreview?.totalDetailRows : salesPreview?.totalDetailRows)
+    : flatPreview?.totalRows;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-4 bg-slate-900/60 backdrop-blur-sm">
@@ -477,15 +489,17 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
 
             {activePreview ? (
               <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex-1 overflow-y-auto space-y-4">
-                <h4 className="font-bold text-slate-900 text-sm">Import Preview — {activeCategory === 'PURCHASE' ? 'Purchase Orders' : 'Sales Orders'}</h4>
-                <div className="grid grid-cols-3 gap-3 text-center">
+                <h4 className="font-bold text-slate-900 text-sm">Import Preview — {activeCategoryLabel}</h4>
+                <div className={`grid gap-3 text-center ${isHeaderDetailCategory(activeCategory) ? 'grid-cols-3' : 'grid-cols-2'}`}>
+                  {isHeaderDetailCategory(activeCategory) && (
+                    <div className="bg-slate-50 rounded-lg p-3">
+                      <div className="text-lg font-bold text-slate-900">{previewGroupsCount}</div>
+                      <div className="text-[10px] text-slate-500 uppercase tracking-wide">Total Orders</div>
+                    </div>
+                  )}
                   <div className="bg-slate-50 rounded-lg p-3">
-                    <div className="text-lg font-bold text-slate-900">{activePreview.groups.length}</div>
-                    <div className="text-[10px] text-slate-500 uppercase tracking-wide">Total Orders</div>
-                  </div>
-                  <div className="bg-slate-50 rounded-lg p-3">
-                    <div className="text-lg font-bold text-slate-900">{activePreview.totalDetailRows}</div>
-                    <div className="text-[10px] text-slate-500 uppercase tracking-wide">Total Detail Rows</div>
+                    <div className="text-lg font-bold text-slate-900">{previewSecondaryCount}</div>
+                    <div className="text-[10px] text-slate-500 uppercase tracking-wide">{isHeaderDetailCategory(activeCategory) ? 'Total Detail Rows' : 'Total Rows'}</div>
                   </div>
                   <div className={`rounded-lg p-3 ${activePreview.errors.length > 0 ? 'bg-red-50' : 'bg-emerald-50'}`}>
                     <div className={`text-lg font-bold ${activePreview.errors.length > 0 ? 'text-red-700' : 'text-emerald-700'}`}>{activePreview.errors.length}</div>
@@ -505,13 +519,13 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
 
                 <div className="flex space-x-3 justify-end pt-2 border-t border-slate-100">
                   <button
-                    onClick={() => { setPurchasePreview(null); setSalesPreview(null); }}
+                    onClick={() => { setPurchasePreview(null); setSalesPreview(null); setFlatPreview(null); }}
                     className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg text-xs font-medium transition-colors"
                   >
                     Cancel
                   </button>
                   <button
-                    onClick={activeCategory === 'PURCHASE' ? handleConfirmPurchaseImport : handleConfirmSalesImport}
+                    onClick={activeCategory === 'PURCHASE' ? handleConfirmPurchaseImport : activeCategory === 'SALES' ? handleConfirmSalesImport : handleConfirmFlatImport}
                     disabled={activePreview.errors.length > 0}
                     className="px-4 py-2 bg-blue-600 text-white rounded-lg text-xs font-medium transition-colors hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
                   >
@@ -549,7 +563,7 @@ export default function ImportExportModal({ isOpen, onClose, onDataImported }: I
                     Cancel
                   </button>
                   <button onClick={executeImport} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-xs font-medium transition-colors hover:bg-blue-700">
-                    {isHeaderDetailCategory(mappingState.category) ? 'Continue to Preview' : 'Confirm & Import'}
+                    Continue to Preview
                   </button>
                 </div>
               </div>
